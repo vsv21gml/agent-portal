@@ -1,11 +1,11 @@
 "use client";
 
-import { Badge, Button, Drawer, Group, Paper, Pagination, ScrollArea, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
+import { Badge, Button, Drawer, Group, LoadingOverlay, Paper, Pagination, ScrollArea, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AdminFrame } from "../src/components/admin-frame";
-import { apiFetch } from "../src/lib/api-client";
+import { ApiError, apiFetch } from "../src/lib/api-client";
 import { clearToken } from "../src/lib/auth";
 
 type UserRow = {
@@ -99,6 +99,7 @@ export default function AdminPage() {
   const [vectorOpen, setVectorOpen] = useState(false);
   const [vectorAlias, setVectorAlias] = useState("");
   const [vectorError, setVectorError] = useState<string | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
 
   useEffect(() => {
     const load = async () => {
@@ -152,17 +153,23 @@ export default function AdminPage() {
           p.map((project) => apiFetch<VectorKey[]>(`vectordb/projects/${project.id}/keys`)),
         );
         setVectorKeys(vectorKeysByProject.flat());
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          router.replace("/login?next=/");
+          return;
+        }
         notifications.show({
           title: "Load failed",
           message: "관리자 데이터를 불러오지 못했습니다.",
           color: "red",
         });
         router.replace("/login?next=/");
+      } finally {
+        setAuthChecking(false);
       }
     };
     void load();
-  }, []);
+  }, [router]);
 
   const createGitlabRepo = async () => {
     if (!detailProject) {
@@ -287,8 +294,13 @@ export default function AdminPage() {
   }, [activePage, projects]);
 
   return (
-    <AdminFrame headerActions={<Button onClick={() => setCreateOpen(true)}>New Project</Button>}>
-      <Tabs defaultValue="users">
+    <AdminFrame>
+      <Stack pos="relative">
+        <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
+        <Group justify="end" mb="md">
+          <Button onClick={() => setCreateOpen(true)}>New Project</Button>
+        </Group>
+        <Tabs defaultValue="users">
         <Tabs.List>
           <Tabs.Tab value="users">멤버/역할관리</Tabs.Tab>
           <Tabs.Tab value="projects">프로젝트관리</Tabs.Tab>
@@ -438,7 +450,8 @@ export default function AdminPage() {
             </Stack>
           </Paper>
         </Tabs.Panel>
-      </Tabs>
+        </Tabs>
+      </Stack>
 
       <Drawer opened={detailProject !== null} onClose={() => setDetailProject(null)} title="Project Detail" position="right">
         {detailProject ? (

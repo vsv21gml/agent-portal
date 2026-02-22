@@ -2,14 +2,14 @@
 
 import { Button, Group, Paper, PasswordInput, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { setToken, clearToken } from "../../src/lib/auth";
 import { notifications } from "@mantine/notifications";
 import { apiFetch } from "../../src/lib/api-client";
 
 type AuthResponse = { accessToken: string };
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") ?? "/";
@@ -99,5 +99,13 @@ export default function LoginPage() {
         </Stack>
       </Paper>
     </Stack>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<Stack align="center" justify="center" h="100dvh" />}>
+      <LoginContent />
+    </Suspense>
   );
 }

@@ -1,11 +1,11 @@
 "use client";
 
-import { Button, Drawer, Group, Stack, TextInput } from "@mantine/core";
+import { Button, Drawer, Group, LoadingOverlay, Stack, TextInput } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "../../src/components/app-frame";
 import { ProjectTable } from "../../src/components/project-table";
-import { apiFetch } from "../../src/lib/api-client";
+import { ApiError, apiFetch } from "../../src/lib/api-client";
 import { toastError, toastSuccess } from "../../src/lib/toast";
 import { Project } from "../../src/types/project";
 
@@ -16,6 +16,7 @@ export default function UserPortalPage() {
   const [slug, setSlug] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [errors, setErrors] = useState<{ name?: string; slug?: string }>({});
+  const [authChecking, setAuthChecking] = useState(true);
 
   const loadProjects = async () => {
     try {
@@ -31,12 +32,18 @@ export default function UserPortalPage() {
       try {
         await apiFetch("auth/me");
         await loadProjects();
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          router.replace("/login?next=/portal");
+          return;
+        }
         router.replace("/login?next=/portal");
+      } finally {
+        setAuthChecking(false);
       }
     };
     void ensureAuth();
-  }, []);
+  }, [router]);
 
   const createProject = async () => {
     const nextErrors: { name?: string; slug?: string } = {};
@@ -70,8 +77,12 @@ export default function UserPortalPage() {
   };
 
   return (
-    <AppFrame title="User Portal" headerActions={<Button onClick={() => setDrawerOpen(true)}>New Project</Button>}>
-      <Stack>
+    <AppFrame title="User Portal">
+      <Stack pos="relative">
+        <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
+        <Group justify="end">
+          <Button onClick={() => setDrawerOpen(true)}>New Project</Button>
+        </Group>
         <ProjectTable projects={projects} title="My Projects" />
       </Stack>
 

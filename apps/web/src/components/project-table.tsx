@@ -1,6 +1,7 @@
 "use client";
 
-import { Badge, Button, Drawer, Group, Pagination, Paper, ScrollArea, Stack, Table, Text, Title } from "@mantine/core";
+import Link from "next/link";
+import { Badge, Button, Group, Pagination, Paper, ScrollArea, Stack, Table, Title } from "@mantine/core";
 import { useMemo, useState } from "react";
 import { Project } from "../types/project";
 
@@ -13,7 +14,6 @@ const PAGE_SIZE = 8;
 
 export function ProjectTable({ projects, title }: Props) {
   const [activePage, setActivePage] = useState(1);
-  const [detail, setDetail] = useState<Project | null>(null);
   const totalPages = Math.max(1, Math.ceil(projects.length / PAGE_SIZE));
 
   const rows = useMemo(() => {
@@ -48,8 +48,12 @@ export function ProjectTable({ projects, title }: Props) {
                     </Badge>
                   </Table.Td>
                   <Table.Td>
-                    <Button variant="subtle" onClick={() => setDetail(project)}>
-                      Detail
+                    <Button
+                      variant="subtle"
+                      component={Link}
+                      href={`/portal/projects/${project.id}`}
+                    >
+                      Open
                     </Button>
                   </Table.Td>
                 </Table.Tr>
@@ -62,17 +66,6 @@ export function ProjectTable({ projects, title }: Props) {
           <Pagination total={totalPages} value={activePage} onChange={setActivePage} />
         </Group>
       </Paper>
-
-      <Drawer opened={detail !== null} onClose={() => setDetail(null)} position="right" size="md" title="Project Detail">
-        {detail ? (
-          <Stack>
-            <Text fw={700}>{detail.name}</Text>
-            <Text c="dimmed">{detail.slug}</Text>
-            <Text size="sm">Project ID: {detail.id}</Text>
-            <Text size="sm">Created: {new Date(detail.createdAt).toLocaleString()}</Text>
-          </Stack>
-        ) : null}
-      </Drawer>
     </Stack>
   );
 }

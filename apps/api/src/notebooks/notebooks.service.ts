@@ -26,7 +26,11 @@ export class NotebooksService {
       if (kubeConfigPath) {
         kc.loadFromFile(kubeConfigPath);
       } else {
-        kc.loadFromDefault();
+        try {
+          kc.loadFromCluster();
+        } catch {
+          kc.loadFromDefault();
+        }
       }
       this.kubeClientApps = kc.makeApiClient(k8s.AppsV1Api);
       this.kubeClientCore = kc.makeApiClient(k8s.CoreV1Api);
@@ -98,9 +102,24 @@ export class NotebooksService {
     const deploymentName = `nb-${session.projectId.slice(0, 8)}-${session.userId.slice(0, 8)}`;
     const notebookImage = this.configService.get<string>("NOTEBOOK_IMAGE", "jupyter/base-notebook:latest");
     const pvcName = this.configService.get<string>("NOTEBOOK_PVC", "shared-notebooks-pvc");
+    const ingressClassName = this.configService.get<string>("K8S_NOTEBOOK_INGRESS_CLASS", "nginx");
     const albOidcIssuer = this.configService.get<string>("ALB_OIDC_ISSUER");
     const albOidcClientId = this.configService.get<string>("ALB_OIDC_CLIENT_ID");
     const albOidcClientSecret = this.configService.get<string>("ALB_OIDC_CLIENT_SECRET");
+    const ingressAnnotations: Record<string, string> = {
+      "kubernetes.io/ingress.class": ingressClassName,
+    };
+    if (ingressClassName === "alb" && albOidcIssuer && albOidcClientId && albOidcClientSecret) {
+      ingressAnnotations["alb.ingress.kubernetes.io/auth-type"] = "oidc";
+      ingressAnnotations["alb.ingress.kubernetes.io/auth-idp-oidc"] = JSON.stringify({
+        issuer: albOidcIssuer,
+        authorizationEndpoint: `${albOidcIssuer}/authorize`,
+        tokenEndpoint: `${albOidcIssuer}/oauth/token`,
+        userInfoEndpoint: `${albOidcIssuer}/userinfo`,
+        secretName: albOidcClientSecret,
+        clientId: albOidcClientId,
+      });
+    }
 
     await this.kubeClientApps.createNamespacedDeployment({
       namespace: session.namespace,
@@ -161,18 +180,7 @@ export class NotebooksService {
         kind: "Ingress",
         metadata: {
           name: `${deploymentName}-ing`,
-          annotations: {
-            "kubernetes.io/ingress.class": "alb",
-            "alb.ingress.kubernetes.io/auth-type": "oidc",
-            "alb.ingress.kubernetes.io/auth-idp-oidc": JSON.stringify({
-              issuer: albOidcIssuer,
-              authorizationEndpoint: `${albOidcIssuer}/authorize`,
-              tokenEndpoint: `${albOidcIssuer}/oauth/token`,
-              userInfoEndpoint: `${albOidcIssuer}/userinfo`,
-              secretName: albOidcClientSecret,
-              clientId: albOidcClientId,
-            }),
-          },
+          annotations: ingressAnnotations,
         },
         spec: {
           rules: [

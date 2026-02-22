@@ -23,6 +23,10 @@ spec:
           env:
             - name: AUTH_BYPASS
               value: {{ .Values.env.AUTH_BYPASS | quote }}
+            - name: INITIAL_ADMIN_EMAIL
+              value: {{ .Values.env.INITIAL_ADMIN_EMAIL | quote }}
+            - name: INITIAL_ADMIN_PASSWORD
+              value: {{ .Values.env.INITIAL_ADMIN_PASSWORD | quote }}
             - name: JWT_SECRET
               value: {{ .Values.env.JWT_SECRET | quote }}
             - name: TYPEORM_SYNC
@@ -71,6 +75,8 @@ spec:
               value: {{ .Values.env.K8S_NOTEBOOK_ENABLED | quote }}
             - name: K8S_NOTEBOOK_NAMESPACE
               value: {{ .Values.env.K8S_NOTEBOOK_NAMESPACE | quote }}
+            - name: K8S_NOTEBOOK_INGRESS_CLASS
+              value: {{ .Values.env.K8S_NOTEBOOK_INGRESS_CLASS | quote }}
             - name: KUBECONFIG_PATH
               value: {{ .Values.env.KUBECONFIG_PATH | quote }}
             - name: NOTEBOOK_PVC

@@ -1,15 +1,14 @@
-FROM node:24-alpine AS base
+FROM node:24-alpine
 WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY apps/admin-web/package.json apps/admin-web/package.json
 
-RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
-RUN pnpm install --filter @apps/admin-web... --frozen-lockfile=false
+RUN npm ci
 
 COPY apps/admin-web apps/admin-web
-WORKDIR /app/apps/admin-web
-RUN pnpm build
+RUN npm run build --workspace @apps/admin-web
 
+WORKDIR /app/apps/admin-web
 EXPOSE 3100
-CMD ["pnpm", "start"]
+CMD ["npm", "run", "start"]
