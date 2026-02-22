@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-admin-web
+spec:
+  replicas: {{ .Values.adminWeb.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-admin-web
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-admin-web
+    spec:
+      containers:
+        - name: admin-web
+          image: "{{ .Values.adminWeb.image.repository }}:{{ .Values.adminWeb.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.adminWeb.service.port }}
+          env:
+            - name: BACKEND_URL
+              value: http://{{ .Release.Name }}-api:{{ .Values.api.service.port }}

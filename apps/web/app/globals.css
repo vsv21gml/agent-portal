@@ -1,0 +1,22 @@
+:root {
+  --page-bg: radial-gradient(circle at 15% 15%, #dff3ff 0%, #f5f8ff 45%, #f7f4ea 100%);
+  --panel-bg: #ffffff;
+  --border-color: #dde4ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--page-bg);
+}

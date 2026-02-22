@@ -1,0 +1,19 @@
+:root {
+  --page-bg: linear-gradient(140deg, #ecf7f2 0%, #f7fafc 45%, #f8efe5 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--page-bg);
+}

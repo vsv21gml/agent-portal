@@ -1,0 +1,21 @@
+{{- if .Values.adminWeb.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-admin-web
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.adminWeb.ingress.className | quote }}
+spec:
+  ingressClassName: {{ .Values.adminWeb.ingress.className }}
+  rules:
+    - host: {{ .Values.adminWeb.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.adminWeb.ingress.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-admin-web
+                port:
+                  number: {{ .Values.adminWeb.service.port }}
+{{- end }}

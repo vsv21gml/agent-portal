@@ -1,0 +1,17 @@
+apiVersion: v2
+name: agent-portal
+description: Agent portal umbrella chart
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: gitlab
+    version: "8.9.1"
+    repository: "https://charts.gitlab.io/"
+    condition: gitlab.enabled
+  - name: litellm-helm
+    alias: litellm
+    version: "0.1.609"
+    repository: "https://berriai.github.io/litellm-helm/"
+    condition: litellm.enabled
