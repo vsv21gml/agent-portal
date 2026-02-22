@@ -6,12 +6,29 @@ version: 0.1.0
 appVersion: "0.1.0"
 
 dependencies:
+  - name: web
+    version: "0.1.0"
+    repository: "file://charts/web"
+    condition: web.enabled
+  - name: admin-web
+    alias: adminWeb
+    version: "0.1.0"
+    repository: "file://charts/admin-web"
+    condition: adminWeb.enabled
+  - name: api
+    version: "0.1.0"
+    repository: "file://charts/api"
+    condition: api.enabled
   - name: gitlab
     version: "8.9.1"
     repository: "https://charts.gitlab.io/"
     condition: gitlab.enabled
   - name: litellm-helm
     alias: litellm
-    version: "0.1.609"
-    repository: "https://berriai.github.io/litellm-helm/"
+    version: ">=0.1.0"
+    repository: "oci://ghcr.io/berriai"
     condition: litellm.enabled
+  - name: opensearch
+    version: "3.5.0"
+    repository: "https://opensearch-project.github.io/helm-charts/"
+    condition: opensearch.enabled

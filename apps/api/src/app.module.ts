@@ -35,8 +35,13 @@ import { VectorDbModule } from "./vectordb/vectordb.module";
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        type: "sqlite",
-        database: configService.get<string>("DATABASE_PATH", "dev.sqlite"),
+        type: "postgres",
+        host: configService.get<string>("DB_HOST", "localhost"),
+        port: Number(configService.get<string>("DB_PORT", "5432")),
+        username: configService.get<string>("DB_USER", "postgres"),
+        password: configService.get<string>("DB_PASSWORD", "postgres"),
+        database: configService.get<string>("DB_NAME", "agent_portal"),
+        ssl: configService.get<string>("DB_SSL", "false") === "true" ? { rejectUnauthorized: false } : undefined,
         synchronize: configService.get<string>("TYPEORM_SYNC", "true") === "true",
         entities: [
           UserEntity,

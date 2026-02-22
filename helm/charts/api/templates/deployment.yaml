@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "api.fullname" . }}
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "api.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          env:
+            - name: AUTH_BYPASS
+              value: {{ .Values.env.AUTH_BYPASS | quote }}
+            - name: JWT_SECRET
+              value: {{ .Values.env.JWT_SECRET | quote }}
+            - name: TYPEORM_SYNC
+              value: {{ .Values.env.TYPEORM_SYNC | quote }}
+            - name: DB_HOST
+              value: {{ .Values.env.DB_HOST | quote }}
+            - name: DB_PORT
+              value: {{ .Values.env.DB_PORT | quote }}
+            - name: DB_NAME
+              value: {{ .Values.env.DB_NAME | quote }}
+            - name: DB_USER
+              value: {{ .Values.env.DB_USER | quote }}
+            - name: DB_PASSWORD
+              value: {{ .Values.env.DB_PASSWORD | quote }}
+            - name: DB_SSL
+              value: {{ .Values.env.DB_SSL | quote }}
+            - name: OIDC_AUTHORIZATION_URL
+              value: {{ .Values.env.OIDC_AUTHORIZATION_URL | quote }}
+            - name: OIDC_TOKEN_URL
+              value: {{ .Values.env.OIDC_TOKEN_URL | quote }}
+            - name: OIDC_USERINFO_URL
+              value: {{ .Values.env.OIDC_USERINFO_URL | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.env.OIDC_CLIENT_ID | quote }}
+            - name: OIDC_CLIENT_SECRET
+              value: {{ .Values.env.OIDC_CLIENT_SECRET | quote }}
+            - name: OIDC_REDIRECT_URI
+              value: {{ .Values.env.OIDC_REDIRECT_URI | quote }}
+            - name: GITLAB_BASE_URL
+              value: {{ .Values.env.GITLAB_BASE_URL | quote }}
+            - name: GITLAB_TOKEN
+              value: {{ .Values.env.GITLAB_TOKEN | quote }}
+            - name: LITELLM_BASE_URL
+              value: {{ .Values.env.LITELLM_BASE_URL | quote }}
+            - name: LITELLM_MASTER_KEY
+              value: {{ .Values.env.LITELLM_MASTER_KEY | quote }}
+            - name: OPENSEARCH_URL
+              value: {{ .Values.env.OPENSEARCH_URL | quote }}
+            - name: OPENSEARCH_ADMIN_USERNAME
+              value: {{ .Values.env.OPENSEARCH_ADMIN_USERNAME | quote }}
+            - name: OPENSEARCH_ADMIN_PASSWORD
+              value: {{ .Values.env.OPENSEARCH_ADMIN_PASSWORD | quote }}
+            - name: OPENSEARCH_INDEX_PREFIX
+              value: {{ .Values.env.OPENSEARCH_INDEX_PREFIX | quote }}
+            - name: K8S_NOTEBOOK_ENABLED
+              value: {{ .Values.env.K8S_NOTEBOOK_ENABLED | quote }}
+            - name: K8S_NOTEBOOK_NAMESPACE
+              value: {{ .Values.env.K8S_NOTEBOOK_NAMESPACE | quote }}
+            - name: KUBECONFIG_PATH
+              value: {{ .Values.env.KUBECONFIG_PATH | quote }}
+            - name: NOTEBOOK_PVC
+              value: {{ .Values.env.NOTEBOOK_PVC | quote }}
+            - name: NOTEBOOK_IMAGE
+              value: {{ .Values.env.NOTEBOOK_IMAGE | quote }}
+            - name: NOTEBOOK_REQUEST_CPU
+              value: {{ .Values.env.NOTEBOOK_REQUEST_CPU | quote }}
+            - name: NOTEBOOK_REQUEST_MEM_GI
+              value: {{ .Values.env.NOTEBOOK_REQUEST_MEM_GI | quote }}

@@ -14,6 +14,12 @@ export class VectorKeyEntity {
   @Column()
   keyAlias!: string;
 
+  @Column()
+  indexName!: string;
+
+  @Column({ type: "text", nullable: true })
+  remoteKeyId!: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }

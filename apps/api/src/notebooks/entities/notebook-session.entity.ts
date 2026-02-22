@@ -18,10 +18,10 @@ export class NotebookSessionEntity {
   @Column({ default: "provisioning" })
   status!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: "text", nullable: true })
   namespace!: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: "text", nullable: true })
   pvcSubPath!: string | null;
 
   @Column({ type: "int", default: 1 })

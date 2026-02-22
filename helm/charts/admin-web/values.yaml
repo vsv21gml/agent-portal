@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: agent-portal-admin-web
+  tag: latest
+
+service:
+  type: ClusterIP
+  port: 3100
+
+ingress:
+  enabled: true
+  className: alb
+  host: admin.agent-portal.local
+  path: /
+
+backend:
+  servicePort: 4000

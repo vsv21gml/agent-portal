@@ -2,6 +2,7 @@ global:
   namespace: agent-portal
 
 web:
+  enabled: true
   replicaCount: 1
   image:
     repository: agent-portal-web
@@ -14,8 +15,11 @@ web:
     className: alb
     host: agent-portal.local
     path: /
+  backend:
+    servicePort: 4000
 
 adminWeb:
+  enabled: true
   replicaCount: 1
   image:
     repository: agent-portal-admin-web
@@ -28,8 +32,11 @@ adminWeb:
     className: alb
     host: admin.agent-portal.local
     path: /
+  backend:
+    servicePort: 4000
 
 api:
+  enabled: true
   replicaCount: 1
   image:
     repository: agent-portal-api
@@ -41,7 +48,12 @@ api:
     AUTH_BYPASS: "false"
     JWT_SECRET: "change-me"
     TYPEORM_SYNC: "true"
-    DATABASE_PATH: "/data/portal.sqlite"
+    DB_HOST: "postgres"
+    DB_PORT: "5432"
+    DB_NAME: "agent_portal"
+    DB_USER: "postgres"
+    DB_PASSWORD: "postgres"
+    DB_SSL: "false"
     OIDC_AUTHORIZATION_URL: ""
     OIDC_TOKEN_URL: ""
     OIDC_USERINFO_URL: ""
@@ -52,6 +64,10 @@ api:
     GITLAB_TOKEN: ""
     LITELLM_BASE_URL: ""
     LITELLM_MASTER_KEY: ""
+    OPENSEARCH_URL: ""
+    OPENSEARCH_ADMIN_USERNAME: ""
+    OPENSEARCH_ADMIN_PASSWORD: ""
+    OPENSEARCH_INDEX_PREFIX: "project"
     K8S_NOTEBOOK_ENABLED: "false"
     K8S_NOTEBOOK_NAMESPACE: "agent-notebooks"
     KUBECONFIG_PATH: ""
@@ -64,4 +80,7 @@ gitlab:
   enabled: false
 
 litellm:
+  enabled: false
+
+opensearch:
   enabled: false

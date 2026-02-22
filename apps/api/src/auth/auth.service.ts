@@ -79,11 +79,40 @@ export class AuthService {
     return user;
   }
 
+  async ensureInitialAdmin(email: string | undefined, password: string | undefined): Promise<{ created: boolean; password?: string }> {
+    if (!email) {
+      return { created: false };
+    }
+
+    const existing = await this.userRepository.findOne({ where: { email } });
+    if (existing) {
+      if (existing.globalRole !== GlobalRole.ADMIN) {
+        existing.globalRole = GlobalRole.ADMIN;
+        await this.userRepository.save(existing);
+      }
+      return { created: false };
+    }
+
+    const finalPassword = password ?? this.generateTempPassword();
+    const user = this.userRepository.create({
+      email,
+      passwordHash: await bcrypt.hash(finalPassword, 10),
+      displayName: email.split("@")[0],
+      globalRole: GlobalRole.ADMIN,
+    });
+    await this.userRepository.save(user);
+    return { created: true, password: password ? undefined : finalPassword };
+  }
+
   private async signToken(user: UserEntity): Promise<string> {
     return this.jwtService.signAsync({
       sub: user.id,
       email: user.email,
       role: user.globalRole,
     });
+  }
+
+  private generateTempPassword(): string {
+    return `Admin-${Math.random().toString(36).slice(2, 8)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 }

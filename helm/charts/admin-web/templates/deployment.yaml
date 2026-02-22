@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "admin-web.fullname" . }}
+  labels:
+    {{- include "admin-web.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "admin-web.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "admin-web.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: admin-web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          env:
+            - name: BACKEND_URL
+              value: http://{{ .Release.Name }}-api:{{ .Values.backend.servicePort }}

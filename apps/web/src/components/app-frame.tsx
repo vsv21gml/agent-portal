@@ -7,9 +7,10 @@ import { ReactNode } from "react";
 type Props = {
   title: string;
   children: ReactNode;
+  headerActions?: ReactNode;
 };
 
-export function AppFrame({ title, children }: Props) {
+export function AppFrame({ title, children, headerActions }: Props) {
   const [opened, { toggle }] = useDisclosure();
 
   return (
@@ -25,6 +26,7 @@ export function AppFrame({ title, children }: Props) {
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
             <Text fw={700}>{title}</Text>
           </Group>
+          {headerActions ? <Group gap="xs">{headerActions}</Group> : null}
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md">
