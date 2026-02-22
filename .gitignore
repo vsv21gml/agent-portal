@@ -4,6 +4,3 @@ node_modules
 dist
 coverage
 .env
-pnpm-lock.yaml
-yarn.lock
-package-lock.json
