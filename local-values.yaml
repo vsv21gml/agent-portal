@@ -1,0 +1,70 @@
+web:
+  ingress:
+    enabled: false
+
+adminWeb:
+  ingress:
+    enabled: false
+
+api:
+  env:
+    AUTH_BYPASS: "false"
+    INITIAL_ADMIN_EMAIL: "admin@samsung.com"
+    INITIAL_ADMIN_PASSWORD: "chrlghk123#"
+    JWT_SECRET: "change-me"
+    TYPEORM_SYNC: "true"
+    DB_HOST: "postgres"
+    DB_PORT: "5432"
+    DB_NAME: "agent_portal"
+    DB_USER: "postgres"
+    DB_PASSWORD: "postgres"
+    DB_SSL: "false"
+    K8S_NOTEBOOK_ENABLED: "true"
+    K8S_NOTEBOOK_NAMESPACE: "agent-notebooks"
+    K8S_NOTEBOOK_INGRESS_CLASS: "nginx"
+    KUBECONFIG_PATH: ""
+    NOTEBOOK_PVC: "shared-notebooks-pvc"
+    NOTEBOOK_IMAGE: "jupyter/base-notebook:latest"
+    NOTEBOOK_REQUEST_CPU: "1"
+    NOTEBOOK_REQUEST_MEM_GI: "2"
+    GITLAB_BASE_URL: "http://10.103.56.45:8181"
+    GITLAB_TOKEN: "b2496b212bb4267da162576e586c38a9a564595a"
+
+gitlab:
+  enabled: true
+  upgradeCheck:
+    enabled: false
+  global:
+    edition: ce
+    hosts:
+      domain: local
+    ingress:
+      configureCertmanager: false
+      class: nginx
+      tls:
+        enabled: false
+    psql:
+      host: postgres
+      port: 5432
+      username: gitlab
+      database: gitlabhq_production
+      password:
+        secret: gitlab-postgresql-password
+        key: postgresql-password
+    redis:
+      auth:
+        enabled: false
+      host: gitlab-redis
+      port: 6379
+  certmanager:
+    install: false
+  nginx-ingress:
+    enabled: false
+  prometheus:
+    install: false
+  gitlab-runner:
+    install: false
+  postgresql:
+    install: false
+  redis:
+    install: false
