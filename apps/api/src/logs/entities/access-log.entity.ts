@@ -5,7 +5,7 @@ export class AccessLogEntity {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  @Column({ nullable: true })
+  @Column({ type: "varchar", nullable: true })
   userId!: string | null;
 
   @Column()

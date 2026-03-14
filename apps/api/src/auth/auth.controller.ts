@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { GlobalRole } from "../common/enums/global-role.enum";
 import { Permission } from "../common/enums/permission.enum";
 import { Roles } from "./decorators/roles.decorator";
 import { Public } from "./decorators/public.decorator";
 import { AuthService } from "./auth.service";
+import { AcceptInvitationDto } from "./dto/accept-invitation.dto";
+import { CreateInvitationDto } from "./dto/create-invitation.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { UpdateRolePermissionsDto } from "./dto/update-role-permissions.dto";
@@ -41,6 +43,40 @@ export class AuthController {
   @Get("users")
   users() {
     return this.authService.listUsers();
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.READ_USER)
+  @Get("invitations")
+  invitations() {
+    return this.authService.listInvitations();
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_USER_ROLE)
+  @Post("invitations")
+  createInvitation(@Body() dto: CreateInvitationDto, @CurrentUser() user: JwtPayload) {
+    return this.authService.createInvitation(dto, user.sub);
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_USER_ROLE)
+  @Delete("invitations/:invitationId")
+  async deleteInvitation(@Param("invitationId") invitationId: string) {
+    await this.authService.deleteInvitation(invitationId);
+    return { success: true };
+  }
+
+  @Public()
+  @Get("invitations/:token")
+  invitationByToken(@Param("token") token: string) {
+    return this.authService.getInvitationByToken(token);
+  }
+
+  @Public()
+  @Post("invitations/:token/accept")
+  acceptInvitation(@Param("token") token: string, @Body() dto: AcceptInvitationDto) {
+    return this.authService.acceptInvitation(token, dto);
   }
 
   @Roles(GlobalRole.ADMIN)

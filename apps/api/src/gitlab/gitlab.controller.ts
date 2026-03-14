@@ -6,9 +6,9 @@ import { GitlabService } from "./gitlab.service";
 export class GitlabController {
   constructor(private readonly gitlabService: GitlabService) {}
 
-  @Post("projects/:projectId/group/:projectSlug")
-  ensureGroup(@Param("projectId") projectId: string, @Param("projectSlug") projectSlug: string) {
-    return this.gitlabService.ensureProjectGroup(projectId, projectSlug);
+  @Post("projects/:projectId/group")
+  ensureGroup(@Param("projectId") projectId: string) {
+    return this.gitlabService.ensureProjectGroup(projectId);
   }
 
   @Post("projects/:projectId/repos")

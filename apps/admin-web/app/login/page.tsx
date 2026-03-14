@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Group, Paper, PasswordInput, Stack, Tabs, Text, TextInput, Title } from "@mantine/core";
+import { Button, Group, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useState } from "react";
 import { setToken, clearToken } from "../../src/lib/auth";
@@ -16,16 +16,15 @@ function LoginContent() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const submit = async (path: "login" | "register") => {
+  const submit = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/auth/${path}`, {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(path === "login" ? { email, password } : { email, password, displayName }),
+        body: JSON.stringify({ email, password }),
       });
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`);
@@ -49,7 +48,7 @@ function LoginContent() {
     } catch {
       notifications.show({
         title: "Failed",
-        message: path === "login" ? "로그인에 실패했습니다." : "회원가입에 실패했습니다.",
+        message: "로그인에 실패했습니다.",
         color: "red",
       });
     } finally {
@@ -65,37 +64,22 @@ function LoginContent() {
           <Text size="sm" c="dimmed">
             관리자 계정으로 로그인하세요.
           </Text>
-          <Tabs defaultValue="login">
-            <Tabs.List grow>
-              <Tabs.Tab value="login">Login</Tabs.Tab>
-              <Tabs.Tab value="register">Register</Tabs.Tab>
-            </Tabs.List>
-
-            <Tabs.Panel value="login" pt="md">
-              <Stack>
-                <TextInput label="Email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
-                <PasswordInput label="Password" value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
-                <Group justify="end">
-                  <Button loading={loading} onClick={() => void submit("login")}>
-                    Login
-                  </Button>
-                </Group>
-              </Stack>
-            </Tabs.Panel>
-
-            <Tabs.Panel value="register" pt="md">
-              <Stack>
-                <TextInput label="Email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
-                <TextInput label="Display Name" value={displayName} onChange={(e) => setDisplayName(e.currentTarget.value)} />
-                <PasswordInput label="Password" value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
-                <Group justify="end">
-                  <Button loading={loading} onClick={() => void submit("register")}>
-                    Register
-                  </Button>
-                </Group>
-              </Stack>
-            </Tabs.Panel>
-          </Tabs>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <Stack>
+              <TextInput label="Email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
+              <PasswordInput label="Password" value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+              <Group justify="end">
+                <Button type="submit" loading={loading}>
+                  Login
+                </Button>
+              </Group>
+            </Stack>
+          </form>
         </Stack>
       </Paper>
     </Stack>

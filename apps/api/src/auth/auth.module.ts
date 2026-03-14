@@ -3,10 +3,13 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { GitlabModule } from "../gitlab/gitlab.module";
+import { LlmModule } from "../llm/llm.module";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { RolePermissionEntity } from "./entities/role-permission.entity";
 import { UserEntity } from "./entities/user.entity";
+import { UserInvitationEntity } from "./entities/user-invitation.entity";
 import { PermissionsService } from "./permissions.service";
 import { SsoController } from "./sso.controller";
 import { SsoService } from "./sso.service";
@@ -14,7 +17,9 @@ import { JwtStrategy } from "./strategies/jwt.strategy";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity, RolePermissionEntity]),
+    TypeOrmModule.forFeature([UserEntity, UserInvitationEntity, RolePermissionEntity]),
+    GitlabModule,
+    LlmModule,
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

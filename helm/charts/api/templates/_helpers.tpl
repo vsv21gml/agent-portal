@@ -12,3 +12,11 @@ app.kubernetes.io/component: api
 app.kubernetes.io/name: api
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{- define "api.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- default (include "api.fullname" .) .Values.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}

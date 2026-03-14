@@ -8,9 +8,9 @@ import { LlmService } from "./llm.service";
 export class LlmController {
   constructor(private readonly llmService: LlmService) {}
 
-  @Post("projects/:projectId/team/:projectSlug")
-  ensureTeam(@Param("projectId") projectId: string, @Param("projectSlug") projectSlug: string) {
-    return this.llmService.ensureTeam(projectId, projectSlug);
+  @Post("projects/:projectId/team")
+  ensureTeam(@Param("projectId") projectId: string) {
+    return this.llmService.ensureTeam(projectId);
   }
 
   @Post("projects/:projectId/keys")

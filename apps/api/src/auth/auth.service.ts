@@ -1,35 +1,34 @@
-import { ConflictException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcryptjs";
 import { JwtService } from "@nestjs/jwt";
-import { Repository } from "typeorm";
+import { randomUUID } from "crypto";
+import { IsNull, Repository } from "typeorm";
 import { GlobalRole } from "../common/enums/global-role.enum";
+import { GitlabService } from "../gitlab/gitlab.service";
+import { LlmService } from "../llm/llm.service";
+import { AcceptInvitationDto } from "./dto/accept-invitation.dto";
+import { CreateInvitationDto } from "./dto/create-invitation.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { UserEntity } from "./entities/user.entity";
+import { UserInvitationEntity } from "./entities/user-invitation.entity";
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(UserInvitationEntity)
+    private readonly invitationRepository: Repository<UserInvitationEntity>,
     private readonly jwtService: JwtService,
+    private readonly gitlabService: GitlabService,
+    private readonly llmService: LlmService,
   ) {}
 
   async register(dto: RegisterDto): Promise<{ accessToken: string }> {
-    const exists = await this.userRepository.findOne({ where: { email: dto.email } });
-    if (exists) {
-      throw new ConflictException("Email already exists");
-    }
-
-    const user = this.userRepository.create({
-      email: dto.email,
-      passwordHash: await bcrypt.hash(dto.password, 10),
-      displayName: dto.displayName?.trim() || dto.email.split("@")[0],
-      globalRole: GlobalRole.USER,
-    });
-    const saved = await this.userRepository.save(user);
-    return { accessToken: await this.signToken(saved) };
+    void dto;
+    throw new ForbiddenException("Registration is disabled");
   }
 
   async login(dto: LoginDto): Promise<{ accessToken: string }> {
@@ -60,6 +59,85 @@ export class AuthService {
     return this.userRepository.save(user);
   }
 
+  async listInvitations(): Promise<UserInvitationEntity[]> {
+    return this.invitationRepository.find({
+      where: { acceptedAt: IsNull() },
+      order: { createdAt: "DESC" },
+    });
+  }
+
+  async createInvitation(dto: CreateInvitationDto, invitedByUserId: string): Promise<UserInvitationEntity> {
+    const email = dto.email.trim().toLowerCase();
+    const displayName = dto.displayName.trim() || email.split("@")[0];
+    const existingUser = await this.userRepository.findOne({ where: { email } });
+    if (existingUser) {
+      throw new ConflictException("Email already exists");
+    }
+
+    const existingInvite = await this.invitationRepository.findOne({ where: { email, acceptedAt: IsNull() } });
+    if (existingInvite) {
+      existingInvite.displayName = displayName;
+      existingInvite.globalRole = dto.globalRole;
+      existingInvite.token = randomUUID();
+      existingInvite.invitedByUserId = invitedByUserId;
+      return this.invitationRepository.save(existingInvite);
+    }
+
+    return this.invitationRepository.save(
+      this.invitationRepository.create({
+        email,
+        displayName,
+        globalRole: dto.globalRole,
+        token: randomUUID(),
+        invitedByUserId,
+        acceptedAt: null,
+      }),
+    );
+  }
+
+  async deleteInvitation(invitationId: string): Promise<void> {
+    const invitation = await this.invitationRepository.findOne({ where: { id: invitationId, acceptedAt: IsNull() } });
+    if (!invitation) {
+      throw new NotFoundException("Invitation not found");
+    }
+
+    await this.invitationRepository.delete({ id: invitationId });
+  }
+
+  async getInvitationByToken(token: string): Promise<UserInvitationEntity> {
+    const invitation = await this.invitationRepository.findOne({ where: { token } });
+    if (!invitation || invitation.acceptedAt) {
+      throw new NotFoundException("Invitation not found");
+    }
+    return invitation;
+  }
+
+  async acceptInvitation(token: string, dto: AcceptInvitationDto): Promise<{ accessToken: string; role: GlobalRole }> {
+    const invitation = await this.getInvitationByToken(token);
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    let user = await this.userRepository.findOne({ where: { email: invitation.email } });
+
+    if (user) {
+      user.passwordHash = passwordHash;
+      user.displayName = invitation.displayName;
+      user.globalRole = invitation.globalRole;
+    } else {
+      user = this.userRepository.create({
+        email: invitation.email,
+        passwordHash,
+        displayName: invitation.displayName,
+        globalRole: invitation.globalRole,
+      });
+    }
+
+    const saved = await this.userRepository.save(user);
+    invitation.acceptedAt = new Date();
+    await this.invitationRepository.save(invitation);
+    await this.gitlabService.ensureUser(saved.email, saved.displayName, dto.password);
+    await this.llmService.ensureUserVirtualKey(saved.id, saved.email, saved.displayName);
+    return { accessToken: await this.signToken(saved), role: saved.globalRole };
+  }
+
   async issueTokenForUser(user: UserEntity): Promise<{ accessToken: string }> {
     return { accessToken: await this.signToken(user) };
   }
@@ -67,15 +145,22 @@ export class AuthService {
   async upsertSsoUser(email: string, displayName?: string): Promise<UserEntity> {
     let user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
+      const tempPassword = `sso-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       user = await this.userRepository.save(
         this.userRepository.create({
           email,
-          passwordHash: await bcrypt.hash(`sso-${Date.now()}`, 10),
+          passwordHash: await bcrypt.hash(tempPassword, 10),
           displayName: displayName?.trim() || email.split("@")[0],
           globalRole: GlobalRole.USER,
         }),
       );
+      await this.gitlabService.ensureUser(user.email, user.displayName, tempPassword);
+      await this.llmService.ensureUserVirtualKey(user.id, user.email, user.displayName);
+      return user;
     }
+
+    await this.gitlabService.ensureUser(user.email, user.displayName);
+    await this.llmService.ensureUserVirtualKey(user.id, user.email, user.displayName);
     return user;
   }
 
@@ -90,6 +175,8 @@ export class AuthService {
         existing.globalRole = GlobalRole.ADMIN;
         await this.userRepository.save(existing);
       }
+      await this.gitlabService.ensureUser(existing.email, existing.displayName, password);
+      await this.llmService.ensureUserVirtualKey(existing.id, existing.email, existing.displayName);
       return { created: false };
     }
 
@@ -101,6 +188,8 @@ export class AuthService {
       globalRole: GlobalRole.ADMIN,
     });
     await this.userRepository.save(user);
+    await this.gitlabService.ensureUser(user.email, user.displayName, finalPassword);
+    await this.llmService.ensureUserVirtualKey(user.id, user.email, user.displayName);
     return { created: true, password: password ? undefined : finalPassword };
   }
 
