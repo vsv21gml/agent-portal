@@ -26,7 +26,10 @@ For changes that affect `apps/api`, `apps/web`, or `apps/admin-web`, assume loca
 Use TypeScript throughout. Follow the existing style: 2-space indentation, double quotes, semicolons, and small focused functions. Use `PascalCase` for React components and Nest classes, `camelCase` for variables/functions, and kebab-case for non-code filenames where applicable. Prefer colocating page logic in `app/.../page.tsx` and API modules under `src/<domain>/`.
 
 Frontend work in `apps/web` and `apps/admin-web` must use Mantine components and patterns. Do not introduce parallel UI libraries for core layout, forms, buttons, modals, tables, or overlays unless the repository already requires them in that exact area.
+<<<<<<< HEAD
 For frontend loading states, overlays, drawers, modals, tables, and form controls, use Mantine's built-in components first instead of custom implementations or parallel libraries.
+=======
+>>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
 
 Lint scripts are not configured yet, so `tsc --noEmit` is the minimum required validation.
 

@@ -4,12 +4,16 @@ import { JwtModule } from "@nestjs/jwt";
 import { PassportModule } from "@nestjs/passport";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { GitlabModule } from "../gitlab/gitlab.module";
+<<<<<<< HEAD
 import { GitlabMemberSyncEntity } from "../gitlab/entities/gitlab-member-sync.entity";
 import { LlmModule } from "../llm/llm.module";
 import { LiteLlmUserKeyEntity } from "../llm/entities/litellm-user-key.entity";
 import { ProjectMemberEntity } from "../projects/entities/project-member.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 import { VectorKeyEntity } from "../vectordb/entities/vector-key.entity";
+=======
+import { LlmModule } from "../llm/llm.module";
+>>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { RolePermissionEntity } from "./entities/role-permission.entity";
@@ -22,6 +26,7 @@ import { JwtStrategy } from "./strategies/jwt.strategy";
 
 @Module({
   imports: [
+<<<<<<< HEAD
     TypeOrmModule.forFeature([
       UserEntity,
       UserInvitationEntity,
@@ -32,6 +37,9 @@ import { JwtStrategy } from "./strategies/jwt.strategy";
       VectorKeyEntity,
       WorkspaceSessionEntity,
     ]),
+=======
+    TypeOrmModule.forFeature([UserEntity, UserInvitationEntity, RolePermissionEntity]),
+>>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
     GitlabModule,
     LlmModule,
     PassportModule.register({ defaultStrategy: "jwt" }),

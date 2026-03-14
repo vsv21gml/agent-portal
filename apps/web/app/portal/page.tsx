@@ -95,9 +95,16 @@ export default function UserPortalPage() {
     <AppFrame title="User Portal" hideNavbar>
       <Stack pos="relative">
         <LoadingOverlay
+<<<<<<< HEAD
           visible={authChecking}
           zIndex={1000}
           overlayProps={{ radius: "sm", blur: 2 }}
+=======
+          visible={authChecking || creatingProject}
+          zIndex={1000}
+          overlayProps={{ radius: "sm", blur: 2 }}
+          loaderProps={{ children: creatingProject ? "Creating project..." : undefined }}
+>>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
         />
         <TextInput
           placeholder="Search by project name or description"
@@ -137,6 +144,7 @@ export default function UserPortalPage() {
         closeOnEscape={!creatingProject}
         withCloseButton={!creatingProject}
       >
+<<<<<<< HEAD
         <Stack pos="relative">
           <LoadingOverlay
             visible={creatingProject}
@@ -144,6 +152,9 @@ export default function UserPortalPage() {
             overlayProps={{ radius: "sm", blur: 2 }}
             loaderProps={{ children: "Creating project..." }}
           />
+=======
+        <Stack>
+>>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
           <TextInput
             label="Project Name"
             value={name}

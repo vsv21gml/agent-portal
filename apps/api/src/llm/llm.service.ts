@@ -17,8 +17,11 @@ type LiteLlmKeyResponse = {
 
 @Injectable()
 export class LlmService {
+<<<<<<< HEAD
   private static readonly TEAM_MAX_BUDGET_USD = 200;
   private static readonly TEAM_BUDGET_DURATION = "30d";
+=======
+>>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
   private static readonly USER_MAX_BUDGET_USD = 100;
   private static readonly USER_BUDGET_DURATION = "1mo";
 
