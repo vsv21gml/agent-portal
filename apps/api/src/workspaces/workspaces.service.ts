@@ -260,6 +260,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     const liteLlmBaseUrl = this.configService.get<string>("LITELLM_BASE_URL")?.trim().replace(/\/+$/, "") ?? "";
     const devcontainer = this.buildDevcontainerJson(session.runtime);
     const gitSetupScript = [
+      "git config --global --add safe.directory /workspace/repo || true",
       "if git -C /workspace/repo rev-parse --is-inside-work-tree >/dev/null 2>&1; then",
       "  git -C /workspace/repo config user.name \"$GIT_USER_NAME\"",
       "  git -C /workspace/repo config user.email \"$GIT_USER_EMAIL\"",
