@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { Breadcrumbs, Card, LoadingOverlay, Paper, SimpleGrid, Stack, Text } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AppFrame } from "../../../src/components/app-frame";
-import { ProfileMenu } from "../../../src/components/profile-menu";
-import { ApiError, apiFetch } from "../../../src/lib/api-client";
-import { toastError } from "../../../src/lib/toast";
+import { AdminFrame } from "../../src/components/admin-frame";
+import { ProfileMenu } from "../../src/components/profile-menu";
+import { ApiError, apiFetch } from "../../src/lib/api-client";
 
 type MyProfile = {
   sub: string;
@@ -26,7 +26,7 @@ type MyLiteLlmUsage = {
   budgetResetAt: string | null;
 };
 
-export default function ProfilePage() {
+export default function AdminProfilePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<MyProfile | null>(null);
@@ -40,14 +40,22 @@ export default function ProfilePage() {
           apiFetch<MyProfile>("auth/me"),
           apiFetch<MyLiteLlmUsage>("llm/me/usage"),
         ]);
+        if (me.role !== "admin") {
+          router.replace("/login?next=/");
+          return;
+        }
         setProfile(me);
         setUsage(usageInfo);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          router.replace("/login?next=/portal/profile");
+          router.replace("/login?next=/profile");
           return;
         }
-        toastError("Failed to load profile.");
+        notifications.show({
+          title: "Failed",
+          message: "Failed to load profile.",
+          color: "red",
+        });
       } finally {
         setLoading(false);
       }
@@ -58,15 +66,15 @@ export default function ProfilePage() {
 
   const breadcrumbs = (
     <Breadcrumbs separator=">">
-      <Text component={Link} href="/portal" inherit>
-        User Portal
+      <Text component={Link} href="/" inherit>
+        Admin Web
       </Text>
       <Text inherit>Profile</Text>
     </Breadcrumbs>
   );
 
   return (
-    <AppFrame title={breadcrumbs} headerActions={<ProfileMenu />} hideNavbar>
+    <AdminFrame title={breadcrumbs} headerActions={<ProfileMenu />} hideNavbar>
       <Stack pos="relative" gap="lg">
         <LoadingOverlay visible={loading} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
 
@@ -123,7 +131,7 @@ export default function ProfilePage() {
           </Card>
         </SimpleGrid>
       </Stack>
-    </AppFrame>
+    </AdminFrame>
   );
 }
 

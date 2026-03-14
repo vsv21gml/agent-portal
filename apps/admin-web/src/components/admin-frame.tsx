@@ -14,6 +14,7 @@ type Props = {
   title?: ReactNode;
   children: ReactNode;
   headerActions?: ReactNode;
+  hideNavbar?: boolean;
   navbar?: ReactNode;
   navbarWidth?: number;
   navigation?: AdminNavItem[];
@@ -25,6 +26,7 @@ export function AdminFrame({
   title = "Admin Web Console",
   children,
   headerActions,
+  hideNavbar = false,
   navbar,
   navbarWidth = 260,
   navigation,
@@ -35,14 +37,6 @@ export function AdminFrame({
   const sanitizedNavigation = navigation?.filter((item) => !item.label.toLowerCase().includes("testkey1"));
   const sidebar = sanitizedNavigation ? (
     <Stack gap="lg">
-      <Stack gap={2}>
-        <Text size="xs" tt="uppercase" fw={700} c="dimmed">
-          Console
-        </Text>
-        <Text size="sm" c="dimmed">
-          Workspace administration
-        </Text>
-      </Stack>
       <Stack gap="xs">
         {sanitizedNavigation.map((item) => (
           <NavLink
@@ -63,28 +57,25 @@ export function AdminFrame({
   return (
     <AppShell
       header={{ height: 64 }}
-      navbar={{ width: navbarWidth, breakpoint: "sm", collapsed: { mobile: !opened } }}
+      navbar={hideNavbar ? undefined : { width: navbarWidth, breakpoint: "sm", collapsed: { mobile: !opened } }}
       padding="md"
       style={{ height: "100dvh", overflow: "hidden" }}
     >
-      <AppShell.Header>
+      <AppShell.Header style={{ borderBottom: "1px solid var(--border-color)", background: "rgba(255,255,255,0.82)" }}>
         <Group h="100%" px="md" justify="space-between">
           <Group gap="sm">
-            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
-            <Stack gap={0}>
-              <Text fw={700}>{title}</Text>
-              <Text size="xs" c="dimmed">
-                Operations console
-              </Text>
-            </Stack>
+            {hideNavbar ? null : <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />}
+            <Text fw={700}>{title}</Text>
           </Group>
           {headerActions ? <Group gap="xs">{headerActions}</Group> : null}
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p="md" style={{ borderInlineEnd: "1px solid var(--mantine-color-gray-3)" }}>
-        <ScrollArea>{sidebar}</ScrollArea>
-      </AppShell.Navbar>
+      {hideNavbar ? null : (
+        <AppShell.Navbar p="md" style={{ borderInlineEnd: "1px solid var(--border-color)", background: "rgba(255,255,255,0.72)" }}>
+          <ScrollArea>{sidebar}</ScrollArea>
+        </AppShell.Navbar>
+      )}
 
       <AppShell.Main style={{ height: "calc(100dvh - 64px)", overflow: "auto" }}>{children}</AppShell.Main>
     </AppShell>

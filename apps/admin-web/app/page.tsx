@@ -12,7 +12,6 @@ import {
   Select,
   Stack,
   Table,
-  Tabs,
   Text,
   TextInput,
   Textarea,
@@ -22,6 +21,7 @@ import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AdminFrame } from "../src/components/admin-frame";
+import { ProfileMenu } from "../src/components/profile-menu";
 import { ApiError, apiFetch } from "../src/lib/api-client";
 import { clearToken } from "../src/lib/auth";
 
@@ -121,6 +121,7 @@ function fallbackCopyText(text: string): boolean {
 
 export default function AdminPage() {
   const router = useRouter();
+  const [activeSection, setActiveSection] = useState("users");
   const [users, setUsers] = useState<UserRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -404,234 +405,233 @@ export default function AdminPage() {
     return projects.slice(start, start + PAGE_SIZE);
   }, [activePage, projects]);
 
+  const navigation = [
+    { key: "users", label: "Users" },
+    { key: "projects", label: "Projects" },
+    { key: "resources", label: "Resources" },
+    { key: "gitlab", label: "GitLab" },
+    { key: "audit", label: "Audit" },
+    { key: "access", label: "Access" },
+  ];
+
   return (
-    <AdminFrame>
+    <AdminFrame
+      headerActions={<ProfileMenu />}
+      navigation={navigation}
+      activeNav={activeSection}
+      onNavigate={setActiveSection}
+    >
       <Stack pos="relative">
         <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
-        <Tabs defaultValue="users">
-          <Tabs.List>
-            <Tabs.Tab value="users">Users</Tabs.Tab>
-            <Tabs.Tab value="projects">Projects</Tabs.Tab>
-            <Tabs.Tab value="resources">Resources</Tabs.Tab>
-            <Tabs.Tab value="gitlab">GitLab</Tabs.Tab>
-            <Tabs.Tab value="audit">Audit</Tabs.Tab>
-            <Tabs.Tab value="access">Access</Tabs.Tab>
-          </Tabs.List>
+        {activeSection === "users" ? (
+          <Paper withBorder p="md">
+            <Group justify="space-between" align="center">
+              <Title order={4}>Users</Title>
+              <Button variant="light" onClick={() => setInviteOpen(true)}>
+                Invite User
+              </Button>
+            </Group>
 
-          <Tabs.Panel value="users" pt="md">
-            <Paper withBorder p="md">
-              <Group justify="space-between" align="center">
-                <Title order={4}>Users</Title>
-                <Button variant="light" onClick={() => setInviteOpen(true)}>
-                  Invite User
-                </Button>
-              </Group>
-
-              <ScrollArea mt="sm">
-                <Table withTableBorder>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Email</Table.Th>
-                      <Table.Th>Name</Table.Th>
-                      <Table.Th>Role</Table.Th>
-                      <Table.Th>Action</Table.Th>
+            <ScrollArea mt="sm">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Email</Table.Th>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Role</Table.Th>
+                    <Table.Th>Action</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {users.map((user) => (
+                    <Table.Tr key={user.id}>
+                      <Table.Td>{user.email}</Table.Td>
+                      <Table.Td>{user.displayName}</Table.Td>
+                      <Table.Td>
+                        <Badge>{user.globalRole}</Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap="xs">
+                          <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(user.id, "admin")}>
+                            ADMIN
+                          </Badge>
+                          <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(user.id, "user")}>
+                            USER
+                          </Badge>
+                        </Group>
+                      </Table.Td>
                     </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {users.map((user) => (
-                      <Table.Tr key={user.id}>
-                        <Table.Td>{user.email}</Table.Td>
-                        <Table.Td>{user.displayName}</Table.Td>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+
+            <Title order={5} mt="xl">
+              Pending Invitations
+            </Title>
+            <ScrollArea mt="sm">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Email</Table.Th>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Role</Table.Th>
+                    <Table.Th>Created</Table.Th>
+                    <Table.Th>Link</Table.Th>
+                    <Table.Th>Delete</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {invitations.length === 0 ? (
+                    <Table.Tr>
+                      <Table.Td colSpan={6}>
+                        <Text size="sm" c="dimmed">
+                          No pending invitations.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  ) : (
+                    invitations.map((invitation) => (
+                      <Table.Tr key={invitation.id}>
+                        <Table.Td>{invitation.email}</Table.Td>
+                        <Table.Td>{invitation.displayName}</Table.Td>
+                        <Table.Td>{invitation.globalRole}</Table.Td>
+                        <Table.Td>{new Date(invitation.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>
-                          <Badge>{user.globalRole}</Badge>
-                        </Table.Td>
-                        <Table.Td>
-                          <Group gap="xs">
-                            <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(user.id, "admin")}>
-                              ADMIN
-                            </Badge>
-                            <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(user.id, "user")}>
-                              USER
-                            </Badge>
+                          <Group gap="xs" wrap="nowrap">
+                            <TextInput value={buildPortalInviteUrl(invitation.token)} readOnly styles={{ input: { minWidth: 320 } }} />
+                            <Button size="xs" variant="light" onClick={() => void copyInvitationLink(invitation.token)}>
+                              Copy
+                            </Button>
                           </Group>
                         </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-
-              <Title order={5} mt="xl">
-                Pending Invitations
-              </Title>
-              <ScrollArea mt="sm">
-                <Table withTableBorder>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Email</Table.Th>
-                      <Table.Th>Name</Table.Th>
-                      <Table.Th>Role</Table.Th>
-                      <Table.Th>Created</Table.Th>
-                      <Table.Th>Link</Table.Th>
-                      <Table.Th>Delete</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {invitations.length === 0 ? (
-                      <Table.Tr>
-                        <Table.Td colSpan={6}>
-                          <Text size="sm" c="dimmed">
-                            No pending invitations.
-                          </Text>
-                        </Table.Td>
-                      </Table.Tr>
-                    ) : (
-                      invitations.map((invitation) => (
-                        <Table.Tr key={invitation.id}>
-                          <Table.Td>{invitation.email}</Table.Td>
-                          <Table.Td>{invitation.displayName}</Table.Td>
-                          <Table.Td>{invitation.globalRole}</Table.Td>
-                          <Table.Td>{new Date(invitation.createdAt).toLocaleString()}</Table.Td>
-                          <Table.Td>
-                            <Group gap="xs" wrap="nowrap">
-                              <TextInput
-                                value={buildPortalInviteUrl(invitation.token)}
-                                readOnly
-                                styles={{ input: { minWidth: 320 } }}
-                              />
-                              <Button size="xs" variant="light" onClick={() => void copyInvitationLink(invitation.token)}>
-                                Copy
-                              </Button>
-                            </Group>
-                          </Table.Td>
-                          <Table.Td>
-                            <Button
-                              size="xs"
-                              color="red"
-                              variant="subtle"
-                              loading={deletingInvitationId === invitation.id}
-                              onClick={() => void deleteInvitation(invitation.id)}
-                            >
-                              Delete
-                            </Button>
-                          </Table.Td>
-                        </Table.Tr>
-                      ))
-                    )}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Paper>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="projects" pt="md">
-            <Paper withBorder p="md">
-              <Title order={4}>Projects</Title>
-              <ScrollArea mt="sm">
-                <Table withTableBorder>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Name</Table.Th>
-                      <Table.Th>ID</Table.Th>
-                      <Table.Th>Created</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {pagedProjects.map((project) => (
-                      <Table.Tr key={project.id} onClick={() => setDetailProject(project)} style={{ cursor: "pointer" }}>
-                        <Table.Td>{project.name}</Table.Td>
-                        <Table.Td>{project.id}</Table.Td>
-                        <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-              <Group justify="end" mt="md">
-                <Pagination total={projectPages} value={activePage} onChange={setActivePage} />
-              </Group>
-            </Paper>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="resources" pt="md">
-            <Paper withBorder p="md">
-              <Title order={4}>Notebook Resource Status</Title>
-              <ScrollArea mt="sm">
-                <Table withTableBorder>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Project</Table.Th>
-                      <Table.Th>CPU(used/limit)</Table.Th>
-                      <Table.Th>MEM Gi(used/limit)</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {resourceRows.map((resource) => (
-                      <Table.Tr key={resource.projectId}>
-                        <Table.Td>{resource.projectName}</Table.Td>
                         <Table.Td>
-                          {resource.usage.usedCpu}/{resource.limit.cpu}
-                        </Table.Td>
-                        <Table.Td>
-                          {resource.usage.usedMemoryGi}/{resource.limit.memoryGi}
+                          <Button
+                            size="xs"
+                            color="red"
+                            variant="subtle"
+                            loading={deletingInvitationId === invitation.id}
+                            onClick={() => void deleteInvitation(invitation.id)}
+                          >
+                            Delete
+                          </Button>
                         </Table.Td>
                       </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Paper>
-          </Tabs.Panel>
+                    ))
+                  )}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          </Paper>
+        ) : null}
 
-          <Tabs.Panel value="gitlab" pt="md">
-            <Paper withBorder p="md">
-              <Title order={4}>GitLab Group Status</Title>
-              <Stack mt="sm">
-                {groups.map((group) => (
-                  <Text size="sm" key={group.id}>
-                    {group.groupPath} (project: {group.projectId})
-                  </Text>
-                ))}
-              </Stack>
-              <Title order={5} mt="md">
-                GitLab Repo Status
-              </Title>
-              <Stack mt="sm">
-                {repos.map((repo) => (
-                  <Text size="sm" key={repo.id}>
-                    {repo.namespacePath}
-                  </Text>
-                ))}
-              </Stack>
-            </Paper>
-          </Tabs.Panel>
+        {activeSection === "projects" ? (
+          <Paper withBorder p="md">
+            <Title order={4}>Projects</Title>
+            <ScrollArea mt="sm">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>ID</Table.Th>
+                    <Table.Th>Created</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {pagedProjects.map((project) => (
+                    <Table.Tr key={project.id} onClick={() => setDetailProject(project)} style={{ cursor: "pointer" }}>
+                      <Table.Td>{project.name}</Table.Td>
+                      <Table.Td>{project.id}</Table.Td>
+                      <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+            <Group justify="end" mt="md">
+              <Pagination total={projectPages} value={activePage} onChange={setActivePage} />
+            </Group>
+          </Paper>
+        ) : null}
 
-          <Tabs.Panel value="audit" pt="md">
-            <Paper withBorder p="md">
-              <Title order={4}>Audit Logs</Title>
-              <Stack mt="sm">
-                {auditLogs.map((log) => (
-                  <Text key={log.id} size="sm">
-                    [{new Date(log.createdAt).toLocaleString()}] {log.method} {log.path}
-                  </Text>
-                ))}
-              </Stack>
-            </Paper>
-          </Tabs.Panel>
+        {activeSection === "resources" ? (
+          <Paper withBorder p="md">
+            <Title order={4}>Workspace Resource Status</Title>
+            <ScrollArea mt="sm">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Project</Table.Th>
+                    <Table.Th>CPU(used/limit)</Table.Th>
+                    <Table.Th>MEM Gi(used/limit)</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {resourceRows.map((resource) => (
+                    <Table.Tr key={resource.projectId}>
+                      <Table.Td>{resource.projectName}</Table.Td>
+                      <Table.Td>
+                        {resource.usage.usedCpu}/{resource.limit.cpu}
+                      </Table.Td>
+                      <Table.Td>
+                        {resource.usage.usedMemoryGi}/{resource.limit.memoryGi}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          </Paper>
+        ) : null}
 
-          <Tabs.Panel value="access" pt="md">
-            <Paper withBorder p="md">
-              <Title order={4}>Access Logs</Title>
-              <Stack mt="sm">
-                {accessLogs.map((log) => (
-                  <Text key={log.id} size="sm">
-                    [{new Date(log.createdAt).toLocaleString()}] {log.method} {log.path} ({log.statusCode} / {log.elapsedMs}ms)
-                  </Text>
-                ))}
-              </Stack>
-            </Paper>
-          </Tabs.Panel>
-        </Tabs>
+        {activeSection === "gitlab" ? (
+          <Paper withBorder p="md">
+            <Title order={4}>GitLab Group Status</Title>
+            <Stack mt="sm">
+              {groups.map((group) => (
+                <Text size="sm" key={group.id}>
+                  {group.groupPath} (project: {group.projectId})
+                </Text>
+              ))}
+            </Stack>
+            <Title order={5} mt="md">
+              GitLab Repo Status
+            </Title>
+            <Stack mt="sm">
+              {repos.map((repo) => (
+                <Text size="sm" key={repo.id}>
+                  {repo.namespacePath}
+                </Text>
+              ))}
+            </Stack>
+          </Paper>
+        ) : null}
+
+        {activeSection === "audit" ? (
+          <Paper withBorder p="md">
+            <Title order={4}>Audit Logs</Title>
+            <Stack mt="sm">
+              {auditLogs.map((log) => (
+                <Text key={log.id} size="sm">
+                  [{new Date(log.createdAt).toLocaleString()}] {log.method} {log.path}
+                </Text>
+              ))}
+            </Stack>
+          </Paper>
+        ) : null}
+
+        {activeSection === "access" ? (
+          <Paper withBorder p="md">
+            <Title order={4}>Access Logs</Title>
+            <Stack mt="sm">
+              {accessLogs.map((log) => (
+                <Text key={log.id} size="sm">
+                  [{new Date(log.createdAt).toLocaleString()}] {log.method} {log.path} ({log.statusCode} / {log.elapsedMs}ms)
+                </Text>
+              ))}
+            </Stack>
+          </Paper>
+        ) : null}
       </Stack>
 
       <Drawer opened={detailProject !== null} onClose={() => setDetailProject(null)} title="Project Detail" position="right">

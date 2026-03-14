@@ -60,7 +60,7 @@ function LoginContent() {
     <Stack align="center" justify="center" h="100dvh">
       <Paper withBorder shadow="sm" p="xl" radius="lg" miw={360}>
         <Stack>
-          <Title order={3}>Admin Console</Title>
+          <Title order={3}>Admin Web</Title>
           <Text size="sm" c="dimmed">
             관리자 계정으로 로그인하세요.
           </Text>

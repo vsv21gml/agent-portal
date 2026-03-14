@@ -5,8 +5,9 @@ import { Notifications } from "@mantine/notifications";
 import { ReactNode } from "react";
 
 const theme = createTheme({
-  primaryColor: "teal",
-  fontFamily: "IBM Plex Sans, sans-serif",
+  primaryColor: "cyan",
+  fontFamily: "Space Grotesk, sans-serif",
+  defaultRadius: "md",
 });
 
 export function Providers({ children }: { children: ReactNode }) {
