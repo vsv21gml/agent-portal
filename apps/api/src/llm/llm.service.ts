@@ -25,6 +25,7 @@ type LiteLlmUserInfo = {
 
 type LiteLlmKeyInfo = {
   max_budget?: number | null;
+  soft_budget?: number | null;
   spend?: number | null;
   budget_duration?: string | null;
   budget_reset_at?: string | null;
@@ -183,10 +184,10 @@ export class LlmService {
 
     const totals = spendLogs.reduce(
       (acc, row) => {
-        acc.currentMonthSpendUsd += row.spend ?? 0;
-        acc.currentMonthTotalTokens += row.total_tokens ?? 0;
-        acc.currentMonthPromptTokens += row.prompt_tokens ?? 0;
-        acc.currentMonthCompletionTokens += row.completion_tokens ?? 0;
+        acc.currentMonthSpendUsd += this.toNumber(row.spend);
+        acc.currentMonthTotalTokens += this.toNumber(row.total_tokens);
+        acc.currentMonthPromptTokens += this.toNumber(row.prompt_tokens);
+        acc.currentMonthCompletionTokens += this.toNumber(row.completion_tokens);
         return acc;
       },
       {
@@ -199,7 +200,12 @@ export class LlmService {
 
     return {
       ...totals,
-      currentMonthBudgetUsd: keyInfo?.max_budget ?? userInfo?.max_budget ?? userKey.maxBudgetUsd ?? null,
+      currentMonthSpendUsd:
+        totals.currentMonthSpendUsd > 0
+          ? totals.currentMonthSpendUsd
+          : this.toNumber(keyInfo?.spend) || this.toNumber(userInfo?.spend),
+      currentMonthBudgetUsd:
+        keyInfo?.max_budget ?? keyInfo?.soft_budget ?? userInfo?.max_budget ?? userKey.maxBudgetUsd ?? null,
       budgetDuration: keyInfo?.budget_duration ?? userInfo?.budget_duration ?? userKey.budgetDuration ?? null,
       budgetResetAt: keyInfo?.budget_reset_at ?? userInfo?.budget_reset_at ?? null,
     };
@@ -300,7 +306,39 @@ export class LlmService {
       return [];
     }
 
-    return (await response.json()) as LiteLlmSpendLog[];
+    return this.parseSpendLogsResponse(await response.json());
+  }
+
+  private parseSpendLogsResponse(payload: unknown): LiteLlmSpendLog[] {
+    if (Array.isArray(payload)) {
+      return payload as LiteLlmSpendLog[];
+    }
+
+    if (payload && typeof payload === "object") {
+      const record = payload as Record<string, unknown>;
+      if (Array.isArray(record.data)) {
+        return record.data as LiteLlmSpendLog[];
+      }
+      if (Array.isArray(record.logs)) {
+        return record.logs as LiteLlmSpendLog[];
+      }
+      if (Array.isArray(record.spend_logs)) {
+        return record.spend_logs as LiteLlmSpendLog[];
+      }
+    }
+
+    return [];
+  }
+
+  private toNumber(value: unknown): number {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
   }
 
   private async createRemoteUserWithKey(
