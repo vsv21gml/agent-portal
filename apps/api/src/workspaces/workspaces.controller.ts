@@ -33,6 +33,16 @@ export class WorkspacesController {
     return this.workspacesService.updateWorkspaceRuntime(workspaceId, user.sub, dto.runtime);
   }
 
+  @Post(":workspaceId/stop")
+  stopWorkspace(@Param("workspaceId") workspaceId: string, @CurrentUser() user: JwtPayload) {
+    return this.workspacesService.stopWorkspace(workspaceId, user.sub);
+  }
+
+  @Post(":workspaceId/restart")
+  restartWorkspace(@Param("workspaceId") workspaceId: string, @CurrentUser() user: JwtPayload) {
+    return this.workspacesService.restartWorkspace(workspaceId, user.sub);
+  }
+
   @Delete(":workspaceId")
   deleteWorkspace(@Param("workspaceId") workspaceId: string, @CurrentUser() user: JwtPayload) {
     return this.workspacesService.deleteWorkspace(workspaceId, user.sub);

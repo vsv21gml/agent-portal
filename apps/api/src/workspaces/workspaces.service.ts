@@ -171,6 +171,31 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     return this.refreshWorkspaceStatus(session);
   }
 
+  async stopWorkspace(workspaceId: string, userId: string): Promise<WorkspaceSessionEntity> {
+    const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
+    await this.deleteActiveWorkspaceResources(session);
+    session.status = "stopped";
+    return this.workspaceRepository.save(session);
+  }
+
+  async restartWorkspace(workspaceId: string, userId: string): Promise<WorkspaceSessionEntity> {
+    const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
+    const repo = await this.gitlabService.getRepo(session.projectId, session.repoId);
+    const user = await this.authService.findById(userId);
+    const llmUserKey = user
+      ? await this.llmService.ensureUserVirtualKey(userId, user.email, user.displayName)
+      : null;
+
+    session.status = "provisioning";
+    await this.workspaceRepository.save(session);
+    await this.provisionWorkspace(session, repo, {
+      gitUserName: user?.displayName?.trim() || user?.email || "Workspace User",
+      gitUserEmail: user?.email || "workspace@example.com",
+      liteLlmApiKey: llmUserKey?.apiKey ?? "",
+    });
+    return this.refreshWorkspaceStatus(session);
+  }
+
   async deleteWorkspace(workspaceId: string, userId: string): Promise<{ id: string }> {
     const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
 
@@ -503,12 +528,16 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deleteWorkspaceResources(session: WorkspaceSessionEntity): Promise<void> {
+    await this.deleteActiveWorkspaceResources(session);
+    await this.deletePvc(session);
+  }
+
+  private async deleteActiveWorkspaceResources(session: WorkspaceSessionEntity): Promise<void> {
     await Promise.all([
       this.deleteIngress(session),
       this.deleteService(session),
     ]);
     await this.deleteDeployment(session);
-    await this.deletePvc(session);
   }
 
   private async ensureService(session: WorkspaceSessionEntity): Promise<void> {
@@ -895,6 +924,9 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
 
       return session;
     } catch (error) {
+      if (session.status === "stopped") {
+        return session;
+      }
       this.logger.warn(
         `Workspace status check failed session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}: ${this.describeError(error)}`,
       );

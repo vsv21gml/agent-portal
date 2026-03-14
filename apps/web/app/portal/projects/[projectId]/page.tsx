@@ -146,6 +146,8 @@ export default function ProjectDetailPage() {
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
+  const [stoppingWorkspaceId, setStoppingWorkspaceId] = useState<string | null>(null);
+  const [restartingWorkspaceId, setRestartingWorkspaceId] = useState<string | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<WorkspaceSession | null>(null);
   const [issuingKey, setIssuingKey] = useState(false);
   const [updatingMembers, setUpdatingMembers] = useState(false);
@@ -412,6 +414,33 @@ export default function ProjectDetailPage() {
       toastError("Failed to delete workspace.");
     } finally {
       setDeletingWorkspaceId(null);
+    }
+  };
+
+  const stopWorkspace = async (workspace: WorkspaceSession) => {
+    setStoppingWorkspaceId(workspace.id);
+    try {
+      const stopped = await apiFetch<WorkspaceSession>(`workspaces/${workspace.id}/stop`, { method: "POST" });
+      setWorkspaces((prev) => [stopped, ...prev.filter((item) => item.id !== stopped.id)]);
+      toastSuccess("Workspace stopped.");
+    } catch {
+      toastError("Failed to stop workspace.");
+    } finally {
+      setStoppingWorkspaceId(null);
+    }
+  };
+
+  const restartWorkspace = async (workspace: WorkspaceSession) => {
+    setRestartingWorkspaceId(workspace.id);
+    try {
+      const restarted = await apiFetch<WorkspaceSession>(`workspaces/${workspace.id}/restart`, { method: "POST" });
+      setWorkspaces((prev) => [restarted, ...prev.filter((item) => item.id !== restarted.id)]);
+      toastSuccess("Workspace restart requested.");
+      await waitForWorkspaceAndOpen(restarted.id);
+    } catch {
+      toastError("Failed to restart workspace.");
+    } finally {
+      setRestartingWorkspaceId(null);
     }
   };
 
@@ -776,10 +805,25 @@ export default function ProjectDetailPage() {
                                 <Button
                                   size="xs"
                                   variant="default"
-                                  disabled={workspace.status !== "running"}
-                                  onClick={() => window.open(workspace.endpointUrl, "_blank", "noopener,noreferrer")}
+                                  disabled={!["running", "stopped"].includes(workspace.status)}
+                                  loading={restartingWorkspaceId === workspace.id}
+                                  onClick={() =>
+                                    workspace.status === "stopped"
+                                      ? void restartWorkspace(workspace)
+                                      : window.open(workspace.endpointUrl, "_blank", "noopener,noreferrer")
+                                  }
                                 >
-                                  Open
+                                  {workspace.status === "stopped" ? "Restart" : "Open"}
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  color="yellow"
+                                  loading={stoppingWorkspaceId === workspace.id}
+                                  disabled={workspace.status !== "running"}
+                                  onClick={() => void stopWorkspace(workspace)}
+                                >
+                                  Stop
                                 </Button>
                                 <Button size="xs" variant="light" onClick={() => openWorkspaceModal(repo, workspace)}>
                                   Edit
