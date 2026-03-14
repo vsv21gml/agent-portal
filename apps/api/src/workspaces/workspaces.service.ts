@@ -355,12 +355,10 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "fi",
       gitSetupScript,
     ].join("\n");
-    const workspaceBasePath = this.getWorkspaceBasePath(session.endpointUrl);
     const codeServerCommand = [
       "code-server",
       "--auth none",
       "--bind-addr 0.0.0.0:8080",
-      ...(workspaceBasePath === "/" ? [] : [`--abs-proxy-base-path ${this.shellQuote(workspaceBasePath)}`]),
       "/workspace/repo",
     ].join(" ");
 
@@ -550,7 +548,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
 
     const { host, ingressPath } = this.parseWorkspaceEndpoint(session.endpointUrl);
     const ingressClassName = this.configService.get<string>("K8S_WORKSPACE_INGRESS_CLASS", "nginx");
-    const ingressAnnotations = {
+    const ingressAnnotations: Record<string, string> = {
       "kubernetes.io/ingress.class": ingressClassName,
       ...this.getWorkspaceIngressAnnotations(),
     };
@@ -722,11 +720,6 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private getWorkspaceBasePath(endpointUrl: string): string {
-    const { path } = this.parseWorkspaceEndpoint(endpointUrl);
-    return path === "/" ? "/" : path.replace(/\/+$/, "");
-  }
-
   private normalizeWorkspacePath(path: string): string {
     const trimmed = path.trim();
     if (!trimmed || trimmed === "/") {
@@ -736,10 +729,6 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
     const normalized = withLeadingSlash.replace(/\/{2,}/g, "/");
     return normalized.endsWith("/") ? normalized : `${normalized}/`;
-  }
-
-  private shellQuote(value: string): string {
-    return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   }
 
   private getWorkspaceSelectorLabels(session: WorkspaceSessionEntity): Record<string, string> {
