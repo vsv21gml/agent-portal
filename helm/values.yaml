@@ -41,6 +41,10 @@ api:
   image:
     repository: agent-portal-api
     tag: latest
+  workspaceIngress:
+    scheme: "http"
+    hostTemplate: ""
+    annotations: {}
   service:
     type: ClusterIP
     port: 4000

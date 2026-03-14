@@ -17,6 +17,11 @@ service:
   type: ClusterIP
   port: 4000
 
+workspaceIngress:
+  scheme: "http"
+  hostTemplate: ""
+  annotations: {}
+
 env:
   AUTH_BYPASS: "false"
   INITIAL_ADMIN_EMAIL: "admin@samsung.com"

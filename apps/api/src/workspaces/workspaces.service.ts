@@ -77,8 +77,8 @@ export class WorkspacesService {
     const serviceName = deploymentName;
     const ingressName = `${deploymentName}-ing`;
     const pvcName = `${deploymentName}-pvc`;
-    const hostSuffix = this.configService.get<string>("WORKSPACE_HOST_SUFFIX", "127.0.0.1.nip.io");
-    const endpointUrl = `http://${deploymentName}.${hostSuffix}`;
+    const host = this.buildWorkspaceHost(deploymentName);
+    const endpointUrl = `${this.getWorkspaceUrlScheme()}://${host}`;
 
     const session = await this.workspaceRepository.save(
       this.workspaceRepository.create({
@@ -236,22 +236,21 @@ export class WorkspacesService {
     const liteLlmBaseUrl = this.configService.get<string>("LITELLM_BASE_URL")?.trim().replace(/\/+$/, "") ?? "";
     const devcontainer = this.buildDevcontainerJson(session.runtime);
     const gitSetupScript = [
-      "if [ -d /workspace/repo/.git ]; then",
-      "  cd /workspace/repo",
-      "  git config user.name \"$GIT_USER_NAME\"",
-      "  git config user.email \"$GIT_USER_EMAIL\"",
-      "  git config push.autoSetupRemote true",
+      "if [ -e /workspace/repo/.git ]; then",
+      "  git -C /workspace/repo config user.name \"$GIT_USER_NAME\"",
+      "  git -C /workspace/repo config user.email \"$GIT_USER_EMAIL\"",
+      "  git -C /workspace/repo config push.autoSetupRemote true",
       "  if [ -n \"$TARGET_URL\" ]; then",
-      "    if git remote get-url origin >/dev/null 2>&1; then",
-      "      git remote set-url origin \"$TARGET_URL\"",
+      "    if git -C /workspace/repo remote get-url origin >/dev/null 2>&1; then",
+      "      git -C /workspace/repo remote set-url origin \"$TARGET_URL\"",
       "    else",
-      "      git remote add origin \"$TARGET_URL\"",
+      "      git -C /workspace/repo remote add origin \"$TARGET_URL\"",
       "    fi",
       "  fi",
       "  if [ -n \"$GIT_CREDENTIAL_URL\" ]; then",
-        "    git config credential.helper 'store --file=/workspace/repo/.git-credentials'",
       "    printf '%s\\n' \"$GIT_CREDENTIAL_URL\" > /workspace/repo/.git-credentials",
       "    chmod 600 /workspace/repo/.git-credentials",
+      "    git -C /workspace/repo config credential.helper 'store --file=/workspace/repo/.git-credentials'",
       "  fi",
       "fi",
     ].join("\n");
@@ -507,6 +506,10 @@ export class WorkspacesService {
 
     const host = session.endpointUrl.replace(/^https?:\/\//, "");
     const ingressClassName = this.configService.get<string>("K8S_WORKSPACE_INGRESS_CLASS", "nginx");
+    const ingressAnnotations = {
+      "kubernetes.io/ingress.class": ingressClassName,
+      ...this.getWorkspaceIngressAnnotations(),
+    };
 
     try {
       await this.kubeClientNetworking.readNamespacedIngress({
@@ -524,9 +527,7 @@ export class WorkspacesService {
           kind: "Ingress",
           metadata: {
             name: session.ingressName,
-            annotations: {
-              "kubernetes.io/ingress.class": ingressClassName,
-            },
+            annotations: ingressAnnotations,
           },
           spec: {
             ingressClassName,
@@ -598,6 +599,37 @@ export class WorkspacesService {
     }
 
     return `${gitBaseUrl.replace(/\/+$/, "")}/${namespacePath}.git`;
+  }
+
+  private buildWorkspaceHost(deploymentName: string): string {
+    const hostTemplate = this.configService.get<string>("WORKSPACE_HOST_TEMPLATE")?.trim() ?? "";
+    if (hostTemplate) {
+      return hostTemplate.replace(/\{\{\s*name\s*\}\}/g, deploymentName);
+    }
+
+    const hostSuffix = this.configService.get<string>("WORKSPACE_HOST_SUFFIX", "127.0.0.1.nip.io");
+    return `${deploymentName}.${hostSuffix}`;
+  }
+
+  private getWorkspaceUrlScheme(): string {
+    return this.configService.get<string>("WORKSPACE_URL_SCHEME", "http").trim() || "http";
+  }
+
+  private getWorkspaceIngressAnnotations(): Record<string, string> {
+    const raw = this.configService.get<string>("K8S_WORKSPACE_INGRESS_ANNOTATIONS_JSON")?.trim() ?? "";
+    if (!raw) {
+      return {};
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [key, String(value)]),
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to parse workspace ingress annotations JSON: ${this.describeError(error)}`);
+      return {};
+    }
   }
 
   private async refreshWorkspaceStatus(session: WorkspaceSessionEntity): Promise<WorkspaceSessionEntity> {
