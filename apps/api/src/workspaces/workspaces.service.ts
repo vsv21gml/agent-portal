@@ -260,7 +260,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     const liteLlmBaseUrl = this.configService.get<string>("LITELLM_BASE_URL")?.trim().replace(/\/+$/, "") ?? "";
     const devcontainer = this.buildDevcontainerJson(session.runtime);
     const gitSetupScript = [
-      "if [ -e /workspace/repo/.git ]; then",
+      "if git -C /workspace/repo rev-parse --is-inside-work-tree >/dev/null 2>&1; then",
       "  git -C /workspace/repo config user.name \"$GIT_USER_NAME\"",
       "  git -C /workspace/repo config user.email \"$GIT_USER_EMAIL\"",
       "  git -C /workspace/repo config push.autoSetupRemote true",
@@ -274,7 +274,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "  if [ -n \"$GIT_CREDENTIAL_URL\" ]; then",
       "    printf '%s\\n' \"$GIT_CREDENTIAL_URL\" > /workspace/repo/.git-credentials",
       "    chmod 600 /workspace/repo/.git-credentials",
-      "    git -C /workspace/repo config credential.helper 'store --file=/workspace/repo/.git-credentials'",
+      "    git config --global credential.helper 'store --file=/workspace/repo/.git-credentials'",
       "  fi",
       "fi",
     ].join("\n");
@@ -318,7 +318,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "  GIT_CREDENTIAL_URL=$(echo \"$TARGET_URL\" | sed \"s#https://#https://oauth2:${GITLAB_TOKEN}@#\")",
       "fi",
       "mkdir -p /workspace",
-      "if [ ! -d /workspace/repo/.git ]; then",
+      "if ! git -C /workspace/repo rev-parse --is-inside-work-tree >/dev/null 2>&1; then",
+      "  rm -rf /workspace/repo",
       "  if [ -n \"$TARGET_URL\" ]; then",
       "    CLONE_URL=\"$TARGET_URL\"",
       "    if [ -n \"$GIT_CREDENTIAL_URL\" ]; then",
