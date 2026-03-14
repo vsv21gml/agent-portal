@@ -15,6 +15,28 @@ type LiteLlmKeyResponse = {
   token_id?: string | null;
 };
 
+type LiteLlmUserInfo = {
+  user_id?: string | null;
+  max_budget?: number | null;
+  spend?: number | null;
+  budget_duration?: string | null;
+  budget_reset_at?: string | null;
+};
+
+type LiteLlmKeyInfo = {
+  max_budget?: number | null;
+  spend?: number | null;
+  budget_duration?: string | null;
+  budget_reset_at?: string | null;
+};
+
+type LiteLlmSpendLog = {
+  spend?: number | null;
+  total_tokens?: number | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+};
+
 @Injectable()
 export class LlmService {
   private static readonly TEAM_MAX_BUDGET_USD = 200;
@@ -129,6 +151,60 @@ export class LlmService {
     return this.userKeyRepository.findOne({ where: { ownerUserId } });
   }
 
+  async getCurrentUserUsage(ownerUserId: string): Promise<{
+    currentMonthSpendUsd: number;
+    currentMonthTotalTokens: number;
+    currentMonthPromptTokens: number;
+    currentMonthCompletionTokens: number;
+    currentMonthBudgetUsd: number | null;
+    budgetDuration: string | null;
+    budgetResetAt: string | null;
+  }> {
+    const userKey = await this.userKeyRepository.findOne({ where: { ownerUserId } });
+    if (!userKey?.apiKey) {
+      return {
+        currentMonthSpendUsd: 0,
+        currentMonthTotalTokens: 0,
+        currentMonthPromptTokens: 0,
+        currentMonthCompletionTokens: 0,
+        currentMonthBudgetUsd: userKey?.maxBudgetUsd ?? null,
+        budgetDuration: userKey?.budgetDuration ?? null,
+        budgetResetAt: null,
+      };
+    }
+
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const [keyInfo, userInfo, spendLogs] = await Promise.all([
+      this.fetchKeyInfo(userKey.apiKey),
+      this.fetchUserInfo(userKey.remoteUserId ?? ownerUserId),
+      this.fetchCurrentMonthSpendLogs(userKey.apiKey, monthStart, now),
+    ]);
+
+    const totals = spendLogs.reduce(
+      (acc, row) => {
+        acc.currentMonthSpendUsd += row.spend ?? 0;
+        acc.currentMonthTotalTokens += row.total_tokens ?? 0;
+        acc.currentMonthPromptTokens += row.prompt_tokens ?? 0;
+        acc.currentMonthCompletionTokens += row.completion_tokens ?? 0;
+        return acc;
+      },
+      {
+        currentMonthSpendUsd: 0,
+        currentMonthTotalTokens: 0,
+        currentMonthPromptTokens: 0,
+        currentMonthCompletionTokens: 0,
+      },
+    );
+
+    return {
+      ...totals,
+      currentMonthBudgetUsd: keyInfo?.max_budget ?? userInfo?.max_budget ?? userKey.maxBudgetUsd ?? null,
+      budgetDuration: keyInfo?.budget_duration ?? userInfo?.budget_duration ?? userKey.budgetDuration ?? null,
+      budgetResetAt: keyInfo?.budget_reset_at ?? userInfo?.budget_reset_at ?? null,
+    };
+  }
+
   private async createRemoteTeamIfConfigured(teamName: string): Promise<void> {
     const baseUrl = this.getBaseUrl();
     const masterKey = this.getMasterKey();
@@ -180,6 +256,51 @@ export class LlmService {
     }
     const data = (await response.json()) as { models?: string[] };
     return data.models ?? [];
+  }
+
+  private async fetchUserInfo(userId: string): Promise<LiteLlmUserInfo | null> {
+    if (!userId) {
+      return null;
+    }
+
+    const response = await this.remoteFetch(`/user/info?user_id=${encodeURIComponent(userId)}`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as LiteLlmUserInfo & { user_info?: LiteLlmUserInfo | null };
+    return data.user_info ?? data;
+  }
+
+  private async fetchKeyInfo(apiKey: string): Promise<LiteLlmKeyInfo | null> {
+    const response = await this.remoteFetch(`/key/info?key=${encodeURIComponent(apiKey)}`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as LiteLlmKeyInfo & { info?: LiteLlmKeyInfo | null };
+    return data.info ?? data;
+  }
+
+  private async fetchCurrentMonthSpendLogs(apiKey: string, startDate: Date, endDate: Date): Promise<LiteLlmSpendLog[]> {
+    const query = new URLSearchParams({
+      api_key: apiKey,
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+      summarize: "false",
+    });
+    const response = await this.remoteFetch(`/spend/logs?${query.toString()}`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      return [];
+    }
+
+    return (await response.json()) as LiteLlmSpendLog[];
   }
 
   private async createRemoteUserWithKey(

@@ -27,4 +27,9 @@ export class LlmController {
   projectModels(@Param("projectId") projectId: string) {
     return this.llmService.listAvailableModels(projectId);
   }
+
+  @Get("me/usage")
+  myUsage(@CurrentUser() user: JwtPayload) {
+    return this.llmService.getCurrentUserUsage(user.sub);
+  }
 }

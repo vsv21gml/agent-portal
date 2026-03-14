@@ -65,6 +65,16 @@ export class AuthService {
     return this.userRepository.findOne({ where: { id: userId } });
   }
 
+  async getProfile(userId: string): Promise<{ sub: string; email: string; role: GlobalRole; displayName: string }> {
+    const user = await this.userRepository.findOneByOrFail({ id: userId });
+    return {
+      sub: user.id,
+      email: user.email,
+      role: user.globalRole,
+      displayName: user.displayName,
+    };
+  }
+
   async listUsers(): Promise<UserEntity[]> {
     return this.userRepository.find({ order: { createdAt: "DESC" } });
   }

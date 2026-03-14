@@ -36,7 +36,7 @@ export class AuthController {
 
   @Get("me")
   me(@CurrentUser() user: JwtPayload) {
-    return user;
+    return this.authService.getProfile(user.sub);
   }
 
   @Roles(GlobalRole.ADMIN)

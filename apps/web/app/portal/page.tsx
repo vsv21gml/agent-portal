@@ -4,6 +4,7 @@ import { ActionIcon, Affix, Button, Drawer, Group, LoadingOverlay, Stack, TextIn
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "../../src/components/app-frame";
+import { ProfileMenu } from "../../src/components/profile-menu";
 import { ProjectTable } from "../../src/components/project-table";
 import { ApiError, apiFetch } from "../../src/lib/api-client";
 import { toastError, toastSuccess } from "../../src/lib/toast";
@@ -92,7 +93,7 @@ export default function UserPortalPage() {
   };
 
   return (
-    <AppFrame title="User Portal" hideNavbar>
+    <AppFrame title="User Portal" headerActions={<ProfileMenu />} hideNavbar>
       <Stack pos="relative">
         <LoadingOverlay
           visible={authChecking || creatingProject}

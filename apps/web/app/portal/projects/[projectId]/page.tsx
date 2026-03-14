@@ -26,6 +26,7 @@ import {
 import { ComponentPropsWithoutRef, forwardRef, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AppFrame } from "../../../../src/components/app-frame";
+import { ProfileMenu } from "../../../../src/components/profile-menu";
 import { ApiError, apiFetch } from "../../../../src/lib/api-client";
 import { toastError, toastSuccess } from "../../../../src/lib/toast";
 import { Project } from "../../../../src/types/project";
@@ -535,7 +536,7 @@ export default function ProjectDetailPage() {
   );
 
   return (
-    <AppFrame title={breadcrumbs} navbar={navbar} navbarWidth={280}>
+    <AppFrame title={breadcrumbs} headerActions={<ProfileMenu />} navbar={navbar} navbarWidth={280}>
       <Stack pos="relative">
         <LoadingOverlay visible={authChecking || loadingProject} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
 
