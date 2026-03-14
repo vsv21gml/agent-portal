@@ -19,6 +19,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private cleanupRunning = false;
+  private readonly healingSessions = new Set<string>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -871,6 +872,10 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       return session;
     }
 
+    if (session.status === "provisioning") {
+      await this.healWorkspaceResources(session);
+    }
+
     try {
       const deployment = await this.kubeClientApps.readNamespacedDeployment({
         namespace: session.namespace,
@@ -899,6 +904,41 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       }
 
       return session;
+    }
+  }
+
+  private async healWorkspaceResources(session: WorkspaceSessionEntity): Promise<void> {
+    if (
+      this.healingSessions.has(session.id) ||
+      !this.kubeClientApps ||
+      !this.kubeClientCore ||
+      !this.kubeClientNetworking
+    ) {
+      return;
+    }
+
+    this.healingSessions.add(session.id);
+    try {
+      this.logger.log(
+        `Healing workspace resources session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}`,
+      );
+      const repo = await this.gitlabService.getRepo(session.projectId, session.repoId);
+      const user = await this.authService.findById(session.userId);
+      const llmUserKey = user
+        ? await this.llmService.ensureUserVirtualKey(session.userId, user.email, user.displayName)
+        : null;
+
+      await this.provisionWorkspace(session, repo, {
+        gitUserName: user?.displayName?.trim() || user?.email || "Workspace User",
+        gitUserEmail: user?.email || "workspace@example.com",
+        liteLlmApiKey: llmUserKey?.apiKey ?? "",
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Workspace heal failed session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}: ${this.describeError(error)}`,
+      );
+    } finally {
+      this.healingSessions.delete(session.id);
     }
   }
 
