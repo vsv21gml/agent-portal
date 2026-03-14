@@ -77,8 +77,7 @@ export class WorkspacesService {
     const serviceName = deploymentName;
     const ingressName = `${deploymentName}-ing`;
     const pvcName = `${deploymentName}-pvc`;
-    const host = this.buildWorkspaceHost(deploymentName);
-    const endpointUrl = `${this.getWorkspaceUrlScheme()}://${host}`;
+    const endpointUrl = this.buildWorkspaceEndpointUrl(deploymentName);
 
     const session = await this.workspaceRepository.save(
       this.workspaceRepository.create({
@@ -330,6 +329,14 @@ export class WorkspacesService {
       "fi",
       gitSetupScript,
     ].join("\n");
+    const workspaceBasePath = this.getWorkspaceBasePath(session.endpointUrl);
+    const codeServerCommand = [
+      "code-server",
+      "--auth none",
+      "--bind-addr 0.0.0.0:8080",
+      ...(workspaceBasePath === "/" ? [] : [`--abs-proxy-base-path ${this.shellQuote(workspaceBasePath)}`]),
+      "/workspace/repo",
+    ].join(" ");
 
     try {
       await this.kubeClientApps.readNamespacedDeployment({
@@ -384,7 +391,7 @@ export class WorkspacesService {
                     volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
                     command: ["sh", "-c"],
                     args: [
-                      `${runtimeSetupScript}\ncode-server --auth none --bind-addr 0.0.0.0:8080 /workspace/repo`,
+                      `${runtimeSetupScript}\n${codeServerCommand}`,
                     ],
                   },
                 ],
@@ -504,7 +511,7 @@ export class WorkspacesService {
       return;
     }
 
-    const host = session.endpointUrl.replace(/^https?:\/\//, "");
+    const { host, ingressPath } = this.parseWorkspaceEndpoint(session.endpointUrl);
     const ingressClassName = this.configService.get<string>("K8S_WORKSPACE_INGRESS_CLASS", "nginx");
     const ingressAnnotations = {
       "kubernetes.io/ingress.class": ingressClassName,
@@ -519,7 +526,9 @@ export class WorkspacesService {
       this.logger.log(`Workspace ingress already exists namespace=${session.namespace} ingress=${session.ingressName}`);
       return;
     } catch {
-      this.logger.log(`Creating workspace ingress namespace=${session.namespace} ingress=${session.ingressName} host=${host}`);
+      this.logger.log(
+        `Creating workspace ingress namespace=${session.namespace} ingress=${session.ingressName} host=${host} path=${ingressPath}`,
+      );
       await this.kubeClientNetworking.createNamespacedIngress({
         namespace: session.namespace,
         body: {
@@ -537,7 +546,7 @@ export class WorkspacesService {
                 http: {
                   paths: [
                     {
-                      path: "/",
+                      path: ingressPath,
                       pathType: "Prefix",
                       backend: {
                         service: {
@@ -601,18 +610,69 @@ export class WorkspacesService {
     return `${gitBaseUrl.replace(/\/+$/, "")}/${namespacePath}.git`;
   }
 
-  private buildWorkspaceHost(deploymentName: string): string {
-    const hostTemplate = this.configService.get<string>("WORKSPACE_HOST_TEMPLATE")?.trim() ?? "";
-    if (hostTemplate) {
-      return hostTemplate.replace(/\{\{\s*name\s*\}\}/g, deploymentName);
-    }
-
-    const hostSuffix = this.configService.get<string>("WORKSPACE_HOST_SUFFIX", "127.0.0.1.nip.io");
-    return `${deploymentName}.${hostSuffix}`;
+  private buildWorkspaceEndpointUrl(deploymentName: string): string {
+    const { host, path } = this.buildWorkspaceRoute(deploymentName);
+    return `${this.getWorkspaceUrlScheme()}://${host}${path}`;
   }
 
   private getWorkspaceUrlScheme(): string {
     return this.configService.get<string>("WORKSPACE_URL_SCHEME", "http").trim() || "http";
+  }
+
+  private buildWorkspaceRoute(deploymentName: string): { host: string; path: string } {
+    const rawHostTemplate = this.configService.get<string>("WORKSPACE_HOST_TEMPLATE")?.trim() ?? "";
+    const rawPathTemplate = this.configService.get<string>("WORKSPACE_PATH_TEMPLATE")?.trim() ?? "";
+    const [hostTemplate, embeddedPathTemplate] = this.splitHostTemplate(rawHostTemplate);
+
+    const host = hostTemplate
+      ? hostTemplate.replace(/\{\{\s*name\s*\}\}/g, deploymentName)
+      : `${deploymentName}.${this.configService.get<string>("WORKSPACE_HOST_SUFFIX", "127.0.0.1.nip.io")}`;
+    const pathTemplate = rawPathTemplate || embeddedPathTemplate || "/";
+    const path = this.normalizeWorkspacePath(pathTemplate.replace(/\{\{\s*name\s*\}\}/g, deploymentName));
+
+    return { host, path };
+  }
+
+  private splitHostTemplate(hostTemplate: string): [string, string] {
+    const slashIndex = hostTemplate.indexOf("/");
+    if (slashIndex === -1) {
+      return [hostTemplate, ""];
+    }
+
+    const host = hostTemplate.slice(0, slashIndex).trim();
+    const path = hostTemplate.slice(slashIndex).trim();
+    return [host, path];
+  }
+
+  private parseWorkspaceEndpoint(endpointUrl: string): { host: string; path: string; ingressPath: string } {
+    const url = new URL(endpointUrl);
+    const path = this.normalizeWorkspacePath(url.pathname);
+
+    return {
+      host: url.host,
+      path,
+      ingressPath: path === "/" ? "/" : path.replace(/\/+$/, ""),
+    };
+  }
+
+  private getWorkspaceBasePath(endpointUrl: string): string {
+    const { path } = this.parseWorkspaceEndpoint(endpointUrl);
+    return path === "/" ? "/" : path.replace(/\/+$/, "");
+  }
+
+  private normalizeWorkspacePath(path: string): string {
+    const trimmed = path.trim();
+    if (!trimmed || trimmed === "/") {
+      return "/";
+    }
+
+    const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    const normalized = withLeadingSlash.replace(/\/{2,}/g, "/");
+    return normalized.endsWith("/") ? normalized : `${normalized}/`;
+  }
+
+  private shellQuote(value: string): string {
+    return `'${value.replace(/'/g, `'\"'\"'`)}'`;
   }
 
   private getWorkspaceIngressAnnotations(): Record<string, string> {

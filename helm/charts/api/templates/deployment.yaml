@@ -28,6 +28,8 @@ spec:
             {{- end }}
             - name: WORKSPACE_HOST_TEMPLATE
               value: {{ .Values.workspaceIngress.hostTemplate | quote }}
+            - name: WORKSPACE_PATH_TEMPLATE
+              value: {{ .Values.workspaceIngress.pathTemplate | quote }}
             - name: WORKSPACE_URL_SCHEME
               value: {{ .Values.workspaceIngress.scheme | quote }}
             - name: K8S_WORKSPACE_INGRESS_ANNOTATIONS_JSON
