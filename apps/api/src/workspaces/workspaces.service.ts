@@ -554,13 +554,72 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "kubernetes.io/ingress.class": ingressClassName,
       ...this.getWorkspaceIngressAnnotations(),
     };
+    const desiredIngress = {
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: {
+        name: session.ingressName,
+        labels: this.getWorkspaceResourceLabels(session),
+        annotations: ingressAnnotations,
+      },
+      spec: {
+        ingressClassName,
+        rules: [
+          {
+            host,
+            http: {
+              paths: [
+                {
+                  path: ingressPath,
+                  pathType: "Prefix",
+                  backend: {
+                    service: {
+                      name: session.serviceName,
+                      port: { number: 8080 },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    } as k8s.V1Ingress;
 
     try {
-      await this.kubeClientNetworking.readNamespacedIngress({
+      const existing = await this.kubeClientNetworking.readNamespacedIngress({
         namespace: session.namespace,
         name: session.ingressName,
       });
-      this.logger.log(`Workspace ingress already exists namespace=${session.namespace} ingress=${session.ingressName}`);
+      const existingHost = existing.spec?.rules?.[0]?.host ?? "";
+      const existingPath = existing.spec?.rules?.[0]?.http?.paths?.[0]?.path ?? "";
+      const existingClassName = existing.spec?.ingressClassName ?? "";
+      const existingAnnotations = existing.metadata?.annotations ?? {};
+      const needsUpdate =
+        existingHost !== host ||
+        existingPath !== ingressPath ||
+        existingClassName !== ingressClassName ||
+        JSON.stringify(existingAnnotations) !== JSON.stringify(ingressAnnotations);
+
+      if (!needsUpdate) {
+        this.logger.log(`Workspace ingress already exists namespace=${session.namespace} ingress=${session.ingressName}`);
+        return;
+      }
+
+      this.logger.log(
+        `Updating workspace ingress namespace=${session.namespace} ingress=${session.ingressName} host=${host} path=${ingressPath}`,
+      );
+      await this.kubeClientNetworking.replaceNamespacedIngress({
+        namespace: session.namespace,
+        name: session.ingressName,
+        body: {
+          ...desiredIngress,
+          metadata: {
+            ...desiredIngress.metadata,
+            resourceVersion: existing.metadata?.resourceVersion,
+          },
+        },
+      });
       return;
     } catch {
       this.logger.log(
@@ -568,37 +627,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       );
       await this.kubeClientNetworking.createNamespacedIngress({
         namespace: session.namespace,
-        body: {
-          apiVersion: "networking.k8s.io/v1",
-          kind: "Ingress",
-          metadata: {
-            name: session.ingressName,
-            labels: this.getWorkspaceResourceLabels(session),
-            annotations: ingressAnnotations,
-          },
-          spec: {
-            ingressClassName,
-            rules: [
-              {
-                host,
-                http: {
-                  paths: [
-                    {
-                      path: ingressPath,
-                      pathType: "Prefix",
-                      backend: {
-                        service: {
-                          name: session.serviceName,
-                          port: { number: 8080 },
-                        },
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        } as k8s.V1Ingress,
+        body: desiredIngress,
       });
     }
   }
