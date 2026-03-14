@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as k8s from "@kubernetes/client-node";
@@ -10,6 +10,7 @@ import { NotebookSessionEntity } from "./entities/notebook-session.entity";
 
 @Injectable()
 export class NotebooksService {
+  private readonly logger = new Logger(NotebooksService.name);
   private readonly kubeClientApps: k8s.AppsV1Api | null;
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
@@ -35,18 +36,22 @@ export class NotebooksService {
       this.kubeClientApps = kc.makeApiClient(k8s.AppsV1Api);
       this.kubeClientCore = kc.makeApiClient(k8s.CoreV1Api);
       this.kubeClientNetworking = kc.makeApiClient(k8s.NetworkingV1Api);
+      this.logger.log(`Kubernetes notebook client enabled (namespace=${this.configService.get<string>("K8S_NOTEBOOK_NAMESPACE", "agent-notebooks")})`);
     } else {
       this.kubeClientApps = null;
       this.kubeClientCore = null;
       this.kubeClientNetworking = null;
+      this.logger.log("Kubernetes notebook client disabled");
     }
   }
 
   async createForUser(dto: CreateNotebookDto, userId: string): Promise<NotebookSessionEntity> {
+    this.logger.log(`Create notebook requested project=${dto.projectId} user=${userId}`);
     const existing = await this.notebookRepository.findOne({
       where: { projectId: dto.projectId, userId },
     });
     if (existing) {
+      this.logger.log(`Notebook already exists session=${existing.id} project=${dto.projectId} user=${userId}`);
       return existing;
     }
 
@@ -73,7 +78,12 @@ export class NotebooksService {
         memoryGiRequest,
       }),
     );
-    await this.provisionK8sNotebook(session);
+    try {
+      await this.provisionK8sNotebook(session);
+    } catch (error) {
+      this.logger.error(`Notebook provisioning failed session=${session.id} namespace=${session.namespace}: ${this.describeError(error)}`);
+      throw error;
+    }
     session.status = "running";
     return this.notebookRepository.save(session);
   }
@@ -96,6 +106,7 @@ export class NotebooksService {
 
   private async provisionK8sNotebook(session: NotebookSessionEntity): Promise<void> {
     if (!this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking || !session.namespace || !session.pvcSubPath) {
+      this.logger.warn(`Skipping notebook provisioning because Kubernetes clients are unavailable session=${session.id}`);
       return;
     }
 
@@ -121,6 +132,9 @@ export class NotebooksService {
       });
     }
 
+    this.logger.log(
+      `Provisioning notebook session=${session.id} namespace=${session.namespace} deployment=${deploymentName} image=${notebookImage} pvc=${pvcName}`,
+    );
     await this.kubeClientApps.createNamespacedDeployment({
       namespace: session.namespace,
       body: {
@@ -204,5 +218,13 @@ export class NotebooksService {
         },
       } as k8s.V1Ingress,
     });
+    this.logger.log(`Notebook resources ensured session=${session.id} namespace=${session.namespace} deployment=${deploymentName}`);
+  }
+
+  private describeError(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
   }
 }

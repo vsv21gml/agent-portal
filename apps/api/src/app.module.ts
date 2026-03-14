@@ -11,19 +11,11 @@ import { AuthModule } from "./auth/auth.module";
 import { RolePermissionEntity } from "./auth/entities/role-permission.entity";
 import { UserEntity } from "./auth/entities/user.entity";
 import { UserInvitationEntity } from "./auth/entities/user-invitation.entity";
-<<<<<<< HEAD
 import { GitlabModule } from "./gitlab/gitlab.module";
 import { GitlabGroupEntity } from "./gitlab/entities/gitlab-group.entity";
 import { GitlabMemberSyncEntity } from "./gitlab/entities/gitlab-member-sync.entity";
 import { GitlabRepoEntity } from "./gitlab/entities/gitlab-repo.entity";
 import { LlmModule } from "./llm/llm.module";
-=======
-import { GitlabModule } from "./gitlab/gitlab.module";
-import { GitlabGroupEntity } from "./gitlab/entities/gitlab-group.entity";
-import { GitlabMemberSyncEntity } from "./gitlab/entities/gitlab-member-sync.entity";
-import { GitlabRepoEntity } from "./gitlab/entities/gitlab-repo.entity";
-import { LlmModule } from "./llm/llm.module";
->>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
 import { LiteLlmKeyEntity } from "./llm/entities/litellm-key.entity";
 import { LiteLlmModelEntity } from "./llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./llm/entities/litellm-team.entity";
@@ -42,7 +34,6 @@ import { VectorKeyEntity } from "./vectordb/entities/vector-key.entity";
 import { VectorDbModule } from "./vectordb/vectordb.module";
 import { WorkspaceSessionEntity } from "./workspaces/entities/workspace-session.entity";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
-<<<<<<< HEAD
 
 @Module({
   imports: [
@@ -59,24 +50,6 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
         ssl: configService.get<string>("DB_SSL", "false") === "true" ? { rejectUnauthorized: false } : undefined,
         synchronize: configService.get<string>("TYPEORM_SYNC", "true") === "true",
         entities: [
-=======
-
-@Module({
-  imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: "postgres",
-        host: configService.get<string>("DB_HOST", "localhost"),
-        port: Number(configService.get<string>("DB_PORT", "5432")),
-        username: configService.get<string>("DB_USER", "postgres"),
-        password: configService.get<string>("DB_PASSWORD", "postgres"),
-        database: configService.get<string>("DB_NAME", "agent_portal"),
-        ssl: configService.get<string>("DB_SSL", "false") === "true" ? { rejectUnauthorized: false } : undefined,
-        synchronize: configService.get<string>("TYPEORM_SYNC", "true") === "true",
-        entities: [
->>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
           UserEntity,
           UserInvitationEntity,
           RolePermissionEntity,

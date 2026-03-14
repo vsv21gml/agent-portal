@@ -1,4 +1,4 @@
-import { ValidationPipe } from "@nestjs/common";
+import { Logger, ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import * as dotenv from "dotenv";
 import * as fs from "node:fs";
@@ -13,6 +13,7 @@ if (fs.existsSync(rootEnvPath)) {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const logger = new Logger("Bootstrap");
   app.enableCors();
   app.useGlobalPipes(
     new ValidationPipe({
@@ -25,6 +26,10 @@ async function bootstrap() {
   const authService = app.get(AuthService);
   const adminEmail = process.env.INITIAL_ADMIN_EMAIL;
   const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
+  logger.log(`Starting API bootstrap (nodeEnv=${process.env.NODE_ENV ?? "development"}, port=${process.env.PORT ?? 4000})`);
+  logger.log(
+    `K8S integration flags workspace=${process.env.K8S_WORKSPACE_ENABLED ?? "false"} notebook=${process.env.K8S_NOTEBOOK_ENABLED ?? "false"}`,
+  );
   const result = await authService.ensureInitialAdmin(adminEmail, adminPassword);
   if (result.created && result.password) {
     console.log(`[agent-portal] Initial admin created: ${adminEmail}`);
@@ -35,6 +40,7 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port);
+  logger.log(`API listening on port ${port}`);
 }
 
 void bootstrap();

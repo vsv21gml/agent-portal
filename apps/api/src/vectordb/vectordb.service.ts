@@ -28,7 +28,6 @@ export class VectorDbService {
 
   async issueKey(projectId: string, ownerUserId: string, dto: IssueVectorKeyDto): Promise<IssuedVectorKey> {
     const indexName = this.buildIndexName(projectId);
-<<<<<<< HEAD
 
     await this.ensureRemoteIndexIfConfigured(indexName);
     const remoteKey = await this.issueRemoteKeyIfConfigured(indexName, dto.keyAlias);
@@ -58,39 +57,6 @@ export class VectorDbService {
   listProjectKeys(projectId: string): Promise<VectorKeyEntity[]> {
     return this.vectorKeyRepository.find({ where: { projectId }, order: { createdAt: "DESC" } });
   }
-
-=======
-
-    await this.ensureRemoteIndexIfConfigured(indexName);
-    const remoteKey = await this.issueRemoteKeyIfConfigured(indexName, dto.keyAlias);
-
-    const saved = await this.vectorKeyRepository.save(
-      this.vectorKeyRepository.create({
-        projectId,
-        ownerUserId,
-        keyAlias: dto.keyAlias,
-        indexName,
-        remoteKeyId: remoteKey?.id ?? null,
-      }),
-    );
-
-    return {
-      id: saved.id,
-      projectId: saved.projectId,
-      ownerUserId: saved.ownerUserId,
-      keyAlias: saved.keyAlias,
-      indexName: saved.indexName,
-      remoteKeyId: saved.remoteKeyId,
-      createdAt: saved.createdAt,
-      apiKey: remoteKey?.apiKey ?? null,
-    };
-  }
-
-  listProjectKeys(projectId: string): Promise<VectorKeyEntity[]> {
-    return this.vectorKeyRepository.find({ where: { projectId }, order: { createdAt: "DESC" } });
-  }
-
->>>>>>> c18f70b91e82ad114d5018758f44e388c6040327
   private buildIndexName(projectId: string): string {
     const prefix = this.configService.get<string>("OPENSEARCH_INDEX_PREFIX", "project");
     const base = `${prefix}-${projectId}`;

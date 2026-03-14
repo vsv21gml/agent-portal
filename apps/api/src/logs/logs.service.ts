@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { AccessLogEntity } from "./entities/access-log.entity";
@@ -21,6 +21,8 @@ type AccessInput = {
 
 @Injectable()
 export class LogsService {
+  private readonly logger = new Logger(LogsService.name);
+
   constructor(
     @InjectRepository(AuditLogEntity)
     private readonly auditRepository: Repository<AuditLogEntity>,
@@ -29,11 +31,19 @@ export class LogsService {
   ) {}
 
   async writeAuditLog(input: AuditInput): Promise<void> {
-    await this.auditRepository.save(this.auditRepository.create(input));
+    try {
+      await this.auditRepository.save(this.auditRepository.create(input));
+    } catch (error) {
+      this.logger.warn(`Failed to persist audit log for ${input.method} ${input.path}: ${this.describeError(error)}`);
+    }
   }
 
   async writeAccessLog(input: AccessInput): Promise<void> {
-    await this.accessRepository.save(this.accessRepository.create(input));
+    try {
+      await this.accessRepository.save(this.accessRepository.create(input));
+    } catch (error) {
+      this.logger.warn(`Failed to persist access log for ${input.method} ${input.path}: ${this.describeError(error)}`);
+    }
   }
 
   listAuditLogs(): Promise<AuditLogEntity[]> {
@@ -42,5 +52,12 @@ export class LogsService {
 
   listAccessLogs(): Promise<AccessLogEntity[]> {
     return this.accessRepository.find({ order: { createdAt: "DESC" }, take: 200 });
+  }
+
+  private describeError(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
   }
 }

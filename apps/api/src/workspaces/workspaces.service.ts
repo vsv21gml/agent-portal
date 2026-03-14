@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as k8s from "@kubernetes/client-node";
@@ -13,6 +13,7 @@ import { WorkspaceSessionEntity } from "./entities/workspace-session.entity";
 
 @Injectable()
 export class WorkspacesService {
+  private readonly logger = new Logger(WorkspacesService.name);
   private readonly kubeClientApps: k8s.AppsV1Api | null;
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
@@ -41,14 +42,17 @@ export class WorkspacesService {
       this.kubeClientApps = kc.makeApiClient(k8s.AppsV1Api);
       this.kubeClientCore = kc.makeApiClient(k8s.CoreV1Api);
       this.kubeClientNetworking = kc.makeApiClient(k8s.NetworkingV1Api);
+      this.logger.log(`Kubernetes workspace client enabled (namespace=${this.configService.get<string>("K8S_WORKSPACE_NAMESPACE", "agent-workspaces")})`);
     } else {
       this.kubeClientApps = null;
       this.kubeClientCore = null;
       this.kubeClientNetworking = null;
+      this.logger.log("Kubernetes workspace client disabled");
     }
   }
 
   async createWorkspace(dto: CreateWorkspaceDto, userId: string): Promise<WorkspaceSessionEntity> {
+    this.logger.log(`Create workspace requested project=${dto.projectId} repo=${dto.repoId} user=${userId} runtime=${dto.runtime}`);
     await this.projectsService.getProject(dto.projectId);
     const repo = await this.gitlabService.getRepo(dto.projectId, dto.repoId);
     const user = await this.authService.findById(userId);
@@ -60,6 +64,7 @@ export class WorkspacesService {
       where: { projectId: dto.projectId, repoId: dto.repoId, userId },
     });
     if (existing) {
+      this.logger.log(`Workspace already exists session=${existing.id} deployment=${existing.deploymentName}`);
       return this.refreshWorkspaceStatus(existing);
     }
 
@@ -91,12 +96,22 @@ export class WorkspacesService {
         ingressName,
       }),
     );
+    this.logger.log(
+      `Workspace session created id=${session.id} namespace=${session.namespace} deployment=${session.deploymentName} pvc=${session.pvcName} image=${this.getRuntimeImage(session.runtime)}`,
+    );
 
-    await this.provisionWorkspace(session, repo, {
-      gitUserName: user?.displayName?.trim() || user?.email || "Workspace User",
-      gitUserEmail: user?.email || "workspace@example.com",
-      liteLlmApiKey: llmUserKey?.apiKey ?? "",
-    });
+    try {
+      await this.provisionWorkspace(session, repo, {
+        gitUserName: user?.displayName?.trim() || user?.email || "Workspace User",
+        gitUserEmail: user?.email || "workspace@example.com",
+        liteLlmApiKey: llmUserKey?.apiKey ?? "",
+      });
+    } catch (error) {
+      this.logger.error(
+        `Workspace provisioning failed session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}: ${this.describeError(error)}`,
+      );
+      throw error;
+    }
     return this.refreshWorkspaceStatus(session);
   }
 
@@ -149,14 +164,17 @@ export class WorkspacesService {
     gitIdentity: { gitUserName: string; gitUserEmail: string; liteLlmApiKey: string },
   ): Promise<void> {
     if (!this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking) {
+      this.logger.warn(`Skipping workspace provisioning because Kubernetes clients are unavailable session=${session.id}`);
       return;
     }
 
+    this.logger.log(`Provisioning workspace session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}`);
     await this.ensureNamespace(session.namespace);
     await this.ensurePvc(session);
     await this.ensureDeployment(session, repo, gitIdentity);
     await this.ensureService(session);
     await this.ensureIngress(session);
+    this.logger.log(`Workspace resources ensured session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}`);
   }
 
   private async ensureNamespace(namespace: string): Promise<void> {
@@ -165,7 +183,8 @@ export class WorkspacesService {
     }
     try {
       await this.kubeClientCore.readNamespace({ name: namespace });
-    } catch {
+    } catch (error) {
+      this.logger.warn(`Workspace namespace check failed or namespace missing: ${namespace} (${this.describeError(error)})`);
       return;
     }
   }
@@ -180,7 +199,9 @@ export class WorkspacesService {
         namespace: session.namespace,
         name: session.pvcName,
       });
+      this.logger.log(`Workspace PVC already exists namespace=${session.namespace} pvc=${session.pvcName}`);
     } catch {
+      this.logger.log(`Creating workspace PVC namespace=${session.namespace} pvc=${session.pvcName}`);
       await this.kubeClientCore.createNamespacedPersistentVolumeClaim({
         namespace: session.namespace,
         body: {
@@ -316,8 +337,10 @@ export class WorkspacesService {
         namespace: session.namespace,
         name: session.deploymentName,
       });
+      this.logger.log(`Workspace deployment already exists namespace=${session.namespace} deployment=${session.deploymentName}`);
       return;
     } catch {
+      this.logger.log(`Creating workspace deployment namespace=${session.namespace} deployment=${session.deploymentName} image=${runtimeImage}`);
       await this.kubeClientApps.createNamespacedDeployment({
         namespace: session.namespace,
         body: {
@@ -386,6 +409,7 @@ export class WorkspacesService {
         name: session.deploymentName,
       });
     } catch {
+      this.logger.warn(`Workspace deployment delete skipped namespace=${session.namespace} deployment=${session.deploymentName}`);
       return;
     }
   }
@@ -401,6 +425,7 @@ export class WorkspacesService {
         name: session.serviceName,
       });
     } catch {
+      this.logger.warn(`Workspace service delete skipped namespace=${session.namespace} service=${session.serviceName}`);
       return;
     }
   }
@@ -416,6 +441,7 @@ export class WorkspacesService {
         name: session.ingressName,
       });
     } catch {
+      this.logger.warn(`Workspace ingress delete skipped namespace=${session.namespace} ingress=${session.ingressName}`);
       return;
     }
   }
@@ -431,6 +457,7 @@ export class WorkspacesService {
         name: session.pvcName,
       });
     } catch {
+      this.logger.warn(`Workspace PVC delete skipped namespace=${session.namespace} pvc=${session.pvcName}`);
       return;
     }
   }
@@ -454,8 +481,10 @@ export class WorkspacesService {
         namespace: session.namespace,
         name: session.serviceName,
       });
+      this.logger.log(`Workspace service already exists namespace=${session.namespace} service=${session.serviceName}`);
       return;
     } catch {
+      this.logger.log(`Creating workspace service namespace=${session.namespace} service=${session.serviceName}`);
       await this.kubeClientCore.createNamespacedService({
         namespace: session.namespace,
         body: {
@@ -484,8 +513,10 @@ export class WorkspacesService {
         namespace: session.namespace,
         name: session.ingressName,
       });
+      this.logger.log(`Workspace ingress already exists namespace=${session.namespace} ingress=${session.ingressName}`);
       return;
     } catch {
+      this.logger.log(`Creating workspace ingress namespace=${session.namespace} ingress=${session.ingressName} host=${host}`);
       await this.kubeClientNetworking.createNamespacedIngress({
         namespace: session.namespace,
         body: {
@@ -582,6 +613,9 @@ export class WorkspacesService {
       const readyReplicas = deployment.status?.readyReplicas ?? 0;
       const desiredReplicas = deployment.spec?.replicas ?? 1;
       const nextStatus = readyReplicas >= desiredReplicas ? "running" : "provisioning";
+      this.logger.log(
+        `Workspace status check session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName} ready=${readyReplicas}/${desiredReplicas} status=${nextStatus}`,
+      );
 
       if (session.status !== nextStatus) {
         session.status = nextStatus;
@@ -589,7 +623,10 @@ export class WorkspacesService {
       }
 
       return session;
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        `Workspace status check failed session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName}: ${this.describeError(error)}`,
+      );
       if (session.status !== "provisioning") {
         session.status = "provisioning";
         return this.workspaceRepository.save(session);
@@ -597,5 +634,12 @@ export class WorkspacesService {
 
       return session;
     }
+  }
+
+  private describeError(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return String(error);
   }
 }
