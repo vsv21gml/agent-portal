@@ -5,5 +5,5 @@ dist
 coverage
 .env
 *.tgz
-prd-values.yaml
-local-values.yaml
+*-values.yaml
+.helmcache

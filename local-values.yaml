@@ -1,10 +1,16 @@
 web:
   ingress:
-    enabled: false
+    enabled: true
+    className: nginx
+    host: agent-portal.127.0.0.1.nip.io
+    path: /
 
 adminWeb:
   ingress:
-    enabled: false
+    enabled: true
+    className: nginx
+    host: admin.agent-portal.127.0.0.1.nip.io
+    path: /
 
 api:
   env:
@@ -13,25 +19,35 @@ api:
     INITIAL_ADMIN_PASSWORD: "chrlghk123#"
     JWT_SECRET: "change-me"
     TYPEORM_SYNC: "true"
-    DB_HOST: "postgres"
+    DB_HOST: "mspsapoc-postgresql.cilccw66wsss.us-east-1.rds.amazonaws.com"
     DB_PORT: "5432"
     DB_NAME: "agent_portal"
-    DB_USER: "postgres"
-    DB_PASSWORD: "postgres"
-    DB_SSL: "false"
+    DB_USER: "genaisa"
+    DB_PASSWORD: "genaisa1!"
+    DB_SSL: "true"
     K8S_NOTEBOOK_ENABLED: "true"
     K8S_NOTEBOOK_NAMESPACE: "agent-notebooks"
     K8S_NOTEBOOK_INGRESS_CLASS: "nginx"
+    K8S_WORKSPACE_ENABLED: "true"
+    K8S_WORKSPACE_NAMESPACE: "agent-workspaces"
+    K8S_WORKSPACE_INGRESS_CLASS: "nginx"
     KUBECONFIG_PATH: ""
     NOTEBOOK_PVC: "shared-notebooks-pvc"
     NOTEBOOK_IMAGE: "jupyter/base-notebook:latest"
     NOTEBOOK_REQUEST_CPU: "1"
     NOTEBOOK_REQUEST_MEM_GI: "2"
-    GITLAB_BASE_URL: "http://10.103.56.45:8181"
-    GITLAB_TOKEN: "b2496b212bb4267da162576e586c38a9a564595a"
+    WORKSPACE_HOST_SUFFIX: "127.0.0.1.nip.io"
+    WORKSPACE_IMAGE_NODE22: "agent-portal-vscode-node22:latest"
+    WORKSPACE_IMAGE_NODE23: "agent-portal-vscode-node23:latest"
+    WORKSPACE_IMAGE_NODE24: "agent-portal-vscode-node24:latest"
+    WORKSPACE_IMAGE_PYTHON38: "agent-portal-vscode-python38:latest"
+    GITLAB_BASE_URL: "https://gitlab.samsungsdscoe.com/"
+    GITLAB_TOKEN: "glpat-l3VsBDnnlXxLQc7mEg5IDW86MQp1OjEH.01.0w1l2zief"
+    LITELLM_BASE_URL: "https://litellm.samsungsdscoe.com"
+    LITELLM_MASTER_KEY: "sk-fpl1PH1CyVzOrDvSzqabCA"
 
 gitlab:
-  enabled: true
+  enabled: false
   upgradeCheck:
     enabled: false
   global:
