@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn, Unique } from "typeorm";
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, Unique } from "typeorm";
 
 @Entity("gitlab_repos")
 @Unique(["projectId", "repoName"])
@@ -14,4 +14,16 @@ export class GitlabRepoEntity {
 
   @Column()
   namespacePath!: string;
+
+  @Column({ type: "text", nullable: true })
+  remoteRepoId!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  cloneUrl!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  webUrl!: string | null;
+
+  @CreateDateColumn()
+  createdAt!: Date;
 }

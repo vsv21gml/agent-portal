@@ -33,7 +33,7 @@ export class AdminController {
   @Get("projects")
   @Permissions(Permission.READ_PROJECT)
   projects() {
-    return this.projectsService.listProjects();
+    return this.projectsService.listAllProjects();
   }
 
   @Get("projects/:projectId/resource-limit")

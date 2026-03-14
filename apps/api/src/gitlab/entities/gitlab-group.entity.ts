@@ -11,4 +11,10 @@ export class GitlabGroupEntity {
 
   @Column()
   groupPath!: string;
+
+  @Column({ type: "text", nullable: true })
+  remoteGroupId!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  webUrl!: string | null;
 }

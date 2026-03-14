@@ -14,5 +14,8 @@ dependencies:
 - name: litellm-helm
   repository: oci://ghcr.io/berriai
   version: 1.81.13
-digest: sha256:c3c926f04c479f960118a5d1fc363dff6a7b10edf28bf2d9f95bb1b028551769
-generated: "2026-02-22T12:24:25.9651692+09:00"
+- name: opensearch
+  repository: https://opensearch-project.github.io/helm-charts/
+  version: 3.5.0
+digest: sha256:b98d98a190922ac330a5d58a6e0d99b59e09d5b007d92bcc4ccf792303cc42fb
+generated: "2026-03-14T22:26:29.6690829+09:00"

@@ -1,6 +1,22 @@
 "use client";
 
-import { Badge, Button, Drawer, Group, LoadingOverlay, Paper, Pagination, ScrollArea, Stack, Table, Tabs, Text, TextInput, Title } from "@mantine/core";
+import {
+  Badge,
+  Button,
+  Drawer,
+  Group,
+  LoadingOverlay,
+  Pagination,
+  Paper,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -8,74 +24,73 @@ import { AdminFrame } from "../src/components/admin-frame";
 import { ApiError, apiFetch } from "../src/lib/api-client";
 import { clearToken } from "../src/lib/auth";
 
-type UserRow = {
-  id: string;
-  email: string;
-  displayName: string;
-  globalRole: string;
-};
+type UserRow = { id: string; email: string; displayName: string; globalRole: string };
+type InvitationRow = { id: string; email: string; displayName: string; globalRole: string; token: string; createdAt: string };
+type ProjectRow = { id: string; name: string; description: string; createdAt: string };
+type LogRow = { id: string; method: string; path: string; statusCode?: number; elapsedMs?: number; createdAt: string };
+type ResourceStatus = { projectId: string; projectName: string; limit: { cpu: number; memoryGi: number }; usage: { usedCpu: number; usedMemoryGi: number } };
+type GitlabGroup = { id: string; projectId: string; groupPath: string };
+type GitlabRepo = { id: string; projectId: string; repoName: string; namespacePath: string };
+type LlmKey = { id: string; projectId: string; teamId: string; ownerUserId: string; keyAlias: string; createdAt: string };
+type VectorKey = { id: string; projectId: string; ownerUserId: string; keyAlias: string; indexName: string; remoteKeyId: string | null; createdAt: string; apiKey?: string | null };
+type SectionKey = "users" | "projects" | "resources" | "gitlab" | "audit" | "access";
+type GitlabTableRow = { id: string; projectName: string; group: string; repo: string; namespace: string };
 
-type ProjectRow = {
-  id: string;
-  name: string;
-  slug: string;
-  createdAt: string;
-};
+const PAGE_SIZE = 20;
+const SECTIONS: Array<{ key: SectionKey; label: string; description: string }> = [
+  { key: "users", label: "Users", description: "Members and invitations" },
+  { key: "projects", label: "Projects", description: "Workspace inventory" },
+  { key: "resources", label: "Resources", description: "Notebook usage" },
+  { key: "gitlab", label: "GitLab", description: "Groups and repositories" },
+  { key: "audit", label: "Audit", description: "Administrative activity" },
+  { key: "access", label: "Access", description: "Request history" },
+];
 
-type LogRow = {
-  id: string;
-  method: string;
-  path: string;
-  statusCode?: number;
-  elapsedMs?: number;
-  createdAt: string;
-};
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString();
+}
 
-type ResourceStatus = {
-  projectId: string;
-  projectName: string;
-  limit: { cpu: number; memoryGi: number };
-  usage: { usedCpu: number; usedMemoryGi: number };
-};
+function fallbackCopyText(text: string) {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
-type GitlabGroup = {
-  id: string;
-  projectId: string;
-  groupPath: string;
-};
+function paginate<T>(items: T[], page: number) {
+  const total = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const current = Math.min(page, total);
+  const start = (current - 1) * PAGE_SIZE;
+  return { items: items.slice(start, start + PAGE_SIZE), total };
+}
 
-type GitlabRepo = {
-  id: string;
-  projectId: string;
-  repoName: string;
-  namespacePath: string;
-};
-
-type LlmKey = {
-  id: string;
-  projectId: string;
-  teamId: string;
-  ownerUserId: string;
-  keyAlias: string;
-  createdAt: string;
-};
-
-type VectorKey = {
-  id: string;
-  projectId: string;
-  ownerUserId: string;
-  keyAlias: string;
-  indexName: string;
-  remoteKeyId: string | null;
-  createdAt: string;
-  apiKey?: string | null;
-};
-
-const PAGE_SIZE = 8;
+function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
+  return (
+    <Table.Tr>
+      <Table.Td colSpan={colSpan}>
+        <Text size="sm" c="dimmed">
+          {label}
+        </Text>
+      </Table.Td>
+    </Table.Tr>
+  );
+}
 
 export default function AdminPage() {
   const router = useRouter();
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<LogRow[]>([]);
   const [accessLogs, setAccessLogs] = useState<LogRow[]>([]);
@@ -84,12 +99,25 @@ export default function AdminPage() {
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
   const [llmKeys, setLlmKeys] = useState<LlmKey[]>([]);
   const [vectorKeys, setVectorKeys] = useState<VectorKey[]>([]);
-  const [activePage, setActivePage] = useState(1);
+  const [activeSection, setActiveSection] = useState<SectionKey>("users");
+  const [userTab, setUserTab] = useState<string | null>("members");
+  const [usersPage, setUsersPage] = useState(1);
+  const [invitationsPage, setInvitationsPage] = useState(1);
+  const [projectsPage, setProjectsPage] = useState(1);
+  const [resourcesPage, setResourcesPage] = useState(1);
+  const [gitlabPage, setGitlabPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
+  const [accessPage, setAccessPage] = useState(1);
+  const [editingNames, setEditingNames] = useState<Record<string, string>>({});
+  const [savingDisplayNameId, setSavingDisplayNameId] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newSlug, setNewSlug] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; slug?: string }>({});
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteDisplayName, setInviteDisplayName] = useState("");
+  const [inviteRole, setInviteRole] = useState<string | null>("user");
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [deletingInvitationId, setDeletingInvitationId] = useState<string | null>(null);
   const [gitlabOpen, setGitlabOpen] = useState(false);
   const [gitlabRepoName, setGitlabRepoName] = useState("");
   const [gitlabError, setGitlabError] = useState<string | null>(null);
@@ -111,77 +139,243 @@ export default function AdminPage() {
           return;
         }
 
-        const [u, p, audit, access, groupRows] = await Promise.all([
+        const [usersResult, projectsResult, auditResult, accessResult, groupsResult, invitationsResult] = await Promise.allSettled([
           apiFetch<UserRow[]>("admin/users"),
           apiFetch<ProjectRow[]>("admin/projects"),
           apiFetch<LogRow[]>("admin/logs/audit"),
           apiFetch<LogRow[]>("admin/logs/access"),
           apiFetch<GitlabGroup[]>("admin/gitlab/groups"),
+          apiFetch<InvitationRow[]>("auth/invitations"),
         ]);
-        setUsers(u);
-        setProjects(p);
-        setAuditLogs(audit);
-        setAccessLogs(access);
-        setGroups(groupRows);
 
-        const statuses = await Promise.all(
-          p.map(async (project) => {
-            const data = await apiFetch<{ limit: { cpu: number; memoryGi: number }; usage: { usedCpu: number; usedMemoryGi: number } }>(
-              `admin/projects/${project.id}/resource-status`,
-            );
-            return {
-              projectId: project.id,
-              projectName: project.name,
-              limit: data.limit,
-              usage: data.usage,
-            };
-          }),
-        );
-        setResourceRows(statuses);
+        if (usersResult.status !== "fulfilled" || projectsResult.status !== "fulfilled") {
+          throw new Error("Failed to load admin data");
+        }
 
-        const reposByProject = await Promise.all(
-          p.map((project) => apiFetch<GitlabRepo[]>(`admin/projects/${project.id}/gitlab/repos`)),
+        setUsers(usersResult.value);
+        setEditingNames(
+          usersResult.value.reduce<Record<string, string>>((acc, user) => {
+            acc[user.id] = user.displayName;
+            return acc;
+          }, {}),
         );
-        setRepos(reposByProject.flat());
+        setProjects(projectsResult.value);
+        setAuditLogs(auditResult.status === "fulfilled" ? auditResult.value : []);
+        setAccessLogs(accessResult.status === "fulfilled" ? accessResult.value : []);
+        setGroups(groupsResult.status === "fulfilled" ? groupsResult.value : []);
+        setInvitations(invitationsResult.status === "fulfilled" ? invitationsResult.value : []);
 
-        const llmKeysByProject = await Promise.all(
-          p.map((project) => apiFetch<LlmKey[]>(`llm/projects/${project.id}/keys`)),
-        );
-        setLlmKeys(llmKeysByProject.flat());
+        const [statusResults, repoResults, llmResults, vectorResults] = await Promise.all([
+          Promise.allSettled(
+            projectsResult.value.map(async (project) => {
+              const data = await apiFetch<{ limit: { cpu: number; memoryGi: number }; usage: { usedCpu: number; usedMemoryGi: number } }>(
+                `admin/projects/${project.id}/resource-status`,
+              );
+              return { projectId: project.id, projectName: project.name, limit: data.limit, usage: data.usage };
+            }),
+          ),
+          Promise.allSettled(projectsResult.value.map((project) => apiFetch<GitlabRepo[]>(`admin/projects/${project.id}/gitlab/repos`))),
+          Promise.allSettled(projectsResult.value.map((project) => apiFetch<LlmKey[]>(`llm/projects/${project.id}/keys`))),
+          Promise.allSettled(projectsResult.value.map((project) => apiFetch<VectorKey[]>(`vectordb/projects/${project.id}/keys`))),
+        ]);
 
-        const vectorKeysByProject = await Promise.all(
-          p.map((project) => apiFetch<VectorKey[]>(`vectordb/projects/${project.id}/keys`)),
-        );
-        setVectorKeys(vectorKeysByProject.flat());
+        setResourceRows(statusResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])));
+        setRepos(repoResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
+        setLlmKeys(llmResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
+        setVectorKeys(vectorResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           router.replace("/login?next=/");
           return;
         }
-        notifications.show({
-          title: "Load failed",
-          message: "관리자 데이터를 불러오지 못했습니다.",
-          color: "red",
-        });
+        notifications.show({ title: "Load failed", message: "Admin data could not be loaded.", color: "red" });
         router.replace("/login?next=/");
       } finally {
         setAuthChecking(false);
       }
     };
+
     void load();
   }, [router]);
+
+  useEffect(() => {
+    if (!inviteOpen) {
+      return;
+    }
+    setInviteEmail("");
+    setInviteDisplayName("");
+    setInviteRole("user");
+  }, [inviteOpen]);
+
+  const gitlabRows = useMemo<GitlabTableRow[]>(() => {
+    const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+    const groupsByProject = new Map(groups.map((group) => [group.projectId, group.groupPath]));
+    const repoRows = repos.map((repo) => ({
+      id: `repo-${repo.id}`,
+      projectName: projectNames.get(repo.projectId) ?? repo.projectId,
+      group: groupsByProject.get(repo.projectId) ?? (repo.namespacePath.split("/").slice(0, -1).join("/") || "-"),
+      repo: repo.repoName,
+      namespace: repo.namespacePath,
+    }));
+    const groupOnlyRows = groups
+      .filter((group) => !repos.some((repo) => repo.projectId === group.projectId))
+      .map((group) => ({
+        id: `group-${group.id}`,
+        projectName: projectNames.get(group.projectId) ?? group.projectId,
+        group: group.groupPath,
+        repo: "-",
+        namespace: "-",
+      }));
+    return [...repoRows, ...groupOnlyRows];
+  }, [groups, projects, repos]);
+
+  const pagedUsers = useMemo(() => paginate(users, usersPage), [users, usersPage]);
+  const pagedInvitations = useMemo(() => paginate(invitations, invitationsPage), [invitations, invitationsPage]);
+  const pagedProjects = useMemo(() => paginate(projects, projectsPage), [projects, projectsPage]);
+  const pagedResources = useMemo(() => paginate(resourceRows, resourcesPage), [resourceRows, resourcesPage]);
+  const pagedGitlab = useMemo(() => paginate(gitlabRows, gitlabPage), [gitlabRows, gitlabPage]);
+  const pagedAudit = useMemo(() => paginate(auditLogs, auditPage), [auditLogs, auditPage]);
+  const pagedAccess = useMemo(() => paginate(accessLogs, accessPage), [accessLogs, accessPage]);
+
+  const buildPortalInviteUrl = (token: string) => {
+    if (typeof window === "undefined") {
+      return `/invite/${token}`;
+    }
+    return `${window.location.origin.replace("://admin.", "://")}/invite/${token}`;
+  };
+
+  const tryCopy = async (text: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return fallbackCopyText(text);
+      }
+    }
+    return fallbackCopyText(text);
+  };
+
+  const createInvitation = async () => {
+    if (!inviteEmail.trim() || !inviteDisplayName.trim() || !inviteRole) {
+      notifications.show({ title: "Failed", message: "Email, display name, and role are required.", color: "red" });
+      return;
+    }
+
+    setCreatingInvite(true);
+    try {
+      const created = await apiFetch<InvitationRow>("auth/invitations", {
+        method: "POST",
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          displayName: inviteDisplayName.trim(),
+          globalRole: inviteRole,
+        }),
+      });
+      setInvitations((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
+      setInviteOpen(false);
+      setUserTab("invitations");
+      setInvitationsPage(1);
+      notifications.show({ title: "Created", message: "Invitation created.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to create invitation.", color: "red" });
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
+
+  const copyInvitationLink = async (token: string) => {
+    const copied = await tryCopy(buildPortalInviteUrl(token));
+    notifications.show({
+      title: copied ? "Copied" : "Copy unavailable",
+      message: copied ? "Invitation link copied." : "Copy the link directly from the table field.",
+      color: copied ? "teal" : "yellow",
+    });
+  };
+
+  const updateRole = async (userId: string, role: "admin" | "user") => {
+    try {
+      await apiFetch(`auth/users/${userId}/role/${role}`, { method: "PATCH" });
+      setUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, globalRole: role } : user)));
+      notifications.show({ title: "Updated", message: "Role updated.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to update role.", color: "red" });
+    }
+  };
+
+  const updateDisplayName = async (userId: string) => {
+    const displayName = editingNames[userId]?.trim() ?? "";
+    if (!displayName) {
+      notifications.show({ title: "Failed", message: "Display name is required.", color: "red" });
+      return;
+    }
+
+    setSavingDisplayNameId(userId);
+    try {
+      await apiFetch(`auth/users/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ displayName }),
+      });
+      setUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, displayName } : user)));
+      notifications.show({ title: "Updated", message: "Display name updated.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to update display name.", color: "red" });
+    } finally {
+      setSavingDisplayNameId(null);
+    }
+  };
+
+  const deleteUser = async (userId: string) => {
+    const user = users.find((item) => item.id === userId);
+    if (!user) {
+      return;
+    }
+
+    if (typeof window !== "undefined" && !window.confirm(`Delete ${user.email}?`)) {
+      return;
+    }
+
+    setDeletingUserId(userId);
+    try {
+      await apiFetch(`auth/users/${userId}`, { method: "DELETE" });
+      setUsers((prev) => prev.filter((item) => item.id !== userId));
+      setEditingNames((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
+      notifications.show({ title: "Deleted", message: "User deleted.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to delete user.", color: "red" });
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
+
+  const deleteInvitation = async (invitationId: string) => {
+    setDeletingInvitationId(invitationId);
+    try {
+      await apiFetch(`auth/invitations/${invitationId}`, { method: "DELETE" });
+      setInvitations((prev) => prev.filter((item) => item.id !== invitationId));
+      notifications.show({ title: "Deleted", message: "Invitation removed.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to delete invitation.", color: "red" });
+    } finally {
+      setDeletingInvitationId(null);
+    }
+  };
 
   const createGitlabRepo = async () => {
     if (!detailProject) {
       return;
     }
     if (!gitlabRepoName.trim()) {
-      setGitlabError("레포 이름을 입력하세요.");
+      setGitlabError("Repo name is required.");
       return;
     }
     setGitlabError(null);
     try {
-      await apiFetch(`gitlab/projects/${detailProject.id}/group/${detailProject.slug}`, { method: "POST" });
+      await apiFetch(`gitlab/projects/${detailProject.id}/group`, { method: "POST" });
       const created = await apiFetch<GitlabRepo>(`gitlab/projects/${detailProject.id}/repos`, {
         method: "POST",
         body: JSON.stringify({ repoName: gitlabRepoName.trim() }),
@@ -189,9 +383,9 @@ export default function AdminPage() {
       setRepos((prev) => [created, ...prev]);
       setGitlabRepoName("");
       setGitlabOpen(false);
-      notifications.show({ title: "Created", message: "GitLab 레포를 생성했습니다.", color: "teal" });
+      notifications.show({ title: "Created", message: "GitLab repo created.", color: "teal" });
     } catch {
-      notifications.show({ title: "Failed", message: "GitLab 레포 생성에 실패했습니다.", color: "red" });
+      notifications.show({ title: "Failed", message: "Failed to create GitLab repo.", color: "red" });
     }
   };
 
@@ -200,12 +394,12 @@ export default function AdminPage() {
       return;
     }
     if (!llmAlias.trim()) {
-      setLlmError("키 별칭을 입력하세요.");
+      setLlmError("Key alias is required.");
       return;
     }
     setLlmError(null);
     try {
-      await apiFetch(`llm/projects/${detailProject.id}/team/${detailProject.slug}`, { method: "POST" });
+      await apiFetch(`llm/projects/${detailProject.id}/team`, { method: "POST" });
       const created = await apiFetch<LlmKey>(`llm/projects/${detailProject.id}/keys`, {
         method: "POST",
         body: JSON.stringify({ keyAlias: llmAlias.trim() }),
@@ -213,9 +407,9 @@ export default function AdminPage() {
       setLlmKeys((prev) => [created, ...prev]);
       setLlmAlias("");
       setLlmOpen(false);
-      notifications.show({ title: "Issued", message: "LiteLLM 키를 발급했습니다.", color: "teal" });
+      notifications.show({ title: "Issued", message: "LiteLLM key issued.", color: "teal" });
     } catch {
-      notifications.show({ title: "Failed", message: "LiteLLM 키 발급에 실패했습니다.", color: "red" });
+      notifications.show({ title: "Failed", message: "Failed to issue LiteLLM key.", color: "red" });
     }
   };
 
@@ -224,7 +418,7 @@ export default function AdminPage() {
       return;
     }
     if (!vectorAlias.trim()) {
-      setVectorError("키 별칭을 입력하세요.");
+      setVectorError("Key alias is required.");
       return;
     }
     setVectorError(null);
@@ -236,230 +430,375 @@ export default function AdminPage() {
       setVectorKeys((prev) => [created, ...prev]);
       setVectorAlias("");
       setVectorOpen(false);
-      if (created.apiKey) {
-        notifications.show({ title: "Issued", message: `VectorDB 키 발급: ${created.apiKey}`, color: "teal" });
-      } else {
-        notifications.show({ title: "Issued", message: "VectorDB 키를 발급했습니다.", color: "teal" });
-      }
-    } catch {
-      notifications.show({ title: "Failed", message: "VectorDB 키 발급에 실패했습니다.", color: "red" });
-    }
-  };
-
-  const createProject = async () => {
-    const nextErrors: { name?: string; slug?: string } = {};
-    if (!newName.trim()) {
-      nextErrors.name = "프로젝트 이름을 입력하세요.";
-    }
-    if (!newSlug.trim()) {
-      nextErrors.slug = "Slug를 입력하세요.";
-    } else if (!/^[a-z0-9-]+$/.test(newSlug.trim())) {
-      nextErrors.slug = "Slug는 소문자, 숫자, 하이픈만 가능합니다.";
-    }
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) {
-      return;
-    }
-
-    try {
-      const created = await apiFetch<ProjectRow>("projects", {
-        method: "POST",
-        body: JSON.stringify({ name: newName.trim(), slug: newSlug.trim() }),
+      notifications.show({
+        title: "Issued",
+        message: created.apiKey ? `VectorDB key issued: ${created.apiKey}` : "VectorDB key issued.",
+        color: "teal",
       });
-      setProjects((prev) => [created, ...prev]);
-      setNewName("");
-      setNewSlug("");
-      setErrors({});
-      setCreateOpen(false);
-      notifications.show({ title: "Created", message: "프로젝트를 생성했습니다.", color: "teal" });
     } catch {
-      notifications.show({ title: "Failed", message: "프로젝트 생성에 실패했습니다.", color: "red" });
+      notifications.show({ title: "Failed", message: "Failed to issue VectorDB key.", color: "red" });
     }
   };
 
-  const updateRole = async (userId: string, role: "admin" | "user") => {
-    try {
-      await apiFetch(`auth/users/${userId}/role/${role}`, { method: "PATCH" });
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, globalRole: role } : u)));
-      notifications.show({ title: "Updated", message: "역할이 변경되었습니다.", color: "teal" });
-    } catch {
-      notifications.show({ title: "Failed", message: "역할 변경에 실패했습니다.", color: "red" });
-    }
-  };
-
-  const projectPages = Math.max(1, Math.ceil(projects.length / PAGE_SIZE));
-  const pagedProjects = useMemo(() => {
-    const start = (activePage - 1) * PAGE_SIZE;
-    return projects.slice(start, start + PAGE_SIZE);
-  }, [activePage, projects]);
-
-  return (
-    <AdminFrame>
-      <Stack pos="relative">
-        <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
-        <Group justify="end" mb="md">
-          <Button onClick={() => setCreateOpen(true)}>New Project</Button>
+  const renderUsersSection = () => (
+    <Paper withBorder p="lg">
+      <Stack gap="lg">
+        <Group justify="space-between" align="end">
+          <Stack gap={2}>
+            <Title order={3}>User Administration</Title>
+            <Text size="sm" c="dimmed">
+              Manage members, invitations, and role changes.
+            </Text>
+          </Stack>
+          <Button variant="light" onClick={() => setInviteOpen(true)}>
+            Invite User
+          </Button>
         </Group>
-        <Tabs defaultValue="users">
-        <Tabs.List>
-          <Tabs.Tab value="users">멤버/역할관리</Tabs.Tab>
-          <Tabs.Tab value="projects">프로젝트관리</Tabs.Tab>
-          <Tabs.Tab value="resources">노트북 자원현황</Tabs.Tab>
-          <Tabs.Tab value="gitlab">GitLab 현황</Tabs.Tab>
-          <Tabs.Tab value="audit">오딧로그</Tabs.Tab>
-          <Tabs.Tab value="access">엑세스로그</Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="users" pt="md">
-          <Paper withBorder p="md">
-            <Title order={4}>Users</Title>
-            <ScrollArea mt="sm">
-              <Table withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Email</Table.Th>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Role</Table.Th>
-                    <Table.Th>Action</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {users.map((u) => (
-                    <Table.Tr key={u.id}>
-                      <Table.Td>{u.email}</Table.Td>
-                      <Table.Td>{u.displayName}</Table.Td>
-                      <Table.Td>
-                        <Badge>{u.globalRole}</Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap="xs">
-                          <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(u.id, "admin")}>
-                            ADMIN
-                          </Badge>
-                          <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(u.id, "user")}>
-                            USER
-                          </Badge>
-                        </Group>
-                      </Table.Td>
+
+        <Tabs value={userTab} onChange={setUserTab}>
+          <Tabs.List>
+            <Tabs.Tab value="members">Users</Tabs.Tab>
+            <Tabs.Tab value="invitations">Pending Invitations</Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="members" pt="md">
+            <Stack gap="md">
+              <ScrollArea>
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Email</Table.Th>
+                      <Table.Th>Display Name</Table.Th>
+                      <Table.Th>Role</Table.Th>
+                      <Table.Th>Actions</Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Paper>
-        </Tabs.Panel>
-        <Tabs.Panel value="projects" pt="md">
-          <Paper withBorder p="md">
-            <Title order={4}>Projects</Title>
-            <ScrollArea mt="sm">
-              <Table withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Slug</Table.Th>
-                    <Table.Th>Created</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {pagedProjects.map((p) => (
-                    <Table.Tr key={p.id} onClick={() => setDetailProject(p)} style={{ cursor: "pointer" }}>
-                      <Table.Td>{p.name}</Table.Td>
-                      <Table.Td>{p.slug}</Table.Td>
-                      <Table.Td>{new Date(p.createdAt).toLocaleString()}</Table.Td>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedUsers.items.length === 0 ? (
+                      <EmptyRow colSpan={4} label="No users found." />
+                    ) : (
+                      pagedUsers.items.map((user) => {
+                        const changed = (editingNames[user.id] ?? user.displayName) !== user.displayName;
+                        return (
+                          <Table.Tr key={user.id}>
+                            <Table.Td>{user.email}</Table.Td>
+                            <Table.Td miw={260}>
+                              <Group gap="xs" wrap="nowrap" align="end">
+                                <TextInput
+                                  value={editingNames[user.id] ?? ""}
+                                  onChange={(event) => setEditingNames((prev) => ({ ...prev, [user.id]: event.currentTarget.value }))}
+                                />
+                                <Button size="xs" variant="light" disabled={!changed} loading={savingDisplayNameId === user.id} onClick={() => void updateDisplayName(user.id)}>
+                                  Save
+                                </Button>
+                              </Group>
+                            </Table.Td>
+                            <Table.Td miw={180}>
+                              <Select
+                                data={[
+                                  { value: "user", label: "user" },
+                                  { value: "admin", label: "admin" },
+                                ]}
+                                value={user.globalRole}
+                                allowDeselect={false}
+                                onChange={(value) => {
+                                  if (value === user.globalRole) {
+                                    return;
+                                  }
+                                  if (value === "admin" || value === "user") {
+                                    void updateRole(user.id, value);
+                                  }
+                                }}
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <Group gap="xs">
+                                <Button size="xs" color="red" variant="light" loading={deletingUserId === user.id} onClick={() => void deleteUser(user.id)}>
+                                  Delete
+                                </Button>
+                              </Group>
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end">
+                <Pagination total={pagedUsers.total} value={usersPage} onChange={setUsersPage} />
+              </Group>
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="invitations" pt="md">
+            <Stack gap="md">
+              <ScrollArea>
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Email</Table.Th>
+                      <Table.Th>Name</Table.Th>
+                      <Table.Th>Role</Table.Th>
+                      <Table.Th>Created</Table.Th>
+                      <Table.Th>Link</Table.Th>
+                      <Table.Th>Delete</Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-            <Group justify="end" mt="md">
-              <Pagination total={projectPages} value={activePage} onChange={setActivePage} />
-            </Group>
-          </Paper>
-        </Tabs.Panel>
-        <Tabs.Panel value="resources" pt="md">
-          <Paper withBorder p="md">
-            <Title order={4}>Notebook Resource Status</Title>
-            <ScrollArea mt="sm">
-              <Table withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Project</Table.Th>
-                    <Table.Th>CPU(used/limit)</Table.Th>
-                    <Table.Th>MEM Gi(used/limit)</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {resourceRows.map((r) => (
-                    <Table.Tr key={r.projectId}>
-                      <Table.Td>{r.projectName}</Table.Td>
-                      <Table.Td>
-                        {r.usage.usedCpu}/{r.limit.cpu}
-                      </Table.Td>
-                      <Table.Td>
-                        {r.usage.usedMemoryGi}/{r.limit.memoryGi}
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Paper>
-        </Tabs.Panel>
-        <Tabs.Panel value="gitlab" pt="md">
-          <Paper withBorder p="md">
-            <Title order={4}>GitLab Group Status</Title>
-            <Stack mt="sm">
-              {groups.map((g) => (
-                <Text size="sm" key={g.id}>
-                  {g.groupPath} (project: {g.projectId})
-                </Text>
-              ))}
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedInvitations.items.length === 0 ? (
+                      <EmptyRow colSpan={6} label="No pending invitations." />
+                    ) : (
+                      pagedInvitations.items.map((invitation) => (
+                        <Table.Tr key={invitation.id}>
+                          <Table.Td>{invitation.email}</Table.Td>
+                          <Table.Td>{invitation.displayName}</Table.Td>
+                          <Table.Td>
+                            <Badge variant="light">{invitation.globalRole}</Badge>
+                          </Table.Td>
+                          <Table.Td>{formatDateTime(invitation.createdAt)}</Table.Td>
+                          <Table.Td miw={360}>
+                            <Group gap="xs" wrap="nowrap">
+                              <TextInput value={buildPortalInviteUrl(invitation.token)} readOnly styles={{ input: { minWidth: 260 } }} />
+                              <Button size="xs" variant="light" onClick={() => void copyInvitationLink(invitation.token)}>
+                                Copy
+                              </Button>
+                            </Group>
+                          </Table.Td>
+                          <Table.Td>
+                            <Button size="xs" color="red" variant="light" loading={deletingInvitationId === invitation.id} onClick={() => void deleteInvitation(invitation.id)}>
+                              Delete
+                            </Button>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end">
+                <Pagination total={pagedInvitations.total} value={invitationsPage} onChange={setInvitationsPage} />
+              </Group>
             </Stack>
-            <Title order={5} mt="md">
-              GitLab Repo Status
-            </Title>
-            <Stack mt="sm">
-              {repos.map((r) => (
-                <Text size="sm" key={r.id}>
-                  {r.namespacePath}
-                </Text>
-              ))}
-            </Stack>
-          </Paper>
-        </Tabs.Panel>
-        <Tabs.Panel value="audit" pt="md">
-          <Paper withBorder p="md">
-            <Title order={4}>Audit Logs</Title>
-            <Stack mt="sm">
-              {auditLogs.map((l) => (
-                <Text key={l.id} size="sm">
-                  [{new Date(l.createdAt).toLocaleString()}] {l.method} {l.path}
-                </Text>
-              ))}
-            </Stack>
-          </Paper>
-        </Tabs.Panel>
-        <Tabs.Panel value="access" pt="md">
-          <Paper withBorder p="md">
-            <Title order={4}>Access Logs</Title>
-            <Stack mt="sm">
-              {accessLogs.map((l) => (
-                <Text key={l.id} size="sm">
-                  [{new Date(l.createdAt).toLocaleString()}] {l.method} {l.path} ({l.statusCode} / {l.elapsedMs}ms)
-                </Text>
-              ))}
-            </Stack>
-          </Paper>
-        </Tabs.Panel>
+          </Tabs.Panel>
         </Tabs>
       </Stack>
+    </Paper>
+  );
 
+  const renderProjectsSection = () => (
+    <Paper withBorder p="lg">
+      <Stack gap="md">
+        <Title order={3}>Projects</Title>
+        <ScrollArea>
+          <Table withTableBorder highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Description</Table.Th>
+                <Table.Th>ID</Table.Th>
+                <Table.Th>Created</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {pagedProjects.items.length === 0 ? (
+                <EmptyRow colSpan={4} label="No projects found." />
+              ) : (
+                pagedProjects.items.map((project) => (
+                  <Table.Tr key={project.id} onClick={() => setDetailProject(project)} style={{ cursor: "pointer" }}>
+                    <Table.Td>{project.name}</Table.Td>
+                    <Table.Td>{project.description || "-"}</Table.Td>
+                    <Table.Td>{project.id}</Table.Td>
+                    <Table.Td>{formatDateTime(project.createdAt)}</Table.Td>
+                  </Table.Tr>
+                ))
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+        <Group justify="end">
+          <Pagination total={pagedProjects.total} value={projectsPage} onChange={setProjectsPage} />
+        </Group>
+      </Stack>
+    </Paper>
+  );
+
+  const renderResourcesSection = () => (
+    <Paper withBorder p="lg">
+      <Stack gap="md">
+        <Title order={3}>Notebook Resource Status</Title>
+        <ScrollArea>
+          <Table withTableBorder highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Project</Table.Th>
+                <Table.Th>CPU Used / Limit</Table.Th>
+                <Table.Th>Memory Used / Limit</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {pagedResources.items.length === 0 ? (
+                <EmptyRow colSpan={3} label="No resource rows found." />
+              ) : (
+                pagedResources.items.map((resource) => (
+                  <Table.Tr key={resource.projectId}>
+                    <Table.Td>{resource.projectName}</Table.Td>
+                    <Table.Td>{resource.usage.usedCpu}/{resource.limit.cpu}</Table.Td>
+                    <Table.Td>{resource.usage.usedMemoryGi}/{resource.limit.memoryGi}</Table.Td>
+                  </Table.Tr>
+                ))
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+        <Group justify="end">
+          <Pagination total={pagedResources.total} value={resourcesPage} onChange={setResourcesPage} />
+        </Group>
+      </Stack>
+    </Paper>
+  );
+
+  const renderGitlabSection = () => (
+    <Paper withBorder p="lg">
+      <Stack gap="md">
+        <Title order={3}>GitLab Overview</Title>
+        <ScrollArea>
+          <Table withTableBorder highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Project</Table.Th>
+                <Table.Th>Group</Table.Th>
+                <Table.Th>Repo</Table.Th>
+                <Table.Th>Namespace</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {pagedGitlab.items.length === 0 ? (
+                <EmptyRow colSpan={4} label="No GitLab rows found." />
+              ) : (
+                pagedGitlab.items.map((row) => (
+                  <Table.Tr key={row.id}>
+                    <Table.Td>{row.projectName}</Table.Td>
+                    <Table.Td>{row.group}</Table.Td>
+                    <Table.Td>{row.repo}</Table.Td>
+                    <Table.Td>{row.namespace}</Table.Td>
+                  </Table.Tr>
+                ))
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+        <Group justify="end">
+          <Pagination total={pagedGitlab.total} value={gitlabPage} onChange={setGitlabPage} />
+        </Group>
+      </Stack>
+    </Paper>
+  );
+
+  const renderAuditSection = () => (
+    <Paper withBorder p="lg">
+      <Stack gap="md">
+        <Title order={3}>Audit Logs</Title>
+        <ScrollArea>
+          <Table withTableBorder highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Time</Table.Th>
+                <Table.Th>Method</Table.Th>
+                <Table.Th>Path</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {pagedAudit.items.length === 0 ? (
+                <EmptyRow colSpan={3} label="No audit logs found." />
+              ) : (
+                pagedAudit.items.map((log) => (
+                  <Table.Tr key={log.id}>
+                    <Table.Td>{formatDateTime(log.createdAt)}</Table.Td>
+                    <Table.Td>{log.method}</Table.Td>
+                    <Table.Td>{log.path}</Table.Td>
+                  </Table.Tr>
+                ))
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+        <Group justify="end">
+          <Pagination total={pagedAudit.total} value={auditPage} onChange={setAuditPage} />
+        </Group>
+      </Stack>
+    </Paper>
+  );
+
+  const renderAccessSection = () => (
+    <Paper withBorder p="lg">
+      <Stack gap="md">
+        <Title order={3}>Access Logs</Title>
+        <ScrollArea>
+          <Table withTableBorder highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Time</Table.Th>
+                <Table.Th>Method</Table.Th>
+                <Table.Th>Path</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Latency</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {pagedAccess.items.length === 0 ? (
+                <EmptyRow colSpan={5} label="No access logs found." />
+              ) : (
+                pagedAccess.items.map((log) => (
+                  <Table.Tr key={log.id}>
+                    <Table.Td>{formatDateTime(log.createdAt)}</Table.Td>
+                    <Table.Td>{log.method}</Table.Td>
+                    <Table.Td>{log.path}</Table.Td>
+                    <Table.Td>{log.statusCode ?? "-"}</Table.Td>
+                    <Table.Td>{log.elapsedMs != null ? `${log.elapsedMs} ms` : "-"}</Table.Td>
+                  </Table.Tr>
+                ))
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+        <Group justify="end">
+          <Pagination total={pagedAccess.total} value={accessPage} onChange={setAccessPage} />
+        </Group>
+      </Stack>
+    </Paper>
+  );
+
+  const renderSection = () => {
+    switch (activeSection) {
+      case "users":
+        return renderUsersSection();
+      case "projects":
+        return renderProjectsSection();
+      case "resources":
+        return renderResourcesSection();
+      case "gitlab":
+        return renderGitlabSection();
+      case "audit":
+        return renderAuditSection();
+      case "access":
+        return renderAccessSection();
+    }
+  };
+
+  return (
+    <AdminFrame navigation={SECTIONS} activeNav={activeSection} onNavigate={(key) => setActiveSection(key as SectionKey)}>
+      <Stack pos="relative">
+        <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
+        {renderSection()}
+      </Stack>
       <Drawer opened={detailProject !== null} onClose={() => setDetailProject(null)} title="Project Detail" position="right">
         {detailProject ? (
           <Stack>
             <Text fw={700}>{detailProject.name}</Text>
-            <Text c="dimmed">{detailProject.slug}</Text>
+            <Text size="sm">{detailProject.description || "No description"}</Text>
             <Text size="sm">ID: {detailProject.id}</Text>
-            <Text size="sm">Created: {new Date(detailProject.createdAt).toLocaleString()}</Text>
+            <Text size="sm">Created: {formatDateTime(detailProject.createdAt)}</Text>
             <Group mt="sm">
               <Button size="xs" variant="light" onClick={() => setGitlabOpen(true)}>
                 New GitLab Repo
@@ -471,44 +810,30 @@ export default function AdminPage() {
                 Issue VectorDB Key
               </Button>
             </Group>
+            <Text size="xs" c="dimmed">
+              Existing keys: {llmKeys.filter((key) => key.projectId === detailProject.id).length} LiteLLM / {vectorKeys.filter((key) => key.projectId === detailProject.id).length} VectorDB
+            </Text>
           </Stack>
         ) : null}
       </Drawer>
-
-      <Drawer opened={createOpen} onClose={() => setCreateOpen(false)} title="Create Project" position="right">
+      <Drawer opened={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite User" position="right">
         <Stack>
-          <TextInput
-            label="Project Name"
-            value={newName}
-            onChange={(e) => setNewName(e.currentTarget.value)}
-            error={errors.name}
-            placeholder="My Project"
-          />
-          <TextInput
-            label="Slug"
-            value={newSlug}
-            onChange={(e) => setNewSlug(e.currentTarget.value)}
-            error={errors.slug}
-            placeholder="my-project"
-          />
+          <TextInput label="Email" value={inviteEmail} onChange={(event) => setInviteEmail(event.currentTarget.value)} />
+          <TextInput label="Display Name" value={inviteDisplayName} onChange={(event) => setInviteDisplayName(event.currentTarget.value)} />
+          <Select label="Role" data={[{ value: "user", label: "user" }, { value: "admin", label: "admin" }]} value={inviteRole} onChange={setInviteRole} allowDeselect={false} />
           <Group justify="end">
-            <Button variant="default" onClick={() => setCreateOpen(false)}>
-              Cancel
+            <Button variant="default" onClick={() => setInviteOpen(false)}>
+              Close
             </Button>
-            <Button onClick={createProject}>Create</Button>
+            <Button loading={creatingInvite} onClick={createInvitation}>
+              Create Invite
+            </Button>
           </Group>
         </Stack>
       </Drawer>
-
       <Drawer opened={gitlabOpen} onClose={() => setGitlabOpen(false)} title="Create GitLab Repo" position="right">
         <Stack>
-          <TextInput
-            label="Repo Name"
-            value={gitlabRepoName}
-            onChange={(e) => setGitlabRepoName(e.currentTarget.value)}
-            error={gitlabError}
-            placeholder="my-repo"
-          />
+          <TextInput label="Repo Name" value={gitlabRepoName} onChange={(event) => setGitlabRepoName(event.currentTarget.value)} error={gitlabError} placeholder="my-repo" />
           <Group justify="end">
             <Button variant="default" onClick={() => setGitlabOpen(false)}>
               Cancel
@@ -517,16 +842,9 @@ export default function AdminPage() {
           </Group>
         </Stack>
       </Drawer>
-
       <Drawer opened={llmOpen} onClose={() => setLlmOpen(false)} title="Issue LiteLLM Key" position="right">
         <Stack>
-          <TextInput
-            label="Key Alias"
-            value={llmAlias}
-            onChange={(e) => setLlmAlias(e.currentTarget.value)}
-            error={llmError}
-            placeholder="team-key"
-          />
+          <TextInput label="Key Alias" value={llmAlias} onChange={(event) => setLlmAlias(event.currentTarget.value)} error={llmError} placeholder="team-key" />
           <Group justify="end">
             <Button variant="default" onClick={() => setLlmOpen(false)}>
               Cancel
@@ -535,16 +853,9 @@ export default function AdminPage() {
           </Group>
         </Stack>
       </Drawer>
-
       <Drawer opened={vectorOpen} onClose={() => setVectorOpen(false)} title="Issue VectorDB Key" position="right">
         <Stack>
-          <TextInput
-            label="Key Alias"
-            value={vectorAlias}
-            onChange={(e) => setVectorAlias(e.currentTarget.value)}
-            error={vectorError}
-            placeholder="project-key"
-          />
+          <TextInput label="Key Alias" value={vectorAlias} onChange={(event) => setVectorAlias(event.currentTarget.value)} error={vectorError} placeholder="project-key" />
           <Group justify="end">
             <Button variant="default" onClick={() => setVectorOpen(false)}>
               Cancel

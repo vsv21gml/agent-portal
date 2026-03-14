@@ -1,0 +1,113 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: jenkins-kaniko
+spec:
+  serviceAccountName: mspsa-jenkins-role
+  containers:
+  - name: aws
+    image: amazon/aws-cli:2.15.0
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - name: kaniko-docker-config
+      mountPath: /kaniko/.docker
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:v1.23.2-debug
+    command: ["sh"]
+    tty: true
+    volumeMounts:
+    - name: kaniko-docker-config
+      mountPath: /kaniko/.docker
+  volumes:
+  - name: kaniko-docker-config
+    emptyDir: {}
+"""
+    }
+  }
+
+  environment {
+    AWS_REGION = "us-east-1"
+    ECR_REGISTRY = "755035179509.dkr.ecr.us-east-1.amazonaws.com"
+    ECR_REPO = "mspsa/agent-portal"
+    IMAGE_TAG = "${BUILD_NUMBER}"
+    GIT_REPO = "github.com/vsv21gml/agent-portal.git"
+  }
+
+  parameters {
+		choice(
+			name: 'BUILD_IMAGE',
+			choices: ['node22', 'node23', 'node24', 'python38'],
+			description: 'Select the target environment for deployment'
+		)
+  }
+
+  stages {
+
+    // stage('Checkout') {
+    //   steps {
+    //     withCredentials([usernamePassword(
+    //       credentialsId: 'TW_GIT_TOKEN',
+    //       usernameVariable: 'TW_GIT_USER',
+    //       passwordVariable: 'TW_GIT_PASS'
+    //     )]) {
+    //       sh '''
+    //         set -e
+    //         git clone "https://${TW_GIT_USER}:${TW_GIT_PASS}@${GIT_REPO}" .
+    //       '''
+    //     }
+    //   }
+    // }
+
+    stage('Checkout') {
+      steps {
+				sh '''
+					set -e
+					git clone "https://${GIT_REPO}" .
+				'''
+      }
+    }
+
+    stage('ECR Login') {
+      steps {
+        container('aws') {
+          sh """
+            mkdir -p /kaniko/.docker
+            PASS=\$(aws ecr get-login-password --region ${AWS_REGION})
+            cat > /kaniko/.docker/config.json <<EOF
+          """
+        }
+      }
+    }
+
+    stage('Build & Push') {
+      steps {
+        container('kaniko') {
+          sh """
+            /kaniko/executor \
+              --context ${WORKSPACE}/infra/vscode \
+              --dockerfile infra/vscode/${BUILD_IMAGE}.Dockerfile \
+              --destination ${ECR_REGISTRY}/${ECR_REPO}/agent-portal-vscode-${BUILD_IMAGE}:${IMAGE_TAG} \
+              --destination ${ECR_REGISTRY}/${ECR_REPO}/agent-portal-vscode-${BUILD_IMAGE}:latest \
+              --verbosity info
+          """
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "✅ Image pushed: ${ECR_REGISTRY}/${ECR_REPO}/agent-portal-vscode-${BUILD_IMAGE}:${IMAGE_TAG}"
+    }
+    failure {
+      echo "❌ Build failed"
+    }
+  }
+}

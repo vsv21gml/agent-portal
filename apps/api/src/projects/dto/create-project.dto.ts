@@ -1,4 +1,4 @@
-import { IsAlphanumeric, IsNotEmpty, IsString, Matches, MaxLength } from "class-validator";
+import { IsNotEmpty, IsString, MaxLength } from "class-validator";
 
 export class CreateProjectDto {
   @IsString()
@@ -7,7 +7,7 @@ export class CreateProjectDto {
   name!: string;
 
   @IsString()
-  @IsAlphanumeric()
-  @Matches(/^[a-z0-9-]+$/)
-  slug!: string;
+  @IsNotEmpty()
+  @MaxLength(1000)
+  description!: string;
 }

@@ -10,6 +10,7 @@ import { RolesGuard } from "./auth/guards/roles.guard";
 import { AuthModule } from "./auth/auth.module";
 import { RolePermissionEntity } from "./auth/entities/role-permission.entity";
 import { UserEntity } from "./auth/entities/user.entity";
+import { UserInvitationEntity } from "./auth/entities/user-invitation.entity";
 import { GitlabModule } from "./gitlab/gitlab.module";
 import { GitlabGroupEntity } from "./gitlab/entities/gitlab-group.entity";
 import { GitlabMemberSyncEntity } from "./gitlab/entities/gitlab-member-sync.entity";
@@ -18,8 +19,11 @@ import { LlmModule } from "./llm/llm.module";
 import { LiteLlmKeyEntity } from "./llm/entities/litellm-key.entity";
 import { LiteLlmModelEntity } from "./llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./llm/entities/litellm-team.entity";
+import { LiteLlmUserKeyEntity } from "./llm/entities/litellm-user-key.entity";
 import { LoggingMiddleware } from "./logs/logging.middleware";
 import { LogsModule } from "./logs/logs.module";
+import { AccessLogEntity } from "./logs/entities/access-log.entity";
+import { AuditLogEntity } from "./logs/entities/audit-log.entity";
 import { NotebookSessionEntity } from "./notebooks/entities/notebook-session.entity";
 import { NotebooksModule } from "./notebooks/notebooks.module";
 import { ProjectMemberEntity } from "./projects/entities/project-member.entity";
@@ -28,6 +32,8 @@ import { ProjectEntity } from "./projects/entities/project.entity";
 import { ProjectsModule } from "./projects/projects.module";
 import { VectorKeyEntity } from "./vectordb/entities/vector-key.entity";
 import { VectorDbModule } from "./vectordb/vectordb.module";
+import { WorkspaceSessionEntity } from "./workspaces/entities/workspace-session.entity";
+import { WorkspacesModule } from "./workspaces/workspaces.module";
 
 @Module({
   imports: [
@@ -45,24 +51,30 @@ import { VectorDbModule } from "./vectordb/vectordb.module";
         synchronize: configService.get<string>("TYPEORM_SYNC", "true") === "true",
         entities: [
           UserEntity,
+          UserInvitationEntity,
           RolePermissionEntity,
           ProjectEntity,
           ProjectMemberEntity,
           ProjectResourceLimitEntity,
           NotebookSessionEntity,
+          WorkspaceSessionEntity,
           GitlabGroupEntity,
           GitlabRepoEntity,
           GitlabMemberSyncEntity,
           LiteLlmTeamEntity,
           LiteLlmKeyEntity,
           LiteLlmModelEntity,
+          LiteLlmUserKeyEntity,
           VectorKeyEntity,
+          AuditLogEntity,
+          AccessLogEntity,
         ],
       }),
     }),
     AuthModule,
     ProjectsModule,
     NotebooksModule,
+    WorkspacesModule,
     GitlabModule,
     LlmModule,
     LogsModule,

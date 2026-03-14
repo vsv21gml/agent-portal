@@ -1,7 +1,7 @@
 "use client";
 
-import { Button, Drawer, Group, LoadingOverlay, Stack, TextInput } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { ActionIcon, Affix, Button, Drawer, Group, LoadingOverlay, Stack, TextInput, Textarea } from "@mantine/core";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "../../src/components/app-frame";
 import { ProjectTable } from "../../src/components/project-table";
@@ -13,10 +13,12 @@ export default function UserPortalPage() {
   const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
+  const [description, setDescription] = useState("");
+  const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [errors, setErrors] = useState<{ name?: string; slug?: string }>({});
+  const [errors, setErrors] = useState<{ name?: string; description?: string }>({});
   const [authChecking, setAuthChecking] = useState(true);
+  const [creatingProject, setCreatingProject] = useState(false);
 
   const loadProjects = async () => {
     try {
@@ -42,71 +44,130 @@ export default function UserPortalPage() {
         setAuthChecking(false);
       }
     };
+
     void ensureAuth();
   }, [router]);
 
+  const filteredProjects = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) {
+      return projects;
+    }
+
+    return projects.filter((project) => {
+      return project.name.toLowerCase().includes(keyword) || project.description.toLowerCase().includes(keyword);
+    });
+  }, [projects, search]);
+
   const createProject = async () => {
-    const nextErrors: { name?: string; slug?: string } = {};
+    const nextErrors: { name?: string; description?: string } = {};
     if (!name.trim()) {
       nextErrors.name = "프로젝트 이름을 입력하세요.";
     }
-    if (!slug.trim()) {
-      nextErrors.slug = "Slug를 입력하세요.";
-    } else if (!/^[a-z0-9-]+$/.test(slug.trim())) {
-      nextErrors.slug = "Slug는 소문자, 숫자, 하이픈만 가능합니다.";
+    if (!description.trim()) {
+      nextErrors.description = "Description을 입력하세요.";
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       return;
     }
 
+    setCreatingProject(true);
     try {
       await apiFetch<Project>("projects", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim(), slug: slug.trim() }),
+        body: JSON.stringify({ name: name.trim(), description: description.trim() }),
       });
       setName("");
-      setSlug("");
+      setDescription("");
       setErrors({});
       setDrawerOpen(false);
       toastSuccess("프로젝트를 생성했습니다.");
       await loadProjects();
     } catch {
       toastError("프로젝트 생성에 실패했습니다.");
+    } finally {
+      setCreatingProject(false);
     }
   };
 
   return (
-    <AppFrame title="User Portal">
+    <AppFrame title="User Portal" hideNavbar>
       <Stack pos="relative">
-        <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
-        <Group justify="end">
-          <Button onClick={() => setDrawerOpen(true)}>New Project</Button>
-        </Group>
-        <ProjectTable projects={projects} title="My Projects" />
+        <LoadingOverlay
+          visible={authChecking}
+          zIndex={1000}
+          overlayProps={{ radius: "sm", blur: 2 }}
+        />
+        <TextInput
+          placeholder="Search by project name or description"
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+          maw={520}
+          mx="auto"
+          w="100%"
+          disabled={creatingProject}
+        />
+        <ProjectTable projects={filteredProjects} />
       </Stack>
 
-      <Drawer opened={drawerOpen} onClose={() => setDrawerOpen(false)} title="Create Project" position="right">
-        <Stack>
+      <Affix position={{ bottom: 24, right: 24 }}>
+        <ActionIcon
+          size={56}
+          radius="xl"
+          variant="filled"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="New Project"
+          disabled={creatingProject}
+        >
+          <span style={{ fontSize: 36, lineHeight: 1, fontWeight: 300 }}>+</span>
+        </ActionIcon>
+      </Affix>
+
+      <Drawer
+        opened={drawerOpen}
+        onClose={() => {
+          if (!creatingProject) {
+            setDrawerOpen(false);
+          }
+        }}
+        title="Create Project"
+        position="right"
+        closeOnClickOutside={!creatingProject}
+        closeOnEscape={!creatingProject}
+        withCloseButton={!creatingProject}
+      >
+        <Stack pos="relative">
+          <LoadingOverlay
+            visible={creatingProject}
+            zIndex={1000}
+            overlayProps={{ radius: "sm", blur: 2 }}
+            loaderProps={{ children: "Creating project..." }}
+          />
           <TextInput
             label="Project Name"
             value={name}
             onChange={(e) => setName(e.currentTarget.value)}
             error={errors.name}
             placeholder="My Project"
+            disabled={creatingProject}
           />
-          <TextInput
-            label="Slug"
-            value={slug}
-            onChange={(e) => setSlug(e.currentTarget.value)}
-            error={errors.slug}
-            placeholder="my-project"
+          <Textarea
+            label="Description"
+            value={description}
+            onChange={(e) => setDescription(e.currentTarget.value)}
+            error={errors.description}
+            placeholder="Project summary"
+            minRows={4}
+            disabled={creatingProject}
           />
           <Group justify="end">
-            <Button variant="default" onClick={() => setDrawerOpen(false)}>
+            <Button variant="default" onClick={() => setDrawerOpen(false)} disabled={creatingProject}>
               Cancel
             </Button>
-            <Button onClick={createProject}>Create</Button>
+            <Button onClick={createProject} loading={creatingProject} disabled={creatingProject}>
+              Create
+            </Button>
           </Group>
         </Stack>
       </Drawer>

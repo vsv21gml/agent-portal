@@ -27,8 +27,7 @@ export class VectorDbService {
   ) {}
 
   async issueKey(projectId: string, ownerUserId: string, dto: IssueVectorKeyDto): Promise<IssuedVectorKey> {
-    const project = await this.projectsService.getProject(projectId);
-    const indexName = this.buildIndexName(project.slug, project.id);
+    const indexName = this.buildIndexName(projectId);
 
     await this.ensureRemoteIndexIfConfigured(indexName);
     const remoteKey = await this.issueRemoteKeyIfConfigured(indexName, dto.keyAlias);
@@ -59,9 +58,9 @@ export class VectorDbService {
     return this.vectorKeyRepository.find({ where: { projectId }, order: { createdAt: "DESC" } });
   }
 
-  private buildIndexName(projectSlug: string, projectId: string): string {
+  private buildIndexName(projectId: string): string {
     const prefix = this.configService.get<string>("OPENSEARCH_INDEX_PREFIX", "project");
-    const base = `${prefix}-${projectSlug || projectId}`;
+    const base = `${prefix}-${projectId}`;
     return base
       .toLowerCase()
       .replace(/[^a-z0-9-_]+/g, "-")

@@ -1,6 +1,7 @@
 export type Project = {
   id: string;
   name: string;
-  slug: string;
+  description: string;
+  deletedYn?: string;
   createdAt: string;
 };
