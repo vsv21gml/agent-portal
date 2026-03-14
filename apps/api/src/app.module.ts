@@ -24,8 +24,6 @@ import { LoggingMiddleware } from "./logs/logging.middleware";
 import { LogsModule } from "./logs/logs.module";
 import { AccessLogEntity } from "./logs/entities/access-log.entity";
 import { AuditLogEntity } from "./logs/entities/audit-log.entity";
-import { NotebookSessionEntity } from "./notebooks/entities/notebook-session.entity";
-import { NotebooksModule } from "./notebooks/notebooks.module";
 import { ProjectMemberEntity } from "./projects/entities/project-member.entity";
 import { ProjectResourceLimitEntity } from "./projects/entities/project-resource-limit.entity";
 import { ProjectEntity } from "./projects/entities/project.entity";
@@ -56,7 +54,6 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
           ProjectEntity,
           ProjectMemberEntity,
           ProjectResourceLimitEntity,
-          NotebookSessionEntity,
           WorkspaceSessionEntity,
           GitlabGroupEntity,
           GitlabRepoEntity,
@@ -73,7 +70,6 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
     }),
     AuthModule,
     ProjectsModule,
-    NotebooksModule,
     WorkspacesModule,
     GitlabModule,
     LlmModule,

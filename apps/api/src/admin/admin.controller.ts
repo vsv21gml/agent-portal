@@ -7,7 +7,6 @@ import { GlobalRole } from "../common/enums/global-role.enum";
 import { Permission } from "../common/enums/permission.enum";
 import { GitlabService } from "../gitlab/gitlab.service";
 import { LlmService } from "../llm/llm.service";
-import { NotebooksService } from "../notebooks/notebooks.service";
 import { ProjectsService } from "../projects/projects.service";
 import { VectorDbService } from "../vectordb/vectordb.service";
 
@@ -18,7 +17,6 @@ export class AdminController {
   constructor(
     private readonly authService: AuthService,
     private readonly projectsService: ProjectsService,
-    private readonly notebooksService: NotebooksService,
     private readonly gitlabService: GitlabService,
     private readonly llmService: LlmService,
     private readonly vectorDbService: VectorDbService,
@@ -42,19 +40,11 @@ export class AdminController {
     return this.projectsService.getResourceLimit(projectId);
   }
 
-  @Get("projects/:projectId/notebooks")
-  @Permissions(Permission.READ_RESOURCE)
-  notebooks(@Param("projectId") projectId: string) {
-    return this.notebooksService.listByProject(projectId);
-  }
-
   @Get("projects/:projectId/resource-status")
   @Permissions(Permission.READ_RESOURCE)
   async resourceStatus(@Param("projectId") projectId: string) {
-    const [limit, usage] = await Promise.all([
-      this.projectsService.getResourceLimit(projectId),
-      this.notebooksService.getProjectUsage(projectId),
-    ]);
+    const limit = await this.projectsService.getResourceLimit(projectId);
+    const usage = { usedCpu: 0, usedMemoryGi: 0 };
     return { limit, usage };
   }
 

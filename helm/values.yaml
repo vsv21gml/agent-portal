@@ -75,14 +75,7 @@ api:
     OPENSEARCH_ADMIN_USERNAME: ""
     OPENSEARCH_ADMIN_PASSWORD: ""
     OPENSEARCH_INDEX_PREFIX: "project"
-    K8S_NOTEBOOK_ENABLED: "false"
-    K8S_NOTEBOOK_NAMESPACE: "agent-notebooks"
-    K8S_NOTEBOOK_INGRESS_CLASS: "nginx"
     KUBECONFIG_PATH: ""
-    NOTEBOOK_PVC: "shared-notebooks-pvc"
-    NOTEBOOK_IMAGE: "jupyter/base-notebook:latest"
-    NOTEBOOK_REQUEST_CPU: "1"
-    NOTEBOOK_REQUEST_MEM_GI: "2"
 
 gitlab:
   enabled: false

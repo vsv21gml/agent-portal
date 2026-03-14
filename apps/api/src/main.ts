@@ -27,9 +27,7 @@ async function bootstrap() {
   const adminEmail = process.env.INITIAL_ADMIN_EMAIL;
   const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
   logger.log(`Starting API bootstrap (nodeEnv=${process.env.NODE_ENV ?? "development"}, port=${process.env.PORT ?? 4000})`);
-  logger.log(
-    `K8S integration flags workspace=${process.env.K8S_WORKSPACE_ENABLED ?? "false"} notebook=${process.env.K8S_NOTEBOOK_ENABLED ?? "false"}`,
-  );
+  logger.log(`K8S integration flags workspace=${process.env.K8S_WORKSPACE_ENABLED ?? "false"}`);
   const result = await authService.ensureInitialAdmin(adminEmail, adminPassword);
   if (result.created && result.password) {
     console.log(`[agent-portal] Initial admin created: ${adminEmail}`);
