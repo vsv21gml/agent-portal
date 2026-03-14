@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as k8s from "@kubernetes/client-node";
@@ -12,11 +12,13 @@ import { CreateWorkspaceDto } from "./dto/create-workspace.dto";
 import { WorkspaceSessionEntity } from "./entities/workspace-session.entity";
 
 @Injectable()
-export class WorkspacesService {
+export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WorkspacesService.name);
   private readonly kubeClientApps: k8s.AppsV1Api | null;
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
+  private cleanupTimer: NodeJS.Timeout | null = null;
+  private cleanupRunning = false;
 
   constructor(
     private readonly configService: ConfigService,
@@ -48,6 +50,26 @@ export class WorkspacesService {
       this.kubeClientCore = null;
       this.kubeClientNetworking = null;
       this.logger.log("Kubernetes workspace client disabled");
+    }
+  }
+
+  onModuleInit(): void {
+    if (!this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking) {
+      return;
+    }
+
+    const cleanupIntervalMs = 5 * 60 * 1000;
+    this.logger.log(`Starting workspace cleanup loop intervalMs=${cleanupIntervalMs}`);
+    void this.cleanupOrphanedWorkspaceResources();
+    this.cleanupTimer = setInterval(() => {
+      void this.cleanupOrphanedWorkspaceResources();
+    }, cleanupIntervalMs);
+  }
+
+  onModuleDestroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
     }
   }
 
@@ -206,7 +228,10 @@ export class WorkspacesService {
         body: {
           apiVersion: "v1",
           kind: "PersistentVolumeClaim",
-          metadata: { name: session.pvcName },
+          metadata: {
+            name: session.pvcName,
+            labels: this.getWorkspaceResourceLabels(session),
+          },
           spec: {
             accessModes: ["ReadWriteOnce"],
             resources: {
@@ -352,12 +377,20 @@ export class WorkspacesService {
         body: {
           apiVersion: "apps/v1",
           kind: "Deployment",
-          metadata: { name: session.deploymentName },
+          metadata: {
+            name: session.deploymentName,
+            labels: this.getWorkspaceResourceLabels(session),
+          },
           spec: {
             replicas: 1,
-            selector: { matchLabels: { app: session.deploymentName } },
+            selector: { matchLabels: this.getWorkspaceSelectorLabels(session) },
             template: {
-              metadata: { labels: { app: session.deploymentName } },
+              metadata: {
+                labels: {
+                  ...this.getWorkspaceResourceLabels(session),
+                  ...this.getWorkspaceSelectorLabels(session),
+                },
+              },
               spec: {
                 initContainers: [
                   {
@@ -496,9 +529,12 @@ export class WorkspacesService {
         body: {
           apiVersion: "v1",
           kind: "Service",
-          metadata: { name: session.serviceName },
+          metadata: {
+            name: session.serviceName,
+            labels: this.getWorkspaceResourceLabels(session),
+          },
           spec: {
-            selector: { app: session.deploymentName },
+            selector: this.getWorkspaceSelectorLabels(session),
             ports: [{ port: 8080, targetPort: 8080 }],
           },
         } as k8s.V1Service,
@@ -536,6 +572,7 @@ export class WorkspacesService {
           kind: "Ingress",
           metadata: {
             name: session.ingressName,
+            labels: this.getWorkspaceResourceLabels(session),
             annotations: ingressAnnotations,
           },
           spec: {
@@ -673,6 +710,123 @@ export class WorkspacesService {
 
   private shellQuote(value: string): string {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+  }
+
+  private getWorkspaceSelectorLabels(session: WorkspaceSessionEntity): Record<string, string> {
+    return {
+      "agent-portal/workspace-name": session.deploymentName,
+    };
+  }
+
+  private getWorkspaceResourceLabels(session: WorkspaceSessionEntity): Record<string, string> {
+    return {
+      "app.kubernetes.io/managed-by": "agent-portal",
+      "agent-portal/workspace-resource": "true",
+      "agent-portal/workspace-session-id": session.id,
+      "agent-portal/workspace-name": session.deploymentName,
+    };
+  }
+
+  private async cleanupOrphanedWorkspaceResources(): Promise<void> {
+    if (this.cleanupRunning || !this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking) {
+      return;
+    }
+
+    this.cleanupRunning = true;
+    const namespace = this.configService.get<string>("K8S_WORKSPACE_NAMESPACE", "agent-workspaces");
+
+    try {
+      const sessions = await this.workspaceRepository.find({
+        where: { namespace },
+      });
+      const expectedDeploymentNames = new Set(sessions.map((session) => session.deploymentName));
+      const expectedServiceNames = new Set(sessions.map((session) => session.serviceName));
+      const expectedIngressNames = new Set(sessions.map((session) => session.ingressName));
+      const expectedPvcNames = new Set(sessions.map((session) => session.pvcName));
+
+      this.logger.log(
+        `Workspace cleanup scan started namespace=${namespace} sessions=${sessions.length}`,
+      );
+
+      const [deployments, services, ingresses, pvcs] = await Promise.all([
+        this.kubeClientApps.listNamespacedDeployment({ namespace }),
+        this.kubeClientCore.listNamespacedService({ namespace }),
+        this.kubeClientNetworking.listNamespacedIngress({ namespace }),
+        this.kubeClientCore.listNamespacedPersistentVolumeClaim({ namespace }),
+      ]);
+
+      await this.cleanupNamedResources(
+        "deployment",
+        namespace,
+        deployments.items,
+        expectedDeploymentNames,
+        (item) => this.kubeClientApps!.deleteNamespacedDeployment({ namespace, name: item.metadata?.name ?? "" }),
+      );
+      await this.cleanupNamedResources(
+        "service",
+        namespace,
+        services.items,
+        expectedServiceNames,
+        (item) => this.kubeClientCore!.deleteNamespacedService({ namespace, name: item.metadata?.name ?? "" }),
+      );
+      await this.cleanupNamedResources(
+        "ingress",
+        namespace,
+        ingresses.items,
+        expectedIngressNames,
+        (item) => this.kubeClientNetworking!.deleteNamespacedIngress({ namespace, name: item.metadata?.name ?? "" }),
+      );
+      await this.cleanupNamedResources(
+        "pvc",
+        namespace,
+        pvcs.items,
+        expectedPvcNames,
+        (item) =>
+          this.kubeClientCore!.deleteNamespacedPersistentVolumeClaim({ namespace, name: item.metadata?.name ?? "" }),
+      );
+      this.logger.log(`Workspace cleanup scan finished namespace=${namespace}`);
+    } catch (error) {
+      this.logger.error(`Workspace cleanup scan failed namespace=${namespace}: ${this.describeError(error)}`);
+    } finally {
+      this.cleanupRunning = false;
+    }
+  }
+
+  private async cleanupNamedResources<
+    T extends { metadata?: { name?: string; labels?: Record<string, string> | undefined } },
+  >(
+    resourceType: string,
+    namespace: string,
+    items: T[],
+    expectedNames: Set<string>,
+    deleteResource: (item: T) => Promise<unknown>,
+  ): Promise<void> {
+    for (const item of items) {
+      const name = item.metadata?.name?.trim() ?? "";
+      if (!name || !this.shouldManageWorkspaceResource(name, item.metadata?.labels)) {
+        continue;
+      }
+      if (expectedNames.has(name)) {
+        continue;
+      }
+
+      this.logger.warn(`Deleting orphaned workspace ${resourceType} namespace=${namespace} name=${name}`);
+      try {
+        await deleteResource(item);
+      } catch (error) {
+        this.logger.error(
+          `Failed to delete orphaned workspace ${resourceType} namespace=${namespace} name=${name}: ${this.describeError(error)}`,
+        );
+      }
+    }
+  }
+
+  private shouldManageWorkspaceResource(name: string, labels?: Record<string, string>): boolean {
+    if (labels?.["agent-portal/workspace-resource"] === "true") {
+      return true;
+    }
+
+    return name.startsWith("ws-");
   }
 
   private getWorkspaceIngressAnnotations(): Record<string, string> {
