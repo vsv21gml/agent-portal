@@ -216,7 +216,12 @@ export class AgentsService {
     return { logs: response };
   }
 
-  async chatWithAgent(agentId: string, _userId: string, message: string): Promise<{ reply: string; endpoint: string }> {
+  async chatWithAgent(
+    agentId: string,
+    _userId: string,
+    message: string,
+    contextId: string | null,
+  ): Promise<{ reply: string; endpoint: string; contextId: string | null }> {
     const agent = await this.agentRepository.findOneByOrFail({ id: agentId });
     const refreshed = await this.refreshAgentStatus(agent);
     if (refreshed.status !== "running") {
@@ -225,7 +230,7 @@ export class AgentsService {
 
     const externalBaseUrl = refreshed.endpointUrl.replace(/\/+$/, "");
     const internalBaseUrl = `http://${refreshed.serviceName}.${refreshed.namespace}.svc.cluster.local:8080`;
-    return this.chatWithA2AEndpoints([internalBaseUrl, externalBaseUrl], message);
+    return this.chatWithA2AEndpoints([internalBaseUrl, externalBaseUrl], message, contextId);
   }
 
   async inspectExternalA2A(rawUrl: string, _userId: string): Promise<{
@@ -238,9 +243,14 @@ export class AgentsService {
     return { normalizedUrl, agentCardUrl, agentCard };
   }
 
-  async chatExternalA2A(rawUrl: string, message: string, _userId: string): Promise<{ reply: string; endpoint: string }> {
+  async chatExternalA2A(
+    rawUrl: string,
+    message: string,
+    _userId: string,
+    contextId: string | null,
+  ): Promise<{ reply: string; endpoint: string; contextId: string | null }> {
     const normalizedUrl = this.normalizeExternalAgentUrl(rawUrl);
-    return this.chatWithA2AEndpoints([normalizedUrl], message);
+    return this.chatWithA2AEndpoints([normalizedUrl], message, contextId);
   }
 
   private async refreshAgentStatus(agent: AgentDeploymentEntity): Promise<AgentDeploymentEntity> {
@@ -830,17 +840,41 @@ export class AgentsService {
     return JSON.stringify(payload, null, 2);
   }
 
+  private extractAgentContextId(payload: Record<string, unknown>): string | null {
+    const candidates = [
+      payload.contextId,
+      (payload.result as Record<string, unknown> | undefined)?.contextId,
+      ((payload.result as Record<string, unknown> | undefined)?.message as Record<string, unknown> | undefined)?.contextId,
+      (((payload.result as Record<string, unknown> | undefined)?.status as Record<string, unknown> | undefined)?.message as
+        | Record<string, unknown>
+        | undefined)?.contextId,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
   private normalizeDockerfilePath(rawPath: string): string {
     const trimmed = rawPath.trim().replace(/^\.\/+/, "");
     return trimmed || "Dockerfile";
   }
 
-  private async chatWithA2AEndpoints(baseUrls: string[], message: string): Promise<{ reply: string; endpoint: string }> {
+  private async chatWithA2AEndpoints(
+    baseUrls: string[],
+    message: string,
+    contextId: string | null,
+  ): Promise<{ reply: string; endpoint: string; contextId: string | null }> {
     const messageId = crypto.randomUUID();
     const a2aMessage = {
       messageId,
       role: "user",
       parts: [{ kind: "text", type: "text", text: message }],
+      ...(contextId ? { contextId } : {}),
     };
 
     const endpointCandidates = baseUrls.flatMap((baseUrl) => [
@@ -881,11 +915,15 @@ export class AgentsService {
         if (contentType.includes("application/json")) {
           const payload = (await response.json()) as Record<string, unknown>;
           const reply = this.extractAgentReply(payload);
-          return { reply, endpoint: endpoint.url };
+          return {
+            reply,
+            endpoint: endpoint.url,
+            contextId: this.extractAgentContextId(payload) ?? contextId,
+          };
         }
 
         const reply = await response.text();
-        return { reply: reply.trim(), endpoint: endpoint.url };
+        return { reply: reply.trim(), endpoint: endpoint.url, contextId };
       } catch (error) {
         this.logger.warn(
           `Agent chat request error endpoint=${endpoint.url}: ${error instanceof Error ? error.message : String(error)}`,

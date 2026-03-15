@@ -6,6 +6,7 @@ import { AgentsService } from "./agents.service";
 
 type AgentChatDto = {
   message: string;
+  contextId?: string | null;
 };
 
 type ExternalA2AInspectDto = {
@@ -15,6 +16,7 @@ type ExternalA2AInspectDto = {
 type ExternalA2AChatDto = {
   url: string;
   message: string;
+  contextId?: string | null;
 };
 
 @Controller("agents")
@@ -38,7 +40,7 @@ export class AgentsController {
 
   @Post("playground/chat")
   chatExternalA2A(@Body() dto: ExternalA2AChatDto, @CurrentUser() user: JwtPayload) {
-    return this.agentsService.chatExternalA2A(dto.url, dto.message, user.sub);
+    return this.agentsService.chatExternalA2A(dto.url, dto.message, user.sub, dto.contextId ?? null);
   }
 
   @Get(":agentId")
@@ -68,6 +70,6 @@ export class AgentsController {
 
   @Post(":agentId/chat")
   chatWithAgent(@Param("agentId") agentId: string, @Body() dto: AgentChatDto, @CurrentUser() user: JwtPayload) {
-    return this.agentsService.chatWithAgent(agentId, user.sub, dto.message);
+    return this.agentsService.chatWithAgent(agentId, user.sub, dto.message, dto.contextId ?? null);
   }
 }

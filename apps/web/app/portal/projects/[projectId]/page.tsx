@@ -360,12 +360,16 @@ export default function ProjectDetailPage() {
   const [selectedPlaygroundAgentId, setSelectedPlaygroundAgentId] = useState<string | null>(null);
   const [playgroundInput, setPlaygroundInput] = useState("");
   const [playgroundMessages, setPlaygroundMessages] = useState<Record<string, PlaygroundMessage[]>>({});
+  const [playgroundContextIds, setPlaygroundContextIds] = useState<Record<string, string | null>>({});
   const [sendingPlaygroundMessage, setSendingPlaygroundMessage] = useState(false);
   const [devA2AUrl, setDevA2AUrl] = useState("");
   const [connectingDevAgent, setConnectingDevAgent] = useState(false);
   const [devAgentCard, setDevAgentCard] = useState<ExternalAgentCard | null>(null);
   const [devAgentCardUrl, setDevAgentCardUrl] = useState("");
   const [devPlaygroundMessages, setDevPlaygroundMessages] = useState<PlaygroundMessage[]>([]);
+  const [devPlaygroundContextId, setDevPlaygroundContextId] = useState<string | null>(null);
+  const devPlaygroundViewportRef = useRef<HTMLDivElement | null>(null);
+  const deployedPlaygroundViewportRef = useRef<HTMLDivElement | null>(null);
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>("member");
@@ -766,6 +770,28 @@ export default function ProjectDetailPage() {
     });
   }, [agentLogs, logsTarget]);
 
+  useEffect(() => {
+    if (!devPlaygroundViewportRef.current) {
+      return;
+    }
+
+    devPlaygroundViewportRef.current.scrollTo({
+      top: devPlaygroundViewportRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [devPlaygroundMessages]);
+
+  useEffect(() => {
+    if (!deployedPlaygroundViewportRef.current) {
+      return;
+    }
+
+    deployedPlaygroundViewportRef.current.scrollTo({
+      top: deployedPlaygroundViewportRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [currentPlaygroundMessages]);
+
   const copyText = async (value: string, successMessage: string) => {
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -811,13 +837,20 @@ export default function ProjectDetailPage() {
     try {
       const result =
         playgroundMode === "dev"
-          ? await apiFetch<{ reply: string; endpoint: string }>("agents/playground/chat", {
+          ? await apiFetch<{ reply: string; endpoint: string; contextId: string | null }>("agents/playground/chat", {
               method: "POST",
-              body: JSON.stringify({ url: devA2AUrl.trim(), message: userMessage.content }),
+              body: JSON.stringify({
+                url: devA2AUrl.trim(),
+                message: userMessage.content,
+                contextId: devPlaygroundContextId,
+              }),
             })
-          : await apiFetch<{ reply: string; endpoint: string }>(`agents/${selectedPlaygroundAgent!.id}/chat`, {
+          : await apiFetch<{ reply: string; endpoint: string; contextId: string | null }>(`agents/${selectedPlaygroundAgent!.id}/chat`, {
               method: "POST",
-              body: JSON.stringify({ message: userMessage.content }),
+              body: JSON.stringify({
+                message: userMessage.content,
+                contextId: playgroundContextIds[selectedPlaygroundAgent!.id] ?? null,
+              }),
             });
       const agentMessage: PlaygroundMessage = {
         id: `${Date.now()}-agent`,
@@ -825,9 +858,14 @@ export default function ProjectDetailPage() {
         content: result.reply,
       };
       if (playgroundMode === "dev") {
+        setDevPlaygroundContextId(result.contextId ?? null);
         setDevPlaygroundMessages((prev) => [...prev, agentMessage]);
       } else {
         const agentId = selectedPlaygroundAgent!.id;
+        setPlaygroundContextIds((prev) => ({
+          ...prev,
+          [agentId]: result.contextId ?? prev[agentId] ?? null,
+        }));
         setPlaygroundMessages((prev) => ({
           ...prev,
           [agentId]: [...(prev[agentId] ?? []), agentMessage],
@@ -857,6 +895,7 @@ export default function ProjectDetailPage() {
       setDevAgentCardUrl(result.agentCardUrl);
       setDevAgentCard(result.agentCard);
       setDevPlaygroundMessages([]);
+      setDevPlaygroundContextId(null);
       toastSuccess("A2A agent connected.");
     } catch {
       toastError("Failed to connect to the A2A URL.");
@@ -1523,8 +1562,8 @@ export default function ProjectDetailPage() {
               </Stack>
             </Paper>
 
-            <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md" style={{ alignItems: "stretch", flex: 1 }}>
-              <Stack>
+            <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md" style={{ alignItems: "stretch", flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <Stack style={{ minHeight: 0, overflow: "hidden" }}>
                 <Card
                   withBorder
                   radius="md"
@@ -1583,9 +1622,14 @@ export default function ProjectDetailPage() {
                 )}
               </Stack>
 
-              <Paper withBorder p="md" radius="md" style={{ gridColumn: "span 2", display: "flex", minHeight: 0, height: "100%" }}>
+              <Paper
+                withBorder
+                p="md"
+                radius="md"
+                style={{ gridColumn: "span 2", display: "flex", minHeight: 0, height: "100%", overflow: "hidden" }}
+              >
                 {playgroundMode === "dev" ? (
-                  <Stack style={{ flex: 1 }}>
+                  <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
                     <Group justify="space-between" align="center">
                       <div>
                         <Title order={4}>Dev A2A Test</Title>
@@ -1623,7 +1667,8 @@ export default function ProjectDetailPage() {
                       </Paper>
                     ) : null}
 
-                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <div ref={devPlaygroundViewportRef} style={{ height: "100%", overflowY: "auto", paddingRight: 4 }}>
                       <Stack gap="sm">
                         {devPlaygroundMessages.length ? (
                           devPlaygroundMessages.map((message) => (
@@ -1660,6 +1705,7 @@ export default function ProjectDetailPage() {
                           </Text>
                         )}
                       </Stack>
+                      </div>
                     </Paper>
 
                     <Textarea
@@ -1685,7 +1731,7 @@ export default function ProjectDetailPage() {
                     </Group>
                   </Stack>
                 ) : selectedPlaygroundAgent ? (
-                  <Stack style={{ flex: 1 }}>
+                  <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
                     <Group justify="space-between" align="center">
                       <div>
                         <Title order={4}>{selectedPlaygroundAgent.agentName}</Title>
@@ -1696,7 +1742,8 @@ export default function ProjectDetailPage() {
                       <Badge variant="light">A2A</Badge>
                     </Group>
 
-                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <div ref={deployedPlaygroundViewportRef} style={{ height: "100%", overflowY: "auto", paddingRight: 4 }}>
                       <Stack gap="sm">
                         {currentPlaygroundMessages.length ? (
                           currentPlaygroundMessages.map((message) => (
@@ -1729,6 +1776,7 @@ export default function ProjectDetailPage() {
                           </Text>
                         )}
                       </Stack>
+                      </div>
                     </Paper>
 
                     <Textarea
