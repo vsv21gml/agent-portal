@@ -40,7 +40,7 @@ export function AdminFrame({
       <Stack gap="xs">
         {sanitizedNavigation.map((item) => (
           item.href ? (
-            <Link key={item.key} href={item.href} style={{ textDecoration: "none" }}>
+            <Link key={item.key} href={item.href} style={{ textDecoration: "none", color: "inherit" }}>
               <NavLink
                 component="div"
                 active={activeNav === item.key}

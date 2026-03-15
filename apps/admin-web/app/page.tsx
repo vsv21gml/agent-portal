@@ -53,6 +53,8 @@ type ProjectRow = {
 
 type LogRow = {
   id: string;
+  userEmail?: string | null;
+  clientIp?: string | null;
   method: string;
   path: string;
   statusCode?: number;
@@ -141,6 +143,16 @@ type ModelAccessRequest = {
 };
 
 const PAGE_SIZE = 8;
+
+const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
+  users: { title: "Users", description: "Manage portal users, invitations, and roles." },
+  projects: { title: "Projects", description: "Review projects and open project-level administration actions." },
+  resources: { title: "Resources", description: "Track VS Code resource usage and workspace node capacity." },
+  models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
+  gitlab: { title: "GitLab", description: "Review GitLab groups and repositories mapped to portal projects." },
+  audit: { title: "Audit", description: "Inspect audit trail events for administrative and write actions." },
+  access: { title: "Access", description: "Inspect request access logs, including user and client IP details." },
+};
 
 function fallbackCopyText(text: string): boolean {
   if (typeof document === "undefined") {
@@ -574,7 +586,7 @@ export default function AdminPage() {
       const matchesStatus = accessStatusFilter === "all" || String(log.statusCode ?? "") === accessStatusFilter;
       const matchesQuery =
         !query ||
-        [log.method, log.path, log.statusCode != null ? String(log.statusCode) : "", log.elapsedMs != null ? String(log.elapsedMs) : ""].some((value) =>
+        [log.userEmail ?? "", log.clientIp ?? "", log.method, log.path, log.statusCode != null ? String(log.statusCode) : "", log.elapsedMs != null ? String(log.elapsedMs) : ""].some((value) =>
           value.toLowerCase().includes(query),
         );
       return matchesMethod && matchesStatus && matchesQuery;
@@ -585,6 +597,7 @@ export default function AdminPage() {
     const start = (accessPage - 1) * PAGE_SIZE;
     return filteredAccessLogs.slice(start, start + PAGE_SIZE);
   }, [accessPage, filteredAccessLogs]);
+  const currentSectionMeta = sectionMeta[activeSection];
 
   const refreshCurrentPage = async () => {
     setRefreshing(true);
@@ -662,19 +675,25 @@ export default function AdminPage() {
 
   return (
     <AdminFrame
-      headerActions={
-        <Group gap="xs">
-          <Button variant="light" loading={refreshing} onClick={() => void refreshCurrentPage()}>
-            Refresh
-          </Button>
-          <ProfileMenu />
-        </Group>
-      }
+      headerActions={<ProfileMenu />}
       navigation={adminNavigation}
       activeNav={activeSection}
     >
-      <Stack pos="relative">
+      <Stack pos="relative" gap="md">
         <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
+        <Paper withBorder p="md">
+          <Group justify="space-between" align="center">
+            <div>
+              <Title order={4}>{currentSectionMeta.title}</Title>
+              <Text size="sm" c="dimmed" mt={4}>
+                {currentSectionMeta.description}
+              </Text>
+            </div>
+            <Button variant="light" loading={refreshing} onClick={() => void refreshCurrentPage()}>
+              Refresh
+            </Button>
+          </Group>
+        </Paper>
         {activeSection === "users" ? (
           <Paper withBorder p="md">
             <Group justify="space-between" align="center">
@@ -1220,12 +1239,13 @@ export default function AdminPage() {
             </Paper>
 
             <Paper withBorder p="md">
-              <Title order={4}>Access Logs</Title>
               <ScrollArea mt="sm">
                 <Table withTableBorder highlightOnHover>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Time</Table.Th>
+                      <Table.Th>User</Table.Th>
+                      <Table.Th>Client IP</Table.Th>
                       <Table.Th>Method</Table.Th>
                       <Table.Th>Path</Table.Th>
                       <Table.Th>Status</Table.Th>
@@ -1237,6 +1257,8 @@ export default function AdminPage() {
                       pagedAccessLogs.map((log) => (
                         <Table.Tr key={log.id}>
                           <Table.Td>{new Date(log.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>{log.userEmail ?? "-"}</Table.Td>
+                          <Table.Td>{log.clientIp ?? "-"}</Table.Td>
                           <Table.Td>{log.method}</Table.Td>
                           <Table.Td>{log.path}</Table.Td>
                           <Table.Td>{log.statusCode ?? "-"}</Table.Td>
@@ -1245,7 +1267,7 @@ export default function AdminPage() {
                       ))
                     ) : (
                       <Table.Tr>
-                        <Table.Td colSpan={5}>
+                        <Table.Td colSpan={7}>
                           <Text size="sm" c="dimmed">
                             No access logs match the current filters.
                           </Text>

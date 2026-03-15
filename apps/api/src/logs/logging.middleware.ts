@@ -25,9 +25,17 @@ export class LoggingMiddleware implements NestMiddleware {
     }
 
     res.on("finish", () => {
+      const forwardedFor = req.headers["x-forwarded-for"];
+      const clientIp =
+        typeof forwardedFor === "string"
+          ? forwardedFor.split(",")[0].trim()
+          : Array.isArray(forwardedFor)
+            ? forwardedFor[0]?.split(",")[0].trim() ?? null
+            : req.ip ?? null;
       this.logsService
         .writeAccessLog({
           userId,
+          clientIp,
           method: req.method,
           path: req.path,
           statusCode: res.statusCode,

@@ -8,6 +8,9 @@ export class AccessLogEntity {
   @Column({ type: "varchar", nullable: true })
   userId!: string | null;
 
+  @Column({ type: "varchar", nullable: true })
+  clientIp!: string | null;
+
   @Column()
   method!: string;
 
