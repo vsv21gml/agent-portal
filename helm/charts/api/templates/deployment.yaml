@@ -34,3 +34,7 @@ spec:
               value: {{ .Values.workspaceIngress.scheme | quote }}
             - name: K8S_WORKSPACE_INGRESS_ANNOTATIONS_JSON
               value: {{ .Values.workspaceIngress.annotations | toJson | quote }}
+            - name: K8S_WORKSPACE_NODE_SELECTOR_JSON
+              value: {{ .Values.workspaceScheduling.nodeSelector | toJson | quote }}
+            - name: K8S_WORKSPACE_TOLERATIONS_JSON
+              value: {{ .Values.workspaceScheduling.tolerations | toJson | quote }}

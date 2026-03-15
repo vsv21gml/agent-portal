@@ -91,6 +91,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       return this.refreshWorkspaceStatus(existing);
     }
 
+    await this.stopOtherUserWorkspaces(userId);
+
     const namespace = this.configService.get<string>("K8S_WORKSPACE_NAMESPACE", "agent-workspaces");
     const shortProject = dto.projectId.replace(/-/g, "").slice(0, 6);
     const shortRepo = dto.repoId.replace(/-/g, "").slice(0, 6);
@@ -186,6 +188,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       ? await this.llmService.ensureUserVirtualKey(userId, user.email, user.displayName)
       : null;
 
+    await this.stopOtherUserWorkspaces(userId, session.id);
     session.status = "provisioning";
     await this.workspaceRepository.save(session);
     await this.provisionWorkspace(session, repo, {
@@ -418,6 +421,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
                 },
               },
               spec: {
+                nodeSelector: this.getWorkspaceNodeSelector(),
+                tolerations: this.getWorkspaceTolerations(),
                 initContainers: [
                   {
                     name: "repo-bootstrap",
@@ -430,6 +435,16 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
                       { name: "GIT_USER_EMAIL", value: gitIdentity.gitUserEmail },
                       { name: "LITELLM_API_KEY", value: gitIdentity.liteLlmApiKey },
                     ],
+                    resources: {
+                      requests: {
+                        cpu: "1",
+                        memory: "4Gi",
+                      },
+                      limits: {
+                        cpu: "1",
+                        memory: "4Gi",
+                      },
+                    },
                     volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
                   },
                 ],
@@ -447,6 +462,16 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
                       { name: "GIT_USER_EMAIL", value: gitIdentity.gitUserEmail },
                       { name: "LITELLM_API_KEY", value: gitIdentity.liteLlmApiKey },
                     ],
+                    resources: {
+                      requests: {
+                        cpu: "1",
+                        memory: "4Gi",
+                      },
+                      limits: {
+                        cpu: "1",
+                        memory: "4Gi",
+                      },
+                    },
                     volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
                     command: ["sh", "-c"],
                     args: [
@@ -893,6 +918,70 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.warn(`Failed to parse workspace ingress annotations JSON: ${this.describeError(error)}`);
       return {};
+    }
+  }
+
+  private getWorkspaceNodeSelector(): Record<string, string> | undefined {
+    const raw = this.configService.get<string>("K8S_WORKSPACE_NODE_SELECTOR_JSON")?.trim() ?? "";
+    if (!raw) {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [key, String(value)]),
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to parse workspace node selector JSON: ${this.describeError(error)}`);
+      return undefined;
+    }
+  }
+
+  private getWorkspaceTolerations(): k8s.V1Toleration[] | undefined {
+    const raw = this.configService.get<string>("K8S_WORKSPACE_TOLERATIONS_JSON")?.trim() ?? "";
+    if (!raw) {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        this.logger.warn("Workspace tolerations JSON is not an array");
+        return undefined;
+      }
+
+      return parsed.map((item) => ({
+        key: typeof item?.key === "string" ? item.key : undefined,
+        operator: typeof item?.operator === "string" ? item.operator : undefined,
+        value: typeof item?.value === "string" ? item.value : undefined,
+        effect: typeof item?.effect === "string" ? item.effect : undefined,
+        tolerationSeconds: typeof item?.tolerationSeconds === "number" ? item.tolerationSeconds : undefined,
+      }));
+    } catch (error) {
+      this.logger.warn(`Failed to parse workspace tolerations JSON: ${this.describeError(error)}`);
+      return undefined;
+    }
+  }
+
+  private async stopOtherUserWorkspaces(userId: string, excludeSessionId?: string): Promise<void> {
+    const sessions = await this.workspaceRepository.find({
+      where: { userId },
+      order: { createdAt: "DESC" },
+    });
+
+    for (const session of sessions) {
+      if (excludeSessionId && session.id === excludeSessionId) {
+        continue;
+      }
+      if (session.status === "stopped") {
+        continue;
+      }
+
+      this.logger.log(`Stopping other workspace session=${session.id} user=${userId} deployment=${session.deploymentName}`);
+      await this.deleteActiveWorkspaceResources(session);
+      session.status = "stopped";
+      await this.workspaceRepository.save(session);
     }
   }
 

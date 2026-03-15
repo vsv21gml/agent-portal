@@ -23,6 +23,10 @@ workspaceIngress:
   pathTemplate: "/"
   annotations: {}
 
+workspaceScheduling:
+  nodeSelector: {}
+  tolerations: []
+
 env:
   AUTH_BYPASS: "false"
   INITIAL_ADMIN_EMAIL: "admin@samsung.com"

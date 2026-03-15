@@ -46,6 +46,9 @@ api:
     hostTemplate: ""
     pathTemplate: "/"
     annotations: {}
+  workspaceScheduling:
+    nodeSelector: {}
+    tolerations: []
   service:
     type: ClusterIP
     port: 4000
