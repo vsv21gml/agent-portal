@@ -171,8 +171,8 @@ export class AdminService {
 
       return {
         nodeCount: matchingNodes.length,
-        totalCpu: matchingNodes.reduce((sum, node) => sum + this.parseCpu(node.status?.allocatable?.cpu), 0),
-        totalMemoryGi: matchingNodes.reduce((sum, node) => sum + this.parseMemoryGi(node.status?.allocatable?.memory), 0),
+        totalCpu: matchingNodes.reduce((sum, node) => sum + this.parseCpu(node.status?.capacity?.cpu), 0),
+        totalMemoryGi: matchingNodes.reduce((sum, node) => sum + this.parseMemoryGi(node.status?.capacity?.memory), 0),
       };
     } catch (error) {
       this.logger.warn(`Failed to list workspace nodes: ${this.describeError(error)}`);
