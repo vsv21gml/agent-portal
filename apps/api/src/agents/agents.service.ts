@@ -266,7 +266,7 @@ export class AgentsService {
       const deployment = await this.safeReadDeployment(agent);
       const readyReplicas = deployment?.status?.readyReplicas ?? 0;
       const desiredReplicas = deployment?.spec?.replicas ?? 1;
-      if (readyReplicas < desiredReplicas || !(await this.checkEndpointReady(agent.endpointUrl))) {
+      if (readyReplicas < desiredReplicas) {
         agent.status = "deploying";
         agent.lastMessage = "Waiting for serving endpoint";
         return this.agentRepository.save(agent);
@@ -318,8 +318,7 @@ export class AgentsService {
 
       const readyReplicas = deployment.status?.readyReplicas ?? 0;
       const desiredReplicas = deployment.spec?.replicas ?? 1;
-      const endpointReady = await this.checkEndpointReady(agent.endpointUrl);
-      agent.status = readyReplicas >= desiredReplicas && endpointReady ? "running" : "deploying";
+      agent.status = readyReplicas >= desiredReplicas ? "running" : "deploying";
       agent.lastMessage = agent.status === "running" ? "Agent is ready." : "Waiting for serving endpoint";
       return this.agentRepository.save(agent);
     }

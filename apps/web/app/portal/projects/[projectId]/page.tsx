@@ -1249,19 +1249,16 @@ export default function ProjectDetailPage() {
                         </Table.Td>
                         <Table.Td>
                           <Group gap="xs">
-                            <Button
-                              size="xs"
-                              variant="default"
-                              disabled={!["running", "stopped"].includes(agent.status)}
-                              loading={restartingAgentId === agent.id}
-                              onClick={() =>
-                                agent.status === "stopped"
-                                  ? void restartAgent(agent)
-                                  : window.open(agent.endpointUrl, "_blank", "noopener,noreferrer")
-                              }
-                            >
-                              {agent.status === "stopped" ? "Restart" : "Open"}
-                            </Button>
+                            {agent.status === "stopped" ? (
+                              <Button
+                                size="xs"
+                                variant="default"
+                                loading={restartingAgentId === agent.id}
+                                onClick={() => void restartAgent(agent)}
+                              >
+                                Restart
+                              </Button>
+                            ) : null}
                             <Button
                               size="xs"
                               color="yellow"
