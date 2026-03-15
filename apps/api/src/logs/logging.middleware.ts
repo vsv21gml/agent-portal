@@ -11,20 +11,10 @@ export class LoggingMiddleware implements NestMiddleware {
 
   use(req: ReqWithUser, res: Response, next: NextFunction): void {
     const started = Date.now();
-    const userId = req.user?.sub ?? null;
-
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
-      this.logsService
-        .writeAuditLog({
-          userId,
-          method: req.method,
-          path: req.path,
-          requestBody: req.body ? JSON.stringify(req.body) : null,
-        })
-        .catch(() => undefined);
-    }
+    const isAuditMethod = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
 
     res.on("finish", () => {
+      const userId = req.user?.sub ?? null;
       const forwardedFor = req.headers["x-forwarded-for"];
       const clientIp =
         typeof forwardedFor === "string"
@@ -32,6 +22,18 @@ export class LoggingMiddleware implements NestMiddleware {
           : Array.isArray(forwardedFor)
             ? forwardedFor[0]?.split(",")[0].trim() ?? null
             : req.ip ?? null;
+
+      if (isAuditMethod) {
+        this.logsService
+          .writeAuditLog({
+            userId,
+            method: req.method,
+            path: req.path,
+            requestBody: req.body ? JSON.stringify(req.body) : null,
+          })
+          .catch(() => undefined);
+      }
+
       this.logsService
         .writeAccessLog({
           userId,
