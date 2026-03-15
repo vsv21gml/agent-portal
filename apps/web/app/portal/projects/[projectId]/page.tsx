@@ -112,13 +112,13 @@ type PlaygroundMessage = {
   content: string;
 };
 
-type ProjectSection = "Info" | "Repo" | "Agent" | "PlayGround";
+type ProjectSection = "Info" | "Repo" | "Agent" | "Playground";
 
 const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "playground" }> = [
   { label: "Info", slug: "info" },
   { label: "Repo", slug: "repo" },
   { label: "Agent", slug: "agent" },
-  { label: "PlayGround", slug: "playground" },
+  { label: "Playground", slug: "playground" },
 ];
 const runtimeOptions = [
   { value: "NODE22", label: "NODE22" },
@@ -154,7 +154,7 @@ function getSectionFromPathname(pathname: string): ProjectSection {
     return "Agent";
   }
   if (pathname.endsWith("/playground")) {
-    return "PlayGround";
+    return "Playground";
   }
   return "Info";
 }
@@ -399,7 +399,7 @@ export default function ProjectDetailPage() {
         await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject), loadCatalogModels(targetProjectId)]);
         return loadedProject;
       }
-      case "PlayGround": {
+      case "Playground": {
         const loadedProject = await loadProject(targetProjectId);
         await loadAgents(loadedProject);
         return loadedProject;
@@ -1229,7 +1229,7 @@ export default function ProjectDetailPage() {
                     filteredAgents.map((agent) => (
                       <Table.Tr key={agent.id}>
                         <Table.Td>
-                          <Text fw={600}>{agent.agentName}</Text>
+                          <Text>{agent.agentName}</Text>
                         </Table.Td>
                         <Table.Td>{agent.description || "-"}</Table.Td>
                         <Table.Td>{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Table.Td>
@@ -1259,16 +1259,17 @@ export default function ProjectDetailPage() {
                                 Restart
                               </Button>
                             ) : null}
-                            <Button
-                              size="xs"
-                              color="yellow"
-                              variant="light"
-                              disabled={!["running", "deploying"].includes(agent.status)}
-                              loading={stoppingAgentId === agent.id}
-                              onClick={() => void stopAgent(agent)}
-                            >
-                              Stop
-                            </Button>
+                            {["running", "deploying"].includes(agent.status) ? (
+                              <Button
+                                size="xs"
+                                color="yellow"
+                                variant="light"
+                                loading={stoppingAgentId === agent.id}
+                                onClick={() => void stopAgent(agent)}
+                              >
+                                Stop
+                              </Button>
+                            ) : null}
                             <Button
                               size="xs"
                               color="red"
@@ -1297,13 +1298,13 @@ export default function ProjectDetailPage() {
           </Stack>
         ) : null}
 
-        {activeMenu === "PlayGround" ? (
+        {activeMenu === "Playground" ? (
           <Stack>
             <Paper withBorder p="md" radius="md">
               <Stack gap="xs">
                 <Group justify="space-between" align="center">
                   <div>
-                    <Title order={4}>PlayGround</Title>
+                    <Title order={4}>Playground</Title>
                     <Text size="sm" c="dimmed">
                       Chat with deployed agents through A2A.
                     </Text>
@@ -1332,7 +1333,7 @@ export default function ProjectDetailPage() {
                     >
                       <Stack gap={6}>
                         <Group justify="space-between" align="center">
-                          <Text fw={700}>{agent.agentName}</Text>
+                          <Text>{agent.agentName}</Text>
                           <Badge variant="light">{agent.status}</Badge>
                         </Group>
                         <Text size="sm" c="dimmed">
