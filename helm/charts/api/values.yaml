@@ -10,6 +10,11 @@ serviceAccount:
   name: ""
   annotations: {}
 
+agentBuildServiceAccount:
+  create: true
+  name: "agent-builder"
+  annotations: {}
+
 rbac:
   create: true
 

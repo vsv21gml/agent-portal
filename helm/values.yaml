@@ -41,6 +41,10 @@ api:
   image:
     repository: agent-portal-api
     tag: latest
+  agentBuildServiceAccount:
+    create: true
+    name: "agent-builder"
+    annotations: {}
   workspaceIngress:
     scheme: "http"
     hostTemplate: ""

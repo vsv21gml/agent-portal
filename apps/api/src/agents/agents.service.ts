@@ -246,6 +246,7 @@ export class AgentsService {
   ): Promise<void> {
     const repoCloneUrl = repo.cloneUrl ?? repo.webUrl?.concat(".git") ?? "";
     const dockerfilePath = this.normalizeDockerfilePath(agent.dockerfilePath);
+    const awsRegion = this.extractEcrRegion(agent.ecrRepository);
     const cloneScript = [
       "set -e",
       `TARGET_URL="${repoCloneUrl}"`,
@@ -280,6 +281,7 @@ export class AgentsService {
             },
             spec: {
               restartPolicy: "Never",
+              serviceAccountName: this.configService.get<string>("K8S_AGENT_BUILD_SERVICE_ACCOUNT", "agent-builder"),
               nodeSelector: this.getAgentNodeSelector(),
               tolerations: this.getAgentTolerations(),
               initContainers: [
@@ -301,6 +303,11 @@ export class AgentsService {
                 {
                   name: "kaniko",
                   image: this.configService.get<string>("KANIKO_EXECUTOR_IMAGE", "gcr.io/kaniko-project/executor:latest"),
+                  env: [
+                    { name: "AWS_REGION", value: awsRegion },
+                    { name: "AWS_DEFAULT_REGION", value: awsRegion },
+                    { name: "AWS_SDK_LOAD_CONFIG", value: "true" },
+                  ],
                   args: [
                     `--context=/workspace/repo`,
                     `--dockerfile=/workspace/repo/${dockerfilePath}`,
@@ -557,5 +564,10 @@ export class AgentsService {
       .replace(/[^a-z0-9-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 50);
+  }
+
+  private extractEcrRegion(repository: string): string {
+    const match = repository.match(/ecr\.([a-z0-9-]+)\.amazonaws\.com/i);
+    return match?.[1] ?? this.configService.get<string>("AWS_REGION", "us-east-1");
   }
 }

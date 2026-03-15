@@ -50,3 +50,5 @@ spec:
               value: {{ .Values.agentScheduling.nodeSelector | toJson | quote }}
             - name: K8S_AGENT_TOLERATIONS_JSON
               value: {{ .Values.agentScheduling.tolerations | toJson | quote }}
+            - name: K8S_AGENT_BUILD_SERVICE_ACCOUNT
+              value: {{ .Values.agentBuildServiceAccount.name | default "agent-builder" | quote }}
