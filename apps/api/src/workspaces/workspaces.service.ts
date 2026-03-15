@@ -1001,13 +1001,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       });
       const readyReplicas = deployment.status?.readyReplicas ?? 0;
       const desiredReplicas = deployment.spec?.replicas ?? 1;
-      let nextStatus = readyReplicas >= desiredReplicas ? "running" : "provisioning";
-      if (nextStatus === "running") {
-        const endpointReady = await this.checkWorkspaceEndpointReady(session);
-        if (!endpointReady) {
-          nextStatus = "provisioning";
-        }
-      }
+      const nextStatus = readyReplicas >= desiredReplicas ? "running" : "provisioning";
       this.logger.log(
         `Workspace status check session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName} ready=${readyReplicas}/${desiredReplicas} status=${nextStatus}`,
       );
@@ -1031,38 +1025,6 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       }
 
       return session;
-    }
-  }
-
-  private async checkWorkspaceEndpointReady(session: WorkspaceSessionEntity): Promise<boolean> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-
-    try {
-      const response = await fetch(session.endpointUrl, {
-        method: "GET",
-        redirect: "manual",
-        signal: controller.signal,
-      });
-
-      if (response.status < 500) {
-        this.logger.log(
-          `Workspace endpoint ready session=${session.id} deployment=${session.deploymentName} statusCode=${response.status}`,
-        );
-        return true;
-      }
-
-      this.logger.warn(
-        `Workspace endpoint not ready session=${session.id} deployment=${session.deploymentName} statusCode=${response.status}`,
-      );
-      return false;
-    } catch (error) {
-      this.logger.warn(
-        `Workspace endpoint probe failed session=${session.id} deployment=${session.deploymentName}: ${this.describeError(error)}`,
-      );
-      return false;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 

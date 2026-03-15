@@ -137,7 +137,6 @@ export default function ProjectDetailPage() {
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [stoppingWorkspaceId, setStoppingWorkspaceId] = useState<string | null>(null);
   const [restartingWorkspaceId, setRestartingWorkspaceId] = useState<string | null>(null);
-  const [openingWorkspaceId, setOpeningWorkspaceId] = useState<string | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<WorkspaceSession | null>(null);
   const [updatingMembers, setUpdatingMembers] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
@@ -294,26 +293,6 @@ export default function ProjectDetailPage() {
     return latest;
   };
 
-  const waitForWorkspaceAndOpen = async (workspaceId: string) => {
-    setOpeningWorkspaceId(workspaceId);
-    try {
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        const latest = await refreshWorkspace(workspaceId);
-        if (latest.status === "running") {
-          window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
-          toastSuccess("VS Code workspace is ready.");
-          return;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-
-      toastError("Workspace is still provisioning. Try opening it again shortly.");
-    } finally {
-      setOpeningWorkspaceId(null);
-    }
-  };
-
   const createRepo = async () => {
     if (!project) {
       return;
@@ -406,7 +385,8 @@ export default function ProjectDetailPage() {
         setWorkspaces((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
         setWorkspaceModal(null);
         toastSuccess("Workspace restart requested.");
-        await waitForWorkspaceAndOpen(updated.id);
+        const latest = await refreshWorkspace(updated.id);
+        window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
       } else {
         const created = await apiFetch<WorkspaceSession>("workspaces", {
           method: "POST",
@@ -419,7 +399,8 @@ export default function ProjectDetailPage() {
         setWorkspaces((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
         setWorkspaceModal(null);
         toastSuccess("Workspace provisioning started.");
-        await waitForWorkspaceAndOpen(created.id);
+        const latest = await refreshWorkspace(created.id);
+        window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
       }
     } catch {
       toastError("Failed to provision VS Code workspace.");
@@ -461,7 +442,8 @@ export default function ProjectDetailPage() {
       const restarted = await apiFetch<WorkspaceSession>(`workspaces/${workspace.id}/restart`, { method: "POST" });
       setWorkspaces((prev) => [restarted, ...prev.filter((item) => item.id !== restarted.id)]);
       toastSuccess("Workspace restart requested.");
-      await waitForWorkspaceAndOpen(restarted.id);
+      const latest = await refreshWorkspace(restarted.id);
+      window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
     } catch {
       toastError("Failed to restart workspace.");
     } finally {
@@ -839,11 +821,11 @@ export default function ProjectDetailPage() {
                                   size="xs"
                                   variant="default"
                                   disabled={!["running", "stopped"].includes(workspace.status)}
-                                  loading={openingWorkspaceId === workspace.id || restartingWorkspaceId === workspace.id}
+                                  loading={restartingWorkspaceId === workspace.id}
                                   onClick={() =>
                                     workspace.status === "stopped"
                                       ? void restartWorkspace(workspace)
-                                      : void waitForWorkspaceAndOpen(workspace.id)
+                                      : window.open(workspace.endpointUrl, "_blank", "noopener,noreferrer")
                                   }
                                 >
                                   {workspace.status === "stopped" ? "Restart" : "Open"}
