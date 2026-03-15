@@ -5,6 +5,7 @@ import { UserEntity } from "../auth/entities/user.entity";
 import { GitlabGroupEntity } from "../gitlab/entities/gitlab-group.entity";
 import { GitlabMemberSyncEntity } from "../gitlab/entities/gitlab-member-sync.entity";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
+import { LogsService } from "../logs/logs.service";
 import { ProjectRole } from "../common/enums/project-role.enum";
 import { LiteLlmKeyEntity } from "../llm/entities/litellm-key.entity";
 import { LiteLlmModelEntity } from "../llm/entities/litellm-model.entity";
@@ -46,6 +47,7 @@ export class ProjectsService {
     private readonly vectorKeyRepository: Repository<VectorKeyEntity>,
     @InjectRepository(WorkspaceSessionEntity)
     private readonly workspaceRepository: Repository<WorkspaceSessionEntity>,
+    private readonly logsService: LogsService,
   ) {}
 
   async createProject(dto: CreateProjectDto, creatorUserId: string): Promise<ProjectEntity> {
@@ -72,6 +74,15 @@ export class ProjectsService {
         memoryGi: 8,
       }),
     );
+
+    await this.logsService.writeAuditLog({
+      userId: creatorUserId,
+      actionKey: "PROJECT_CREATED",
+      targetType: "project",
+      targetId: project.id,
+      projectId: project.id,
+      metadata: { name: project.name },
+    });
 
     return project;
   }
@@ -128,27 +139,53 @@ export class ProjectsService {
     });
   }
 
-  async addMember(projectId: string, dto: AddProjectMemberDto): Promise<ProjectMemberEntity> {
+  async addMember(projectId: string, dto: AddProjectMemberDto, actorUserId: string): Promise<ProjectMemberEntity> {
     const existing = await this.projectMemberRepository.findOne({
       where: { projectId, userId: dto.userId },
     });
 
     if (existing) {
       existing.role = dto.role;
-      return this.projectMemberRepository.save(existing);
+      const saved = await this.projectMemberRepository.save(existing);
+      await this.logsService.writeAuditLog({
+        userId: actorUserId,
+        actionKey: "PROJECT_MEMBER_UPDATED",
+        targetType: "project_member",
+        targetId: saved.id,
+        projectId,
+        metadata: { memberUserId: dto.userId, role: dto.role },
+      });
+      return saved;
     }
 
-    return this.projectMemberRepository.save(
+    const saved = await this.projectMemberRepository.save(
       this.projectMemberRepository.create({
         projectId,
         userId: dto.userId,
         role: dto.role,
       }),
     );
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "PROJECT_MEMBER_ADDED",
+      targetType: "project_member",
+      targetId: saved.id,
+      projectId,
+      metadata: { memberUserId: dto.userId, role: dto.role },
+    });
+    return saved;
   }
 
-  async removeMember(projectId: string, userId: string): Promise<void> {
+  async removeMember(projectId: string, userId: string, actorUserId: string): Promise<void> {
     await this.projectMemberRepository.delete({ projectId, userId });
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "PROJECT_MEMBER_REMOVED",
+      targetType: "project_member",
+      targetId: userId,
+      projectId,
+      metadata: { memberUserId: userId },
+    });
   }
 
   async listAvailableUsers(projectId: string): Promise<UserEntity[]> {
@@ -192,18 +229,35 @@ export class ProjectsService {
     };
   }
 
-  async updateProject(projectId: string, dto: UpdateProjectDto): Promise<ProjectEntity> {
+  async updateProject(projectId: string, dto: UpdateProjectDto, actorUserId: string): Promise<ProjectEntity> {
     const project = await this.projectRepository.findOneByOrFail({ id: projectId });
     project.name = dto.name;
     project.description = dto.description;
-    return this.projectRepository.save(project);
+    const saved = await this.projectRepository.save(project);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "PROJECT_UPDATED",
+      targetType: "project",
+      targetId: projectId,
+      projectId,
+      metadata: { name: dto.name },
+    });
+    return saved;
   }
 
-  async deleteProject(projectId: string): Promise<void> {
+  async deleteProject(projectId: string, actorUserId: string): Promise<void> {
     const project = await this.projectRepository.findOneByOrFail({ id: projectId });
     project.deletedYn = "Y";
     await this.projectRepository.save(project);
     await this.projectMemberRepository.delete({ projectId });
     await this.gitlabMemberSyncRepository.delete({ projectId });
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "PROJECT_DELETED",
+      targetType: "project",
+      targetId: projectId,
+      projectId,
+      metadata: { name: project.name },
+    });
   }
 }

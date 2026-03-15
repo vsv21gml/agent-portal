@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { ProjectRole } from "../common/enums/project-role.enum";
+import { LogsService } from "../logs/logs.service";
 import { CreateGitlabRepoDto } from "./dto/create-gitlab-repo.dto";
 import { GitlabGroupEntity } from "./entities/gitlab-group.entity";
 import { GitlabMemberSyncEntity } from "./entities/gitlab-member-sync.entity";
@@ -18,6 +19,7 @@ export class GitlabService {
     private readonly repoRepository: Repository<GitlabRepoEntity>,
     @InjectRepository(GitlabMemberSyncEntity)
     private readonly memberSyncRepository: Repository<GitlabMemberSyncEntity>,
+    private readonly logsService: LogsService,
   ) {}
 
   async ensureProjectGroup(projectId: string): Promise<GitlabGroupEntity> {
@@ -36,7 +38,7 @@ export class GitlabService {
     return this.createRemoteGroupIfConfigured(group);
   }
 
-  async createRepo(projectId: string, dto: CreateGitlabRepoDto): Promise<GitlabRepoEntity> {
+  async createRepo(projectId: string, dto: CreateGitlabRepoDto, actorUserId: string): Promise<GitlabRepoEntity> {
     const group = await this.groupRepository.findOneByOrFail({ projectId });
     const existing = await this.repoRepository.findOne({ where: { projectId, repoName: dto.repoName } });
     if (existing) {
@@ -53,7 +55,16 @@ export class GitlabService {
         webUrl: null,
       }),
     );
-    return this.createRemoteRepoIfConfigured(group, repo);
+    const saved = await this.createRemoteRepoIfConfigured(group, repo);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "REPO_CREATED",
+      targetType: "repo",
+      targetId: saved.id,
+      projectId,
+      metadata: { repoName: saved.repoName, namespacePath: saved.namespacePath },
+    });
+    return saved;
   }
 
   listRepos(projectId: string): Promise<GitlabRepoEntity[]> {

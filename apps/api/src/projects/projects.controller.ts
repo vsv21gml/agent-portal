@@ -56,19 +56,19 @@ export class ProjectsController {
 
   @UseGuards(ProjectManagerGuard)
   @Post(":projectId/members")
-  async addMember(@Param("projectId") projectId: string, @Body() dto: AddProjectMemberDto) {
-    const member = await this.projectsService.addMember(projectId, dto);
-    const user = await this.authService.findById(dto.userId);
-    await this.gitlabService.syncMemberAccess(projectId, dto.userId, dto.role, user?.email);
+  async addMember(@Param("projectId") projectId: string, @Body() dto: AddProjectMemberDto, @CurrentUser() actor: JwtPayload) {
+    const member = await this.projectsService.addMember(projectId, dto, actor.sub);
+    const targetUser = await this.authService.findById(dto.userId);
+    await this.gitlabService.syncMemberAccess(projectId, dto.userId, dto.role, targetUser?.email);
     return member;
   }
 
   @UseGuards(ProjectManagerGuard)
   @Delete(":projectId/members/:userId")
-  async removeMember(@Param("projectId") projectId: string, @Param("userId") userId: string) {
-    const user = await this.authService.findById(userId);
-    await this.projectsService.removeMember(projectId, userId);
-    await this.gitlabService.removeMemberAccess(projectId, userId, user?.email);
+  async removeMember(@Param("projectId") projectId: string, @Param("userId") userId: string, @CurrentUser() actor: JwtPayload) {
+    const targetUser = await this.authService.findById(userId);
+    await this.projectsService.removeMember(projectId, userId, actor.sub);
+    await this.gitlabService.removeMemberAccess(projectId, userId, targetUser?.email);
     return { success: true };
   }
 
@@ -79,8 +79,8 @@ export class ProjectsController {
 
   @UseGuards(ProjectManagerGuard)
   @Patch(":projectId")
-  updateProject(@Param("projectId") projectId: string, @Body() dto: UpdateProjectDto) {
-    return this.projectsService.updateProject(projectId, dto);
+  updateProject(@Param("projectId") projectId: string, @Body() dto: UpdateProjectDto, @CurrentUser() user: JwtPayload) {
+    return this.projectsService.updateProject(projectId, dto, user.sub);
   }
 
   @UseGuards(ProjectManagerGuard)
@@ -91,8 +91,8 @@ export class ProjectsController {
 
   @UseGuards(ProjectManagerGuard)
   @Delete(":projectId")
-  async deleteProject(@Param("projectId") projectId: string) {
-    await this.projectsService.deleteProject(projectId);
+  async deleteProject(@Param("projectId") projectId: string, @CurrentUser() user: JwtPayload) {
+    await this.projectsService.deleteProject(projectId, user.sub);
     return { success: true };
   }
 }

@@ -1,4 +1,4 @@
-import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
@@ -24,7 +24,6 @@ import { LiteLlmModelAccessRequestEntity } from "./llm/entities/litellm-model-ac
 import { LiteLlmModelEntity } from "./llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./llm/entities/litellm-team.entity";
 import { LiteLlmUserKeyEntity } from "./llm/entities/litellm-user-key.entity";
-import { LoggingMiddleware } from "./logs/logging.middleware";
 import { LogsModule } from "./logs/logs.module";
 import { AccessLogEntity } from "./logs/entities/access-log.entity";
 import { AuditLogEntity } from "./logs/entities/audit-log.entity";
@@ -101,8 +100,4 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
     },
   ],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(LoggingMiddleware).forRoutes("*");
-  }
-}
+export class AppModule {}

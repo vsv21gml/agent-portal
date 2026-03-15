@@ -8,14 +8,20 @@ export class AuditLogEntity {
   @Column({ type: "varchar", nullable: true })
   userId!: string | null;
 
-  @Column()
-  method!: string;
+  @Column({ type: "varchar" })
+  actionKey!: string;
 
-  @Column()
-  path!: string;
+  @Column({ type: "varchar", nullable: true })
+  targetType!: string | null;
+
+  @Column({ type: "varchar", nullable: true })
+  targetId!: string | null;
+
+  @Column({ type: "varchar", nullable: true })
+  projectId!: string | null;
 
   @Column({ type: "text", nullable: true })
-  requestBody!: string | null;
+  metadataJson!: string | null;
 
   @CreateDateColumn()
   createdAt!: Date;

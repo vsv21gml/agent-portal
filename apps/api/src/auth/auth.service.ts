@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 import { IsNull, Repository } from "typeorm";
 import { GlobalRole } from "../common/enums/global-role.enum";
 import { GitlabService } from "../gitlab/gitlab.service";
+import { LogsService } from "../logs/logs.service";
 import { GitlabMemberSyncEntity } from "../gitlab/entities/gitlab-member-sync.entity";
 import { LlmService } from "../llm/llm.service";
 import { LiteLlmUserKeyEntity } from "../llm/entities/litellm-user-key.entity";
@@ -40,6 +41,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly gitlabService: GitlabService,
     private readonly llmService: LlmService,
+    private readonly logsService: LogsService,
   ) {}
 
   async register(dto: RegisterDto): Promise<{ accessToken: string }> {
@@ -47,18 +49,58 @@ export class AuthService {
     throw new ForbiddenException("Registration is disabled");
   }
 
-  async login(dto: LoginDto): Promise<{ accessToken: string }> {
+  async login(dto: LoginDto, clientIp: string | null): Promise<{ accessToken: string }> {
     const user = await this.userRepository.findOne({ where: { email: dto.email } });
     if (!user) {
+      await this.logsService.writeAccessLog({
+        userId: null,
+        userEmail: dto.email.trim().toLowerCase(),
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "password",
+        status: "failure",
+        detail: "Invalid credentials",
+      });
       throw new UnauthorizedException("Invalid credentials");
     }
 
     const matched = await bcrypt.compare(dto.password, user.passwordHash);
     if (!matched) {
+      await this.logsService.writeAccessLog({
+        userId: user.id,
+        userEmail: user.email,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "password",
+        status: "failure",
+        detail: "Invalid credentials",
+      });
       throw new UnauthorizedException("Invalid credentials");
     }
 
+    await this.logsService.writeAccessLog({
+      userId: user.id,
+      userEmail: user.email,
+      clientIp,
+      eventType: "LOGIN",
+      authProvider: "password",
+      status: "success",
+      detail: null,
+    });
     return { accessToken: await this.signToken(user) };
+  }
+
+  async logout(userId: string, clientIp: string | null): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    await this.logsService.writeAccessLog({
+      userId,
+      userEmail: user?.email ?? null,
+      clientIp,
+      eventType: "LOGOUT",
+      authProvider: "jwt",
+      status: "success",
+      detail: null,
+    });
   }
 
   async findById(userId: string): Promise<UserEntity | null> {

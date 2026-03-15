@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from "@nestjs/common";
+import { Request } from "express";
 import { GlobalRole } from "../common/enums/global-role.enum";
 import { Permission } from "../common/enums/permission.enum";
 import { Roles } from "./decorators/roles.decorator";
@@ -22,6 +23,17 @@ export class AuthController {
     private readonly permissionsService: PermissionsService,
   ) {}
 
+  private getClientIp(req: Request): string | null {
+    const forwardedFor = req.headers["x-forwarded-for"];
+    if (typeof forwardedFor === "string") {
+      return forwardedFor.split(",")[0].trim();
+    }
+    if (Array.isArray(forwardedFor)) {
+      return forwardedFor[0]?.split(",")[0].trim() ?? null;
+    }
+    return req.ip ?? null;
+  }
+
   @Public()
   @Post("register")
   register(@Body() dto: RegisterDto) {
@@ -30,13 +42,19 @@ export class AuthController {
 
   @Public()
   @Post("login")
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Req() req: Request) {
+    return this.authService.login(dto, this.getClientIp(req));
   }
 
   @Get("me")
   me(@CurrentUser() user: JwtPayload) {
     return this.authService.getProfile(user.sub);
+  }
+
+  @Post("logout")
+  async logout(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    await this.authService.logout(user.sub, this.getClientIp(req));
+    return { success: true };
   }
 
   @Roles(GlobalRole.ADMIN)

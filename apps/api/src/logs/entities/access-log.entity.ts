@@ -11,17 +11,20 @@ export class AccessLogEntity {
   @Column({ type: "varchar", nullable: true })
   clientIp!: string | null;
 
-  @Column()
-  method!: string;
+  @Column({ type: "varchar" })
+  eventType!: string;
 
-  @Column()
-  path!: string;
+  @Column({ type: "varchar", nullable: true })
+  authProvider!: string | null;
 
-  @Column()
-  statusCode!: number;
+  @Column({ type: "varchar" })
+  status!: string;
 
-  @Column()
-  elapsedMs!: number;
+  @Column({ type: "varchar", nullable: true })
+  userEmail!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  detail!: string | null;
 
   @CreateDateColumn()
   createdAt!: Date;

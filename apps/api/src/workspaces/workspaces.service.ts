@@ -7,6 +7,7 @@ import { AuthService } from "../auth/auth.service";
 import { GitlabService } from "../gitlab/gitlab.service";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
 import { LlmService } from "../llm/llm.service";
+import { LogsService } from "../logs/logs.service";
 import { ProjectsService } from "../projects/projects.service";
 import { CreateWorkspaceDto } from "./dto/create-workspace.dto";
 import { WorkspaceSessionEntity } from "./entities/workspace-session.entity";
@@ -27,6 +28,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     private readonly gitlabService: GitlabService,
     private readonly authService: AuthService,
     private readonly llmService: LlmService,
+    private readonly logsService: LogsService,
     @InjectRepository(WorkspaceSessionEntity)
     private readonly workspaceRepository: Repository<WorkspaceSessionEntity>,
   ) {
@@ -123,6 +125,14 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `Workspace session created id=${session.id} namespace=${session.namespace} deployment=${session.deploymentName} pvc=${session.pvcName} image=${this.getRuntimeImage(session.runtime)}`,
     );
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "WORKSPACE_CREATED",
+      targetType: "workspace",
+      targetId: session.id,
+      projectId: session.projectId,
+      metadata: { repoId: session.repoId, runtime: session.runtime, repoName: session.repoName },
+    });
 
     try {
       await this.provisionWorkspace(session, repo, {
@@ -177,7 +187,16 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
     await this.deleteActiveWorkspaceResources(session);
     session.status = "stopped";
-    return this.workspaceRepository.save(session);
+    const saved = await this.workspaceRepository.save(session);
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "WORKSPACE_STOPPED",
+      targetType: "workspace",
+      targetId: session.id,
+      projectId: session.projectId,
+      metadata: { repoId: session.repoId, repoName: session.repoName },
+    });
+    return saved;
   }
 
   async restartWorkspace(workspaceId: string, userId: string): Promise<WorkspaceSessionEntity> {
@@ -196,6 +215,14 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       gitUserEmail: user?.email || "workspace@example.com",
       liteLlmApiKey: llmUserKey?.apiKey ?? "",
     });
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "WORKSPACE_RESTARTED",
+      targetType: "workspace",
+      targetId: session.id,
+      projectId: session.projectId,
+      metadata: { repoId: session.repoId, runtime: session.runtime, repoName: session.repoName },
+    });
     return this.refreshWorkspaceStatus(session);
   }
 
@@ -204,6 +231,14 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
 
     await this.deleteWorkspaceResources(session);
     await this.workspaceRepository.delete({ id: session.id, userId });
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "WORKSPACE_DELETED",
+      targetType: "workspace",
+      targetId: session.id,
+      projectId: session.projectId,
+      metadata: { repoId: session.repoId, repoName: session.repoName },
+    });
 
     return { id: session.id };
   }

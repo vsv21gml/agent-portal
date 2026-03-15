@@ -6,6 +6,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { GitlabModule } from "../gitlab/gitlab.module";
 import { GitlabMemberSyncEntity } from "../gitlab/entities/gitlab-member-sync.entity";
 import { LlmModule } from "../llm/llm.module";
+import { LogsModule } from "../logs/logs.module";
 import { LiteLlmUserKeyEntity } from "../llm/entities/litellm-user-key.entity";
 import { ProjectMemberEntity } from "../projects/entities/project-member.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
@@ -34,6 +35,7 @@ import { JwtStrategy } from "./strategies/jwt.strategy";
     ]),
     GitlabModule,
     LlmModule,
+    LogsModule,
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

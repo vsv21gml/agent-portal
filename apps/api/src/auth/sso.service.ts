@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { LogsService } from "../logs/logs.service";
 import { AuthService } from "./auth.service";
 
 @Injectable()
@@ -7,6 +8,7 @@ export class SsoService {
   constructor(
     private readonly configService: ConfigService,
     private readonly authService: AuthService,
+    private readonly logsService: LogsService,
   ) {}
 
   buildOidcLoginUrl(state?: string): string {
@@ -29,7 +31,7 @@ export class SsoService {
     return `${issuerAuthUrl}?${query.toString()}`;
   }
 
-  async oidcCallback(code: string): Promise<{ accessToken: string }> {
+  async oidcCallback(code: string, clientIp: string | null): Promise<{ accessToken: string }> {
     const tokenUrl = this.configService.get<string>("OIDC_TOKEN_URL");
     const userInfoUrl = this.configService.get<string>("OIDC_USERINFO_URL");
     const clientId = this.configService.get<string>("OIDC_CLIENT_ID");
@@ -54,11 +56,29 @@ export class SsoService {
       }),
     });
     if (!tokenResp.ok) {
+      await this.logsService.writeAccessLog({
+        userId: null,
+        userEmail: null,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "oidc",
+        status: "failure",
+        detail: "OIDC token exchange failed",
+      });
       throw new BadRequestException("OIDC token exchange failed");
     }
 
     const tokenJson = (await tokenResp.json()) as { access_token?: string };
     if (!tokenJson.access_token) {
+      await this.logsService.writeAccessLog({
+        userId: null,
+        userEmail: null,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "oidc",
+        status: "failure",
+        detail: "OIDC access token missing",
+      });
       throw new BadRequestException("OIDC access token missing");
     }
 
@@ -66,29 +86,74 @@ export class SsoService {
       headers: { authorization: `Bearer ${tokenJson.access_token}` },
     });
     if (!profileResp.ok) {
+      await this.logsService.writeAccessLog({
+        userId: null,
+        userEmail: null,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "oidc",
+        status: "failure",
+        detail: "OIDC user info fetch failed",
+      });
       throw new BadRequestException("OIDC user info fetch failed");
     }
     const profile = (await profileResp.json()) as { email?: string; name?: string; preferred_username?: string };
     const email = profile.email ?? profile.preferred_username;
     if (!email) {
+      await this.logsService.writeAccessLog({
+        userId: null,
+        userEmail: null,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "oidc",
+        status: "failure",
+        detail: "OIDC profile missing email",
+      });
       throw new BadRequestException("OIDC profile missing email");
     }
 
     const user = await this.authService.upsertSsoUser(email, profile.name);
+    await this.logsService.writeAccessLog({
+      userId: user.id,
+      userEmail: user.email,
+      clientIp,
+      eventType: "LOGIN",
+      authProvider: "oidc",
+      status: "success",
+      detail: null,
+    });
     return this.authService.issueTokenForUser(user);
   }
 
-  async samlAcs(samlResponseBase64: string): Promise<{ accessToken: string }> {
+  async samlAcs(samlResponseBase64: string, clientIp: string | null): Promise<{ accessToken: string }> {
     const xml = Buffer.from(samlResponseBase64, "base64").toString("utf-8");
     const email =
       this.extractMatch(xml, /<saml:AttributeValue[^>]*>([^<]+)<\/saml:AttributeValue>/) ??
       this.extractMatch(xml, /<NameID[^>]*>([^<]+)<\/NameID>/);
 
     if (!email) {
+      await this.logsService.writeAccessLog({
+        userId: null,
+        userEmail: null,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "saml",
+        status: "failure",
+        detail: "SAML response missing user identifier",
+      });
       throw new BadRequestException("SAML response missing user identifier");
     }
 
     const user = await this.authService.upsertSsoUser(email, email.split("@")[0]);
+    await this.logsService.writeAccessLog({
+      userId: user.id,
+      userEmail: user.email,
+      clientIp,
+      eventType: "LOGIN",
+      authProvider: "saml",
+      status: "success",
+      detail: null,
+    });
     return this.authService.issueTokenForUser(user);
   }
 

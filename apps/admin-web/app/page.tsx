@@ -51,14 +51,27 @@ type ProjectRow = {
   createdAt: string;
 };
 
-type LogRow = {
+type AuditLogRow = {
   id: string;
+  userId?: string | null;
+  userEmail?: string | null;
+  actionKey: string;
+  targetType?: string | null;
+  targetId?: string | null;
+  projectId?: string | null;
+  metadataJson?: string | null;
+  createdAt: string;
+};
+
+type AccessLogRow = {
+  id: string;
+  userId?: string | null;
   userEmail?: string | null;
   clientIp?: string | null;
-  method: string;
-  path: string;
-  statusCode?: number;
-  elapsedMs?: number;
+  eventType: string;
+  authProvider?: string | null;
+  status: string;
+  detail?: string | null;
   createdAt: string;
 };
 
@@ -191,8 +204,8 @@ const sectionMeta: Record<AdminSection, { title: string; description: string }> 
   resources: { title: "Resources", description: "Track workspace and agent resource usage across dedicated node pools." },
   models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
   gitlab: { title: "GitLab", description: "Review GitLab groups and repositories mapped to portal projects." },
-  audit: { title: "Audit", description: "Inspect audit trail events for administrative and write actions." },
-  access: { title: "Access", description: "Inspect request access logs, including user and client IP details." },
+  audit: { title: "Audit", description: "Inspect keyed user actions performed through the portal." },
+  access: { title: "Access", description: "Inspect authentication events such as login and logout." },
 };
 
 function fallbackCopyText(text: string): boolean {
@@ -244,8 +257,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
-  const [auditLogs, setAuditLogs] = useState<LogRow[]>([]);
-  const [accessLogs, setAccessLogs] = useState<LogRow[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
+  const [accessLogs, setAccessLogs] = useState<AccessLogRow[]>([]);
   const [workspaceResourceOverview, setWorkspaceResourceOverview] = useState<WorkspaceResourceOverview | null>(null);
   const [agentResourceOverview, setAgentResourceOverview] = useState<AgentResourceOverview | null>(null);
   const [resourceTab, setResourceTab] = useState<string | null>("workspace");
@@ -262,8 +275,8 @@ export default function AdminPage() {
   const [gitlabSearch, setGitlabSearch] = useState("");
   const [auditSearch, setAuditSearch] = useState("");
   const [accessSearch, setAccessSearch] = useState("");
-  const [auditMethodFilter, setAuditMethodFilter] = useState<string | null>("all");
-  const [accessMethodFilter, setAccessMethodFilter] = useState<string | null>("all");
+  const [auditActionFilter, setAuditActionFilter] = useState<string | null>("all");
+  const [accessEventFilter, setAccessEventFilter] = useState<string | null>("all");
   const [accessStatusFilter, setAccessStatusFilter] = useState<string | null>("all");
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -336,11 +349,11 @@ export default function AdminPage() {
   };
 
   const loadAuditData = async () => {
-    setAuditLogs(await apiFetch<LogRow[]>("admin/logs/audit"));
+    setAuditLogs(await apiFetch<AuditLogRow[]>("admin/logs/audit"));
   };
 
   const loadAccessData = async () => {
-    setAccessLogs(await apiFetch<LogRow[]>("admin/logs/access"));
+    setAccessLogs(await apiFetch<AccessLogRow[]>("admin/logs/access"));
   };
 
   const loadSectionData = async () => {
@@ -413,11 +426,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     setAuditPage(1);
-  }, [auditMethodFilter, auditSearch]);
+  }, [auditActionFilter, auditSearch]);
 
   useEffect(() => {
     setAccessPage(1);
-  }, [accessMethodFilter, accessSearch, accessStatusFilter]);
+  }, [accessEventFilter, accessSearch, accessStatusFilter]);
 
   const buildPortalInviteUrl = (token: string) => {
     if (typeof window === "undefined") {
@@ -565,18 +578,18 @@ export default function AdminPage() {
     return projects.slice(start, start + PAGE_SIZE);
   }, [activePage, projects]);
   const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
-  const auditMethodOptions = useMemo(
-    () => [{ value: "all", label: "All methods" }, ...Array.from(new Set(auditLogs.map((log) => log.method))).map((method) => ({ value: method, label: method }))],
+  const auditActionOptions = useMemo(
+    () => [{ value: "all", label: "All actions" }, ...Array.from(new Set(auditLogs.map((log) => log.actionKey))).map((action) => ({ value: action, label: action }))],
     [auditLogs],
   );
-  const accessMethodOptions = useMemo(
-    () => [{ value: "all", label: "All methods" }, ...Array.from(new Set(accessLogs.map((log) => log.method))).map((method) => ({ value: method, label: method }))],
+  const accessEventOptions = useMemo(
+    () => [{ value: "all", label: "All events" }, ...Array.from(new Set(accessLogs.map((log) => log.eventType))).map((eventType) => ({ value: eventType, label: eventType }))],
     [accessLogs],
   );
   const accessStatusOptions = useMemo(
     () => [
-      { value: "all", label: "All status codes" },
-      ...Array.from(new Set(accessLogs.map((log) => String(log.statusCode ?? ""))).values())
+      { value: "all", label: "All statuses" },
+      ...Array.from(new Set(accessLogs.map((log) => log.status)).values())
         .filter(Boolean)
         .map((status) => ({ value: status, label: status })),
     ],
@@ -615,13 +628,15 @@ export default function AdminPage() {
   const filteredAuditLogs = useMemo(() => {
     const query = auditSearch.trim().toLowerCase();
     return auditLogs.filter((log) => {
-      const matchesMethod = auditMethodFilter === "all" || log.method === auditMethodFilter;
+      const matchesAction = auditActionFilter === "all" || log.actionKey === auditActionFilter;
       const matchesQuery =
         !query ||
-        [log.method, log.path, log.statusCode != null ? String(log.statusCode) : ""].some((value) => value.toLowerCase().includes(query));
-      return matchesMethod && matchesQuery;
+        [log.actionKey, log.targetType ?? "", log.targetId ?? "", log.projectId ?? "", log.userEmail ?? "", log.metadataJson ?? ""].some((value) =>
+          value.toLowerCase().includes(query),
+        );
+      return matchesAction && matchesQuery;
     });
-  }, [auditLogs, auditMethodFilter, auditSearch]);
+  }, [auditActionFilter, auditLogs, auditSearch]);
   const auditPages = Math.max(1, Math.ceil(filteredAuditLogs.length / PAGE_SIZE));
   const pagedAuditLogs = useMemo(() => {
     const start = (auditPage - 1) * PAGE_SIZE;
@@ -630,16 +645,16 @@ export default function AdminPage() {
   const filteredAccessLogs = useMemo(() => {
     const query = accessSearch.trim().toLowerCase();
     return accessLogs.filter((log) => {
-      const matchesMethod = accessMethodFilter === "all" || log.method === accessMethodFilter;
-      const matchesStatus = accessStatusFilter === "all" || String(log.statusCode ?? "") === accessStatusFilter;
+      const matchesEvent = accessEventFilter === "all" || log.eventType === accessEventFilter;
+      const matchesStatus = accessStatusFilter === "all" || log.status === accessStatusFilter;
       const matchesQuery =
         !query ||
-        [log.userEmail ?? "", log.clientIp ?? "", log.method, log.path, log.statusCode != null ? String(log.statusCode) : "", log.elapsedMs != null ? String(log.elapsedMs) : ""].some((value) =>
+        [log.userEmail ?? "", log.clientIp ?? "", log.eventType, log.authProvider ?? "", log.status, log.detail ?? ""].some((value) =>
           value.toLowerCase().includes(query),
         );
-      return matchesMethod && matchesStatus && matchesQuery;
+      return matchesEvent && matchesStatus && matchesQuery;
     });
-  }, [accessLogs, accessMethodFilter, accessSearch, accessStatusFilter]);
+  }, [accessEventFilter, accessLogs, accessSearch, accessStatusFilter]);
   const accessPages = Math.max(1, Math.ceil(filteredAccessLogs.length / PAGE_SIZE));
   const pagedAccessLogs = useMemo(() => {
     const start = (accessPage - 1) * PAGE_SIZE;
@@ -1438,11 +1453,11 @@ export default function AdminPage() {
               <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
                 <TextInput
                   label="Search"
-                  placeholder="Method, path, or status code"
+                  placeholder="Action, target, project, or user"
                   value={auditSearch}
                   onChange={(event) => setAuditSearch(event.currentTarget.value)}
                 />
-                <Select label="Method" data={auditMethodOptions} value={auditMethodFilter} onChange={setAuditMethodFilter} />
+                <Select label="Action" data={auditActionOptions} value={auditActionFilter} onChange={setAuditActionFilter} />
               </SimpleGrid>
             </Paper>
 
@@ -1453,9 +1468,10 @@ export default function AdminPage() {
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Time</Table.Th>
-                      <Table.Th>Method</Table.Th>
-                      <Table.Th>Path</Table.Th>
-                      <Table.Th>Status</Table.Th>
+                      <Table.Th>User</Table.Th>
+                      <Table.Th>Action</Table.Th>
+                      <Table.Th>Target</Table.Th>
+                      <Table.Th>Project</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -1463,9 +1479,10 @@ export default function AdminPage() {
                       pagedAuditLogs.map((log) => (
                         <Table.Tr key={log.id}>
                           <Table.Td>{new Date(log.createdAt).toLocaleString()}</Table.Td>
-                          <Table.Td>{log.method}</Table.Td>
-                          <Table.Td>{log.path}</Table.Td>
-                          <Table.Td>{log.statusCode ?? "-"}</Table.Td>
+                          <Table.Td>{log.userEmail ?? "-"}</Table.Td>
+                          <Table.Td>{log.actionKey}</Table.Td>
+                          <Table.Td>{log.targetType ? `${log.targetType}${log.targetId ? `:${log.targetId}` : ""}` : "-"}</Table.Td>
+                          <Table.Td>{log.projectId ?? "-"}</Table.Td>
                         </Table.Tr>
                       ))
                     ) : (
@@ -1493,12 +1510,12 @@ export default function AdminPage() {
               <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
                 <TextInput
                   label="Search"
-                  placeholder="Method, path, status, or elapsed time"
+                  placeholder="User, IP, event, provider, or detail"
                   value={accessSearch}
                   onChange={(event) => setAccessSearch(event.currentTarget.value)}
                 />
-                <Select label="Method" data={accessMethodOptions} value={accessMethodFilter} onChange={setAccessMethodFilter} />
-                <Select label="Status code" data={accessStatusOptions} value={accessStatusFilter} onChange={setAccessStatusFilter} />
+                <Select label="Event" data={accessEventOptions} value={accessEventFilter} onChange={setAccessEventFilter} />
+                <Select label="Status" data={accessStatusOptions} value={accessStatusFilter} onChange={setAccessStatusFilter} />
               </SimpleGrid>
             </Paper>
 
@@ -1510,10 +1527,10 @@ export default function AdminPage() {
                       <Table.Th>Time</Table.Th>
                       <Table.Th>User</Table.Th>
                       <Table.Th>Client IP</Table.Th>
-                      <Table.Th>Method</Table.Th>
-                      <Table.Th>Path</Table.Th>
+                      <Table.Th>Event</Table.Th>
+                      <Table.Th>Provider</Table.Th>
                       <Table.Th>Status</Table.Th>
-                      <Table.Th>Elapsed</Table.Th>
+                      <Table.Th>Detail</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -1523,10 +1540,10 @@ export default function AdminPage() {
                           <Table.Td>{new Date(log.createdAt).toLocaleString()}</Table.Td>
                           <Table.Td>{log.userEmail ?? "-"}</Table.Td>
                           <Table.Td>{log.clientIp ?? "-"}</Table.Td>
-                          <Table.Td>{log.method}</Table.Td>
-                          <Table.Td>{log.path}</Table.Td>
-                          <Table.Td>{log.statusCode ?? "-"}</Table.Td>
-                          <Table.Td>{log.elapsedMs != null ? `${log.elapsedMs} ms` : "-"}</Table.Td>
+                          <Table.Td>{log.eventType}</Table.Td>
+                          <Table.Td>{log.authProvider ?? "-"}</Table.Td>
+                          <Table.Td>{log.status}</Table.Td>
+                          <Table.Td>{log.detail ?? "-"}</Table.Td>
                         </Table.Tr>
                       ))
                     ) : (

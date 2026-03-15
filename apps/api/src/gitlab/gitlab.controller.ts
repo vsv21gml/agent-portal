@@ -1,4 +1,6 @@
 import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { JwtPayload } from "../auth/types/jwt-payload.type";
 import { CreateGitlabRepoDto } from "./dto/create-gitlab-repo.dto";
 import { GitlabService } from "./gitlab.service";
 
@@ -12,8 +14,8 @@ export class GitlabController {
   }
 
   @Post("projects/:projectId/repos")
-  createRepo(@Param("projectId") projectId: string, @Body() dto: CreateGitlabRepoDto) {
-    return this.gitlabService.createRepo(projectId, dto);
+  createRepo(@Param("projectId") projectId: string, @Body() dto: CreateGitlabRepoDto, @CurrentUser() user: JwtPayload) {
+    return this.gitlabService.createRepo(projectId, dto, user.sub);
   }
 
   @Get("projects/:projectId/repos")

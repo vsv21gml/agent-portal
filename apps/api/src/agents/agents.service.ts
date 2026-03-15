@@ -10,6 +10,7 @@ import { GitlabService } from "../gitlab/gitlab.service";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
 import { LlmService } from "../llm/llm.service";
 import { LiteLlmModelAccessRequestEntity } from "../llm/entities/litellm-model-access-request.entity";
+import { LogsService } from "../logs/logs.service";
 import { ProjectsService } from "../projects/projects.service";
 import { CreateAgentDto } from "./dto/create-agent.dto";
 import { AgentDeploymentEntity } from "./entities/agent-deployment.entity";
@@ -28,6 +29,7 @@ export class AgentsService {
     private readonly gitlabService: GitlabService,
     private readonly authService: AuthService,
     private readonly llmService: LlmService,
+    private readonly logsService: LogsService,
     @InjectRepository(AgentDeploymentEntity)
     private readonly agentRepository: Repository<AgentDeploymentEntity>,
     @InjectRepository(LiteLlmModelAccessRequestEntity)
@@ -128,6 +130,14 @@ export class AgentsService {
       validatorLiteLlmBaseUrl: this.configService.get<string>("LITELLM_BASE_URL", ""),
       validatorLiteLlmModel: this.configService.get<string>("AGENT_VALIDATOR_LLM_MODEL", "gpt-4.1-mini"),
     });
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "AGENT_DEPLOY_REQUESTED",
+      targetType: "agent",
+      targetId: agent.id,
+      projectId: agent.projectId,
+      metadata: { repoId: agent.repoId, agentName: agent.agentName, model: agent.litellmModel },
+    });
 
     return this.refreshAgentStatus(agent);
   }
@@ -137,7 +147,16 @@ export class AgentsService {
     await this.deleteServingResources(agent);
     agent.status = "stopped";
     agent.lastMessage = "Agent stopped.";
-    return this.agentRepository.save(agent);
+    const saved = await this.agentRepository.save(agent);
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "AGENT_STOPPED",
+      targetType: "agent",
+      targetId: agent.id,
+      projectId: agent.projectId,
+      metadata: { agentName: agent.agentName, repoId: agent.repoId },
+    });
+    return saved;
   }
 
   async restartAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
@@ -162,6 +181,14 @@ export class AgentsService {
     await this.agentRepository.save(agent);
     await this.deleteServingResources(agent);
     await this.ensureServingResources(agent);
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "AGENT_RESTARTED",
+      targetType: "agent",
+      targetId: agent.id,
+      projectId: agent.projectId,
+      metadata: { agentName: agent.agentName, repoId: agent.repoId },
+    });
     return this.refreshAgentStatus(agent);
   }
 
@@ -172,6 +199,14 @@ export class AgentsService {
       await this.modelAccessRequestRepository.delete({ id: agent.modelAccessRequestId });
     }
     await this.agentRepository.delete({ id: agent.id, ownerUserId: userId });
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "AGENT_DELETED",
+      targetType: "agent",
+      targetId: agent.id,
+      projectId: agent.projectId,
+      metadata: { agentName: agent.agentName, repoId: agent.repoId },
+    });
     return { id: agent.id };
   }
 

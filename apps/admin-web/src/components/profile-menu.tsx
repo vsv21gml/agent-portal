@@ -40,9 +40,15 @@ export function ProfileMenu() {
     void load();
   }, [router]);
 
-  const logout = () => {
-    clearToken();
-    router.replace("/login?next=/");
+  const logout = async () => {
+    try {
+      await apiFetch("auth/logout", { method: "POST" });
+    } catch {
+      // ignore logout logging failures on client
+    } finally {
+      clearToken();
+      router.replace("/login?next=/");
+    }
   };
 
   const initials = (profile?.displayName || profile?.email || "U")
@@ -62,7 +68,7 @@ export function ProfileMenu() {
 
       <Menu.Dropdown>
         <Menu.Item onClick={() => router.push("/profile")}>Profile</Menu.Item>
-        <Menu.Item color="red" onClick={logout}>
+        <Menu.Item color="red" onClick={() => void logout()}>
           Log out
         </Menu.Item>
       </Menu.Dropdown>

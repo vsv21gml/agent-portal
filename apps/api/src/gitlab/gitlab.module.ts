@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { LogsModule } from "../logs/logs.module";
 import { GitlabController } from "./gitlab.controller";
 import { GitlabService } from "./gitlab.service";
 import { GitlabGroupEntity } from "./entities/gitlab-group.entity";
@@ -7,7 +8,7 @@ import { GitlabMemberSyncEntity } from "./entities/gitlab-member-sync.entity";
 import { GitlabRepoEntity } from "./entities/gitlab-repo.entity";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([GitlabGroupEntity, GitlabRepoEntity, GitlabMemberSyncEntity])],
+  imports: [TypeOrmModule.forFeature([GitlabGroupEntity, GitlabRepoEntity, GitlabMemberSyncEntity]), LogsModule],
   controllers: [GitlabController],
   providers: [GitlabService],
   exports: [GitlabService, TypeOrmModule],
