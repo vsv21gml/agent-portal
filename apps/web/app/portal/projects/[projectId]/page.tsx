@@ -876,7 +876,7 @@ export default function ProjectDetailPage() {
 
   return (
     <AppFrame title={breadcrumbs} headerActions={<ProfileMenu />} navbar={navbar} navbarWidth={280}>
-      <Stack pos="relative">
+      <Stack pos="relative" style={{ minHeight: "calc(100dvh - 96px)" }}>
         <LoadingOverlay visible={authChecking || loadingProject} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
 
         {activeMenu === "Info" ? (
@@ -1299,7 +1299,7 @@ export default function ProjectDetailPage() {
         ) : null}
 
         {activeMenu === "Playground" ? (
-          <Stack>
+          <Stack style={{ flex: 1, minHeight: 0 }}>
             <Paper withBorder p="md" radius="md">
               <Stack gap="xs">
                 <Group justify="space-between" align="center">
@@ -1316,7 +1316,7 @@ export default function ProjectDetailPage() {
               </Stack>
             </Paper>
 
-            <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md">
+            <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md" style={{ alignItems: "stretch", flex: 1 }}>
               <Stack>
                 {runningAgents.length ? (
                   runningAgents.map((agent) => (
@@ -1352,9 +1352,9 @@ export default function ProjectDetailPage() {
                 )}
               </Stack>
 
-              <Paper withBorder p="md" radius="md" style={{ gridColumn: "span 2" }}>
+              <Paper withBorder p="md" radius="md" style={{ gridColumn: "span 2", display: "flex", minHeight: 0, height: "100%" }}>
                 {selectedPlaygroundAgent ? (
-                  <Stack>
+                  <Stack style={{ flex: 1 }}>
                     <Group justify="space-between" align="center">
                       <div>
                         <Title order={4}>{selectedPlaygroundAgent.agentName}</Title>
@@ -1365,7 +1365,7 @@ export default function ProjectDetailPage() {
                       <Badge variant="light">A2A</Badge>
                     </Group>
 
-                    <Paper withBorder p="md" radius="md" style={{ minHeight: 360, maxHeight: 360, overflow: "auto" }}>
+                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
                       <Stack gap="sm">
                         {currentPlaygroundMessages.length ? (
                           currentPlaygroundMessages.map((message) => (
@@ -1399,9 +1399,18 @@ export default function ProjectDetailPage() {
                     <Textarea
                       label="Message"
                       minRows={4}
+                      autosize
+                      maxRows={10}
                       value={playgroundInput}
                       onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.ctrlKey && event.key === "Enter") {
+                          event.preventDefault();
+                          void sendPlaygroundMessage();
+                        }
+                      }}
                       placeholder="Ask this agent something..."
+                      description="Press Ctrl+Enter to send."
                     />
                     <Group justify="end">
                       <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
@@ -1410,7 +1419,7 @@ export default function ProjectDetailPage() {
                     </Group>
                   </Stack>
                 ) : (
-                  <Stack justify="center" align="center" style={{ minHeight: 420 }}>
+                  <Stack justify="center" align="center" style={{ flex: 1, minHeight: 0 }}>
                     <Text size="sm" c="dimmed">
                       Select a running agent to start chatting.
                     </Text>
