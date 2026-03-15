@@ -150,6 +150,20 @@ function renderInlineMarkdown(text: string): ReactNode[] {
   });
 }
 
+function isMarkdownTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.includes("-") && /^\|?[\s:|-]+\|?$/.test(trimmed);
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
 function renderMarkdownContent(content: string): ReactNode {
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
@@ -184,8 +198,8 @@ function renderMarkdownContent(content: string): ReactNode {
     }
 
     const nextLine = lines[index + 1]?.trim() ?? "";
-    if (trimmed.includes("|") && /^\|?[\s:-|]+\|?$/.test(nextLine)) {
-      const headerCells = trimmed.split("|").map((cell) => cell.trim()).filter(Boolean);
+    if (trimmed.includes("|") && isMarkdownTableSeparator(nextLine)) {
+      const headerCells = splitMarkdownTableRow(trimmed);
       const rows: string[][] = [];
       index += 2;
       while (index < lines.length) {
@@ -193,28 +207,30 @@ function renderMarkdownContent(content: string): ReactNode {
         if (!rowLine || !rowLine.includes("|")) {
           break;
         }
-        rows.push(rowLine.split("|").map((cell) => cell.trim()).filter(Boolean));
+        rows.push(splitMarkdownTableRow(rowLine));
         index += 1;
       }
       blocks.push(
-        <Table key={`table-${key++}`} withTableBorder highlightOnHover>
-          <Table.Thead>
-            <Table.Tr>
-              {headerCells.map((cell, cellIndex) => (
-                <Table.Th key={`header-${cellIndex}`}>{renderInlineMarkdown(cell)}</Table.Th>
-              ))}
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {rows.map((row, rowIndex) => (
-              <Table.Tr key={`row-${rowIndex}`}>
-                {headerCells.map((_, cellIndex) => (
-                  <Table.Td key={`cell-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(row[cellIndex] ?? "")}</Table.Td>
+        <Table.ScrollContainer key={`table-${key++}`} minWidth={420}>
+          <Table withTableBorder withColumnBorders striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                {headerCells.map((cell, cellIndex) => (
+                  <Table.Th key={`header-${cellIndex}`}>{renderInlineMarkdown(cell)}</Table.Th>
                 ))}
               </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>,
+            </Table.Thead>
+            <Table.Tbody>
+              {rows.map((row, rowIndex) => (
+                <Table.Tr key={`row-${rowIndex}`}>
+                  {headerCells.map((_, cellIndex) => (
+                    <Table.Td key={`cell-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(row[cellIndex] ?? "")}</Table.Td>
+                  ))}
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>,
       );
       continue;
     }
@@ -251,7 +267,7 @@ function renderMarkdownContent(content: string): ReactNode {
       if (/^[-*]\s+/.test(candidate)) {
         break;
       }
-      if (candidate.includes("|") && /^\|?[\s:-|]+\|?$/.test(candidateNext)) {
+      if (candidate.includes("|") && isMarkdownTableSeparator(candidateNext)) {
         break;
       }
       paragraphLines.push(candidate);
