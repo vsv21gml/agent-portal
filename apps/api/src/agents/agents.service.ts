@@ -2,6 +2,8 @@ import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as k8s from "@kubernetes/client-node";
+import * as http from "node:http";
+import * as https from "node:https";
 import { Repository } from "typeorm";
 import { AuthService } from "../auth/auth.service";
 import { GitlabService } from "../gitlab/gitlab.service";
@@ -19,11 +21,6 @@ export class AgentsService {
   private readonly kubeClientBatch: k8s.BatchV1Api | null;
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
-  private readonly insecureTlsDispatcher = new (require("undici").Agent as new (options: unknown) => unknown)({
-    connect: {
-      rejectUnauthorized: false,
-    },
-  });
 
   constructor(
     private readonly configService: ConfigService,
@@ -899,14 +896,100 @@ export class AgentsService {
     throw new Error("Failed to reach agent A2A endpoint");
   }
 
-  private fetchWithOptionalInsecureTls(url: string, init?: RequestInit): Promise<Response> {
-    if (/^https:\/\//i.test(url)) {
-      return fetch(url, {
-        ...init,
-        dispatcher: this.insecureTlsDispatcher,
-      } as RequestInit & { dispatcher: unknown });
+  private async fetchWithOptionalInsecureTls(
+    url: string,
+    init?: RequestInit,
+  ): Promise<{
+    ok: boolean;
+    status: number;
+    headers: { get(name: string): string | null };
+    text(): Promise<string>;
+    json(): Promise<unknown>;
+  }> {
+    const method = init?.method ?? "GET";
+    const headers = this.toHeaderRecord(init?.headers);
+    const body = typeof init?.body === "string" ? init.body : undefined;
+    const signal = init?.signal;
+
+    if (!/^https?:\/\//i.test(url)) {
+      const response = await fetch(url, init);
+      return {
+        ok: response.ok,
+        status: response.status,
+        headers: {
+          get: (name: string) => response.headers.get(name),
+        },
+        text: () => response.text(),
+        json: () => response.json(),
+      };
     }
-    return fetch(url, init);
+
+    return new Promise((resolve, reject) => {
+      const target = new URL(url);
+      const client = target.protocol === "https:" ? https : http;
+      const req = client.request(
+        {
+          protocol: target.protocol,
+          hostname: target.hostname,
+          port: target.port || undefined,
+          path: `${target.pathname}${target.search}`,
+          method,
+          headers,
+          rejectUnauthorized: target.protocol === "https:" ? false : undefined,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+          res.on("end", () => {
+            const raw = Buffer.concat(chunks).toString("utf8");
+            resolve({
+              ok: (res.statusCode ?? 500) >= 200 && (res.statusCode ?? 500) < 300,
+              status: res.statusCode ?? 500,
+              headers: {
+                get: (name: string) => {
+                  const value = res.headers[name.toLowerCase()];
+                  if (Array.isArray(value)) {
+                    return value.join(", ");
+                  }
+                  return value ?? null;
+                },
+              },
+              text: async () => raw,
+              json: async () => JSON.parse(raw),
+            });
+          });
+        },
+      );
+
+      req.on("error", reject);
+      if (signal) {
+        signal.addEventListener(
+          "abort",
+          () => {
+            req.destroy(new Error("The operation was aborted"));
+            reject(new Error("The operation was aborted"));
+          },
+          { once: true },
+        );
+      }
+      if (body) {
+        req.write(body);
+      }
+      req.end();
+    });
+  }
+
+  private toHeaderRecord(headers: RequestInit["headers"]): Record<string, string> {
+    if (!headers) {
+      return {};
+    }
+    if (headers instanceof Headers) {
+      return Object.fromEntries(headers.entries());
+    }
+    if (Array.isArray(headers)) {
+      return Object.fromEntries(headers);
+    }
+    return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key, String(value)]));
   }
 
   private normalizeExternalAgentUrl(rawUrl: string): string {
