@@ -49,7 +49,7 @@ export class AgentsService {
     await this.projectsService.getProject(dto.projectId);
     const repo = await this.gitlabService.getRepo(dto.projectId, dto.repoId);
     const user = await this.authService.findById(userId);
-    const normalizedAgentName = this.sanitizeName(dto.agentName);
+    const displayAgentName = dto.agentName.trim();
     const ecrRepository = this.configService.get<string>("AGENT_ECR_REPOSITORY")?.trim() ?? "";
     if (!ecrRepository) {
       throw new Error("AGENT_ECR_REPOSITORY is not configured");
@@ -72,7 +72,7 @@ export class AgentsService {
         projectId: dto.projectId,
         repoId: dto.repoId,
         ownerUserId: userId,
-        agentName: normalizedAgentName,
+        agentName: displayAgentName,
         description: dto.description?.trim() ?? "",
         dockerfilePath: dto.dockerfilePath?.trim() || "./Dockerfile",
         ecrRepository,

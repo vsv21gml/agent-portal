@@ -184,6 +184,9 @@ export default function ProjectDetailPage() {
   const [agentRepoId, setAgentRepoId] = useState<string | null>(null);
   const [agentDockerfilePath, setAgentDockerfilePath] = useState("./Dockerfile");
   const [deployingAgent, setDeployingAgent] = useState(false);
+  const [agentSearchQuery, setAgentSearchQuery] = useState("");
+  const [agentStatusFilter, setAgentStatusFilter] = useState<string | null>("all");
+  const [agentRepoFilter, setAgentRepoFilter] = useState<string | null>("all");
   const [logsTarget, setLogsTarget] = useState<AgentDeployment | null>(null);
   const [agentLogs, setAgentLogs] = useState("");
   const [loadingAgentLogs, setLoadingAgentLogs] = useState(false);
@@ -233,6 +236,35 @@ export default function ProjectDetailPage() {
     () => agents.filter((agent) => agent.status === "running"),
     [agents],
   );
+  const agentStatusOptions = useMemo(
+    () => [
+      { value: "all", label: "All statuses" },
+      ...Array.from(new Set(agents.map((agent) => agent.status))).map((status) => ({
+        value: status,
+        label: status,
+      })),
+    ],
+    [agents],
+  );
+  const agentRepoFilterOptions = useMemo(
+    () => [{ value: "all", label: "All repositories" }, ...repoOptions],
+    [repoOptions],
+  );
+  const filteredAgents = useMemo(() => {
+    const normalizedQuery = agentSearchQuery.trim().toLowerCase();
+
+    return agents.filter((agent) => {
+      const repoName = repos.find((repo) => repo.id === agent.repoId)?.repoName ?? "";
+      const matchesQuery =
+        !normalizedQuery ||
+        agent.agentName.toLowerCase().includes(normalizedQuery) ||
+        agent.description.toLowerCase().includes(normalizedQuery);
+      const matchesStatus = agentStatusFilter === "all" || agent.status === agentStatusFilter;
+      const matchesRepo = agentRepoFilter === "all" || agent.repoId === agentRepoFilter;
+
+      return matchesQuery && matchesStatus && matchesRepo && (normalizedQuery ? repoName.toLowerCase().includes(normalizedQuery) || matchesQuery : true);
+    });
+  }, [agentRepoFilter, agentSearchQuery, agentStatusFilter, agents, repos]);
   const selectedPlaygroundAgent = useMemo(
     () => runningAgents.find((agent) => agent.id === selectedPlaygroundAgentId) ?? null,
     [runningAgents, selectedPlaygroundAgentId],
@@ -1027,6 +1059,24 @@ export default function ProjectDetailPage() {
             </Paper>
 
             <Paper withBorder p="md" radius="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                <TextInput
+                  label="Agent name / description"
+                  placeholder="Search agents"
+                  value={agentSearchQuery}
+                  onChange={(event) => setAgentSearchQuery(event.currentTarget.value)}
+                />
+                <Select
+                  label="Agent status"
+                  data={agentStatusOptions}
+                  value={agentStatusFilter}
+                  onChange={setAgentStatusFilter}
+                />
+                <Select label="Repo" data={agentRepoFilterOptions} value={agentRepoFilter} onChange={setAgentRepoFilter} searchable />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md" radius="md">
               <Table withTableBorder highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
@@ -1040,8 +1090,8 @@ export default function ProjectDetailPage() {
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {agents.length ? (
-                    agents.map((agent) => (
+                  {filteredAgents.length ? (
+                    filteredAgents.map((agent) => (
                       <Table.Tr key={agent.id}>
                         <Table.Td>
                           <Text fw={600}>{agent.agentName}</Text>
@@ -1068,7 +1118,7 @@ export default function ProjectDetailPage() {
                     <Table.Tr>
                       <Table.Td colSpan={7}>
                         <Text size="sm" c="dimmed">
-                          No agents deployed yet.
+                          {agents.length ? "No agents match the current filters." : "No agents deployed yet."}
                         </Text>
                       </Table.Td>
                     </Table.Tr>
