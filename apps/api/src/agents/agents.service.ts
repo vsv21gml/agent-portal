@@ -232,7 +232,7 @@ export class AgentsService {
       if (!buildPod) {
         return { logs: "" };
       }
-      const response = await this.kubeClientCore!.readNamespacedPodLog({
+      const response = await this.readPodLogSafely({
         namespace: agent.namespace,
         name: buildPod.metadata?.name ?? "",
         container: buildPod.spec?.containers?.some((item) => item.name === "kaniko") ? "kaniko" : undefined,
@@ -244,11 +244,44 @@ export class AgentsService {
     if (!pod) {
       return { logs: "" };
     }
-    const response = await this.kubeClientCore!.readNamespacedPodLog({
+    const response = await this.readPodLogSafely({
       namespace: agent.namespace,
       name: pod.metadata?.name ?? "",
     });
     return { logs: response };
+  }
+
+  private async readPodLogSafely(params: {
+    namespace: string;
+    name: string;
+    container?: string;
+  }): Promise<string> {
+    try {
+      return await this.kubeClientCore!.readNamespacedPodLog(params);
+    } catch (error) {
+      const message = this.describePendingLogState(error);
+      if (message) {
+        this.logger.log(`Pod log pending namespace=${params.namespace} pod=${params.name} container=${params.container ?? "-"}`);
+        return message;
+      }
+      throw error;
+    }
+  }
+
+  private describePendingLogState(error: unknown): string | null {
+    if (!(error instanceof Error)) {
+      return null;
+    }
+
+    const body = "body" in error && typeof (error as { body?: unknown }).body === "string" ? (error as { body: string }).body : "";
+    const source = `${error.message}\n${body}`;
+    if (/ContainerCreating/i.test(source) || /waiting to start/i.test(source)) {
+      return "Container is still starting. Logs will appear once the agent container is running.";
+    }
+    if (/PodInitializing/i.test(source) || /Pending/i.test(source)) {
+      return "Pod is still initializing. Logs will appear after startup completes.";
+    }
+    return null;
   }
 
   async chatWithAgent(
