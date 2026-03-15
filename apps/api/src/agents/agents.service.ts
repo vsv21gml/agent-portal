@@ -142,6 +142,52 @@ export class AgentsService {
     return { logs: response };
   }
 
+  async chatWithAgent(agentId: string, _userId: string, message: string): Promise<{ reply: string; endpoint: string }> {
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId });
+    const refreshed = await this.refreshAgentStatus(agent);
+    if (refreshed.status !== "running") {
+      throw new Error("Agent is not running");
+    }
+
+    const endpointCandidates = [
+      `${refreshed.endpointUrl.replace(/\/+$/, "")}/a2a/message`,
+      `${refreshed.endpointUrl.replace(/\/+$/, "")}/a2a/chat`,
+      `${refreshed.endpointUrl.replace(/\/+$/, "")}/chat`,
+    ];
+
+    for (const endpoint of endpointCandidates) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            message,
+            input: message,
+          }),
+        });
+        if (!response.ok) {
+          continue;
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const payload = (await response.json()) as Record<string, unknown>;
+          const reply = this.extractAgentReply(payload);
+          return { reply, endpoint };
+        }
+
+        const reply = await response.text();
+        return { reply: reply.trim(), endpoint };
+      } catch {
+        continue;
+      }
+    }
+
+    throw new Error("Failed to reach agent A2A endpoint");
+  }
+
   private async refreshAgentStatus(agent: AgentDeploymentEntity): Promise<AgentDeploymentEntity> {
     if (agent.status === "building" || agent.status === "deploying") {
       const refreshed = await this.refreshBuildAndDeployStatus(agent);
@@ -476,6 +522,27 @@ export class AgentsService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private extractAgentReply(payload: Record<string, unknown>): string {
+    const candidates = [
+      payload.reply,
+      payload.message,
+      payload.output,
+      payload.content,
+      (payload.data as Record<string, unknown> | undefined)?.reply,
+      (payload.data as Record<string, unknown> | undefined)?.message,
+      (payload.result as Record<string, unknown> | undefined)?.reply,
+      (payload.result as Record<string, unknown> | undefined)?.message,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate;
+      }
+    }
+
+    return JSON.stringify(payload, null, 2);
   }
 
   private normalizeDockerfilePath(rawPath: string): string {

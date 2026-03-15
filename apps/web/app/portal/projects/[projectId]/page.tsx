@@ -20,6 +20,7 @@ import {
   Stack,
   Table,
   Text,
+  Textarea,
   TextInput,
   Title,
 } from "@mantine/core";
@@ -96,7 +97,13 @@ type AgentDeployment = {
   createdAt: string;
 };
 
-const menuItems = ["Info", "Repo", "Agent"] as const;
+type PlaygroundMessage = {
+  id: string;
+  role: "user" | "agent";
+  content: string;
+};
+
+const menuItems = ["Info", "Repo", "Agent", "Play Ground"] as const;
 const runtimeOptions = [
   { value: "NODE22", label: "NODE22" },
   { value: "NODE23", label: "NODE23" },
@@ -159,6 +166,10 @@ export default function ProjectDetailPage() {
   const [logsTarget, setLogsTarget] = useState<AgentDeployment | null>(null);
   const [agentLogs, setAgentLogs] = useState("");
   const [loadingAgentLogs, setLoadingAgentLogs] = useState(false);
+  const [selectedPlaygroundAgentId, setSelectedPlaygroundAgentId] = useState<string | null>(null);
+  const [playgroundInput, setPlaygroundInput] = useState("");
+  const [playgroundMessages, setPlaygroundMessages] = useState<Record<string, PlaygroundMessage[]>>({});
+  const [sendingPlaygroundMessage, setSendingPlaygroundMessage] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>("member");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -196,6 +207,18 @@ export default function ProjectDetailPage() {
   const repoOptions = useMemo(
     () => repos.map((repo) => ({ value: repo.id, label: repo.repoName })),
     [repos],
+  );
+  const runningAgents = useMemo(
+    () => agents.filter((agent) => agent.status === "running"),
+    [agents],
+  );
+  const selectedPlaygroundAgent = useMemo(
+    () => runningAgents.find((agent) => agent.id === selectedPlaygroundAgentId) ?? null,
+    [runningAgents, selectedPlaygroundAgentId],
+  );
+  const currentPlaygroundMessages = useMemo(
+    () => (selectedPlaygroundAgentId ? playgroundMessages[selectedPlaygroundAgentId] ?? [] : []),
+    [playgroundMessages, selectedPlaygroundAgentId],
   );
 
   const loadMembersAndProject = async (targetProjectId: string) => {
@@ -286,6 +309,17 @@ export default function ProjectDetailPage() {
     setAvailableUsers([]);
   }, [isManager, projectId]);
 
+  useEffect(() => {
+    if (!runningAgents.length) {
+      setSelectedPlaygroundAgentId(null);
+      return;
+    }
+
+    if (!selectedPlaygroundAgentId || !runningAgents.some((agent) => agent.id === selectedPlaygroundAgentId)) {
+      setSelectedPlaygroundAgentId(runningAgents[0].id);
+    }
+  }, [runningAgents, selectedPlaygroundAgentId]);
+
   const refreshWorkspace = async (workspaceId: string) => {
     const latest = await apiFetch<WorkspaceSession>(`workspaces/${workspaceId}`);
     setWorkspaces((prev) => [latest, ...prev.filter((item) => item.id !== latest.id)]);
@@ -360,6 +394,45 @@ export default function ProjectDetailPage() {
       toastError("Failed to load agent logs.");
     } finally {
       setLoadingAgentLogs(false);
+    }
+  };
+
+  const sendPlaygroundMessage = async () => {
+    if (!selectedPlaygroundAgent || !playgroundInput.trim()) {
+      return;
+    }
+
+    const agentId = selectedPlaygroundAgent.id;
+    const userMessage: PlaygroundMessage = {
+      id: `${Date.now()}-user`,
+      role: "user",
+      content: playgroundInput.trim(),
+    };
+    setPlaygroundMessages((prev) => ({
+      ...prev,
+      [agentId]: [...(prev[agentId] ?? []), userMessage],
+    }));
+    setPlaygroundInput("");
+    setSendingPlaygroundMessage(true);
+
+    try {
+      const result = await apiFetch<{ reply: string; endpoint: string }>(`agents/${agentId}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ message: userMessage.content }),
+      });
+      const agentMessage: PlaygroundMessage = {
+        id: `${Date.now()}-agent`,
+        role: "agent",
+        content: result.reply,
+      };
+      setPlaygroundMessages((prev) => ({
+        ...prev,
+        [agentId]: [...(prev[agentId] ?? []), agentMessage],
+      }));
+    } catch {
+      toastError("Failed to chat with agent.");
+    } finally {
+      setSendingPlaygroundMessage(false);
     }
   };
 
@@ -940,6 +1013,129 @@ export default function ProjectDetailPage() {
                 </Table.Tbody>
               </Table>
             </Paper>
+          </Stack>
+        ) : null}
+
+        {activeMenu === "Play Ground" ? (
+          <Stack>
+            <Paper withBorder p="md" radius="md">
+              <Stack gap="xs">
+                <Group justify="space-between" align="center">
+                  <div>
+                    <Title order={4}>Play Ground</Title>
+                    <Text size="sm" c="dimmed">
+                      Chat with deployed agents through A2A.
+                    </Text>
+                  </div>
+                  <Button variant="light" onClick={() => void loadAgents()}>
+                    Refresh Agents
+                  </Button>
+                </Group>
+              </Stack>
+            </Paper>
+
+            <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md">
+              <Stack>
+                {runningAgents.length ? (
+                  runningAgents.map((agent) => (
+                    <Card
+                      key={agent.id}
+                      withBorder
+                      radius="md"
+                      padding="lg"
+                      style={{
+                        cursor: "pointer",
+                        borderColor: selectedPlaygroundAgentId === agent.id ? "var(--mantine-color-blue-6)" : undefined,
+                      }}
+                      onClick={() => setSelectedPlaygroundAgentId(agent.id)}
+                    >
+                      <Stack gap={6}>
+                        <Group justify="space-between" align="center">
+                          <Text fw={700}>{agent.agentName}</Text>
+                          <Badge variant="light">{agent.status}</Badge>
+                        </Group>
+                        <Text size="sm" c="dimmed">
+                          {agent.description || "No description"}
+                        </Text>
+                        <Text size="sm">{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Text>
+                      </Stack>
+                    </Card>
+                  ))
+                ) : (
+                  <Paper withBorder p="md" radius="md">
+                    <Text size="sm" c="dimmed">
+                      No running agents available.
+                    </Text>
+                  </Paper>
+                )}
+              </Stack>
+
+              <Paper withBorder p="md" radius="md" style={{ gridColumn: "span 2" }}>
+                {selectedPlaygroundAgent ? (
+                  <Stack>
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Title order={4}>{selectedPlaygroundAgent.agentName}</Title>
+                        <Text size="sm" c="dimmed">
+                          {selectedPlaygroundAgent.endpointUrl}
+                        </Text>
+                      </div>
+                      <Badge variant="light">A2A</Badge>
+                    </Group>
+
+                    <Paper withBorder p="md" radius="md" style={{ minHeight: 360, maxHeight: 360, overflow: "auto" }}>
+                      <Stack gap="sm">
+                        {currentPlaygroundMessages.length ? (
+                          currentPlaygroundMessages.map((message) => (
+                            <Paper
+                              key={message.id}
+                              p="sm"
+                              radius="md"
+                              withBorder
+                              style={{
+                                marginLeft: message.role === "user" ? "auto" : undefined,
+                                maxWidth: "85%",
+                                background: message.role === "user" ? "rgba(12, 74, 110, 0.08)" : undefined,
+                              }}
+                            >
+                              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                                {message.role === "user" ? "You" : selectedPlaygroundAgent.agentName}
+                              </Text>
+                              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                                {message.content}
+                              </Text>
+                            </Paper>
+                          ))
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            Start a conversation with this agent.
+                          </Text>
+                        )}
+                      </Stack>
+                    </Paper>
+
+                    <Textarea
+                      label="Message"
+                      minRows={4}
+                      value={playgroundInput}
+                      onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                      placeholder="Ask this agent something..."
+                    />
+                    <Group justify="end">
+                      <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
+                        Send
+                      </Button>
+                    </Group>
+                  </Stack>
+                ) : (
+                  <Stack justify="center" align="center" style={{ minHeight: 420 }}>
+                    <Text size="sm" c="dimmed">
+                      Select a running agent to start chatting.
+                    </Text>
+                  </Stack>
+                )}
+              </Paper>
+            </SimpleGrid>
           </Stack>
         ) : null}
 

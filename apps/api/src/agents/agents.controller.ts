@@ -4,6 +4,10 @@ import { JwtPayload } from "../auth/types/jwt-payload.type";
 import { CreateAgentDto } from "./dto/create-agent.dto";
 import { AgentsService } from "./agents.service";
 
+type AgentChatDto = {
+  message: string;
+};
+
 @Controller("agents")
 export class AgentsController {
   constructor(private readonly agentsService: AgentsService) {}
@@ -26,5 +30,10 @@ export class AgentsController {
   @Get(":agentId/logs")
   getAgentLogs(@Param("agentId") agentId: string, @CurrentUser() user: JwtPayload) {
     return this.agentsService.getAgentLogs(agentId, user.sub);
+  }
+
+  @Post(":agentId/chat")
+  chatWithAgent(@Param("agentId") agentId: string, @Body() dto: AgentChatDto, @CurrentUser() user: JwtPayload) {
+    return this.agentsService.chatWithAgent(agentId, user.sub, dto.message);
   }
 }
