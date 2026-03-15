@@ -80,17 +80,19 @@ export class AdminService {
       where: { namespace },
       order: { createdAt: "DESC" },
     });
-
-    const runningSessions = sessions.filter((session) => session.status === "running");
+    const podsByDeployment = await this.getWorkspacePodsByDeployment(namespace);
+    const runningSessions = sessions.filter((session) => {
+      const pod = podsByDeployment.get(session.deploymentName);
+      return this.isWorkspacePodRunning(pod);
+    });
     const projectIds = [...new Set(runningSessions.map((session) => session.projectId))];
     const repoIds = [...new Set(runningSessions.map((session) => session.repoId))];
     const userIds = [...new Set(runningSessions.map((session) => session.userId))];
 
-    const [projects, repos, users, podsByDeployment, nodePool] = await Promise.all([
+    const [projects, repos, users, nodePool] = await Promise.all([
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getWorkspacePodsByDeployment(namespace),
       this.getWorkspaceNodePoolSummary(),
     ]);
 
@@ -113,7 +115,7 @@ export class AdminService {
         userId: session.userId,
         userEmail: user?.email ?? "",
         userDisplayName: user?.displayName ?? user?.email ?? session.userId,
-        status: session.status,
+        status: "running",
         cpu: 1,
         memoryGi: 4,
         nodeName: pod?.spec?.nodeName ?? null,
@@ -178,6 +180,16 @@ export class AdminService {
       this.logger.warn(`Failed to list workspace nodes: ${this.describeError(error)}`);
       return { nodeCount: 0, totalCpu: 0, totalMemoryGi: 0 };
     }
+  }
+
+  private isWorkspacePodRunning(pod: k8s.V1Pod | undefined): boolean {
+    if (!pod) {
+      return false;
+    }
+
+    const phase = pod.status?.phase ?? "";
+    const containersReady = pod.status?.containerStatuses?.every((status) => status.ready) ?? false;
+    return phase === "Running" && containersReady;
   }
 
   private getWorkspaceNodeSelector(): Record<string, string> {

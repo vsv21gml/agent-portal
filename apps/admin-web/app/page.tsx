@@ -721,10 +721,12 @@ export default function AdminPage() {
                     <Group justify="space-between" align="center">
                       <div>
                         <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                          Total Node CPU
+                          Node CPU Capacity
                         </Text>
                         <Text mt="sm" fw={700} size="xl">
-                          {(resourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                          {Number.isInteger(resourceOverview?.nodePool.totalCpu ?? 0)
+                            ? (resourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
+                            : (resourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
                         </Text>
                       </div>
                       <RingProgress
@@ -739,7 +741,7 @@ export default function AdminPage() {
                       />
                     </Group>
                     <Text size="sm" c="dimmed" mt="sm">
-                      Used {(resourceOverview?.running.usedCpu ?? 0).toFixed(1)} CPU
+                      Kubernetes reported capacity
                     </Text>
                   </Paper>
 
@@ -747,7 +749,7 @@ export default function AdminPage() {
                     <Group justify="space-between" align="center">
                       <div>
                         <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                          Total Node MEM
+                          Node MEM Capacity
                         </Text>
                         <Text mt="sm" fw={700} size="xl">
                           {(resourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
@@ -765,7 +767,7 @@ export default function AdminPage() {
                       />
                     </Group>
                     <Text size="sm" c="dimmed" mt="sm">
-                      Used {(resourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                      Kubernetes reported capacity
                     </Text>
                   </Paper>
 
