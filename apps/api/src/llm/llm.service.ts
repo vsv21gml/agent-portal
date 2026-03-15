@@ -1,8 +1,10 @@
 import { BadGatewayException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { IsNull, Repository } from "typeorm";
 import { UserEntity } from "../auth/entities/user.entity";
+import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
+import { ProjectEntity } from "../projects/entities/project.entity";
 import { CreateModelAccessRequestDto } from "./dto/create-model-access-request.dto";
 import { IssueLlmKeyDto } from "./dto/issue-llm-key.dto";
 import { ReviewModelAccessRequestDto } from "./dto/review-model-access-request.dto";
@@ -10,6 +12,7 @@ import { LiteLlmCatalogModelEntity } from "./entities/litellm-catalog-model.enti
 import {
   LiteLlmModelAccessRequestEntity,
   LiteLlmModelAccessRequestStatus,
+  LiteLlmModelAccessRequestType,
 } from "./entities/litellm-model-access-request.entity";
 import { LiteLlmKeyEntity } from "./entities/litellm-key.entity";
 import { LiteLlmModelEntity } from "./entities/litellm-model.entity";
@@ -58,6 +61,11 @@ type ModelAccessRequestView = {
   ownerUserId: string;
   userEmail: string;
   userDisplayName: string;
+  requestType: LiteLlmModelAccessRequestType;
+  projectId: string | null;
+  projectName: string | null;
+  agentId: string | null;
+  agentName: string | null;
   modelName: string;
   status: LiteLlmModelAccessRequestStatus;
   reviewNote: string | null;
@@ -91,6 +99,10 @@ export class LlmService {
     private readonly modelAccessRequestRepository: Repository<LiteLlmModelAccessRequestEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(ProjectEntity)
+    private readonly projectRepository: Repository<ProjectEntity>,
+    @InjectRepository(AgentDeploymentEntity)
+    private readonly agentRepository: Repository<AgentDeploymentEntity>,
   ) {}
 
   async ensureTeam(projectId: string): Promise<LiteLlmTeamEntity> {
@@ -281,7 +293,7 @@ export class LlmService {
     const userKey = await this.ensureUserVirtualKey(ownerUserId, userEmail, displayName);
     const catalogModels = await this.listCatalogModels();
     const requests = await this.modelAccessRequestRepository.find({
-      where: { ownerUserId },
+      where: { ownerUserId, requestType: "personal" },
       order: { createdAt: "DESC" },
     });
     const allowedModelNames = await this.listAllowedModelNames(ownerUserId);
@@ -312,6 +324,7 @@ export class LlmService {
       requests: requests.map((request) => ({
         id: request.id,
         modelName: request.modelName,
+        requestType: request.requestType,
         status: request.status,
         reviewNote: request.reviewNote,
         createdAt: request.createdAt,
@@ -322,6 +335,7 @@ export class LlmService {
 
   async createModelAccessRequest(ownerUserId: string, dto: CreateModelAccessRequestDto) {
     const modelName = dto.modelName.trim();
+    const requestType = dto.requestType ?? "personal";
     if (!modelName) {
       throw new ConflictException("Model name is required");
     }
@@ -332,13 +346,19 @@ export class LlmService {
       throw new NotFoundException("Model not found");
     }
 
-    const allowedModelNames = await this.listAllowedModelNames(ownerUserId);
-    if (allowedModelNames.includes(modelName)) {
+    const allowedModelNames = requestType === "personal" ? await this.listAllowedModelNames(ownerUserId) : [];
+    if (requestType === "personal" && allowedModelNames.includes(modelName)) {
       throw new ConflictException("Model is already available");
     }
 
     const existing = await this.modelAccessRequestRepository.findOne({
-      where: { ownerUserId, modelName },
+      where: {
+        ownerUserId,
+        modelName,
+        requestType,
+        projectId: dto.projectId ?? IsNull(),
+        agentId: dto.agentId ?? IsNull(),
+      },
       order: { updatedAt: "DESC" },
     });
     if (existing) {
@@ -355,6 +375,9 @@ export class LlmService {
       this.modelAccessRequestRepository.create({
         ownerUserId,
         modelName,
+        requestType,
+        projectId: dto.projectId ?? null,
+        agentId: dto.agentId ?? null,
         status: "pending",
       }),
     );
@@ -368,6 +391,37 @@ export class LlmService {
         modelName: "ASC",
       },
     });
+  }
+
+  async getCatalogModel(modelName: string): Promise<LiteLlmCatalogModelEntity> {
+    await this.syncCatalogModelsFromRemote();
+    const normalizedModelName = modelName.trim();
+    const model = await this.catalogModelRepository.findOne({ where: { modelName: normalizedModelName } });
+    if (!model) {
+      throw new NotFoundException("Model not found");
+    }
+    return model;
+  }
+
+  async configureProjectKeyModels(apiKey: string, modelNames: string[]): Promise<void> {
+    if (!apiKey) {
+      return;
+    }
+
+    const normalizedModels = Array.from(new Set(modelNames.map((modelName) => modelName.trim()).filter(Boolean)));
+    try {
+      await this.remoteFetch("/key/update", {
+        method: "POST",
+        body: JSON.stringify({
+          key: apiKey,
+          models: normalizedModels,
+        }),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to update LiteLLM project key models: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   async setDefaultModel(modelName: string, isDefault: boolean): Promise<LiteLlmCatalogModelEntity> {
@@ -392,19 +446,30 @@ export class LlmService {
   }
 
   async listModelAccessRequestsForAdmin(): Promise<ModelAccessRequestView[]> {
-    const [requests, users] = await Promise.all([
+    const [requests, users, projects, agents] = await Promise.all([
       this.modelAccessRequestRepository.find({ order: { createdAt: "DESC" } }),
       this.userRepository.find(),
+      this.projectRepository.find(),
+      this.agentRepository.find(),
     ]);
 
     const userMap = new Map(users.map((user) => [user.id, user]));
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
     return requests.map((request) => {
       const user = userMap.get(request.ownerUserId);
+      const project = request.projectId ? projectMap.get(request.projectId) : null;
+      const agent = request.agentId ? agentMap.get(request.agentId) : null;
       return {
         id: request.id,
         ownerUserId: request.ownerUserId,
         userEmail: user?.email ?? request.ownerUserId,
         userDisplayName: user?.displayName ?? request.ownerUserId,
+        requestType: request.requestType,
+        projectId: request.projectId,
+        projectName: project?.name ?? null,
+        agentId: request.agentId,
+        agentName: agent?.agentName ?? null,
         modelName: request.modelName,
         status: request.status,
         reviewNote: request.reviewNote,
@@ -606,7 +671,7 @@ export class LlmService {
     const [defaultModels, approvedRequests] = await Promise.all([
       this.catalogModelRepository.find({ where: { isDefault: true }, order: { modelName: "ASC" } }),
       this.modelAccessRequestRepository.find({
-        where: { ownerUserId, status: "approved" },
+        where: { ownerUserId, status: "approved", requestType: "personal" },
         order: { modelName: "ASC" },
       }),
     ]);

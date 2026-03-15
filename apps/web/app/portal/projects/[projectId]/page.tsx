@@ -15,6 +15,7 @@ import {
   Modal,
   NavLink,
   Paper,
+  ScrollArea,
   Select,
   SimpleGrid,
   Stack,
@@ -23,8 +24,9 @@ import {
   Textarea,
   TextInput,
   Title,
+  Tooltip,
 } from "@mantine/core";
-import { ComponentPropsWithoutRef, forwardRef, useEffect, useMemo, useState } from "react";
+import { ComponentPropsWithoutRef, forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "../../../../src/components/app-frame";
 import { ProfileMenu } from "../../../../src/components/profile-menu";
@@ -89,12 +91,19 @@ type AgentDeployment = {
   agentName: string;
   description: string;
   dockerfilePath: string;
+  litellmModel: string;
   ecrRepository: string;
   imageUrl: string;
   endpointUrl: string;
   status: string;
   lastMessage: string | null;
   createdAt: string;
+};
+
+type CatalogModel = {
+  id: string;
+  modelName: string;
+  isDefault: boolean;
 };
 
 type PlaygroundMessage = {
@@ -183,17 +192,23 @@ export default function ProjectDetailPage() {
   const [agentDescription, setAgentDescription] = useState("");
   const [agentRepoId, setAgentRepoId] = useState<string | null>(null);
   const [agentDockerfilePath, setAgentDockerfilePath] = useState("./Dockerfile");
+  const [agentModelName, setAgentModelName] = useState<string | null>(null);
   const [deployingAgent, setDeployingAgent] = useState(false);
+  const [stoppingAgentId, setStoppingAgentId] = useState<string | null>(null);
+  const [restartingAgentId, setRestartingAgentId] = useState<string | null>(null);
+  const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null);
   const [agentSearchQuery, setAgentSearchQuery] = useState("");
   const [agentStatusFilter, setAgentStatusFilter] = useState<string | null>("all");
   const [agentRepoFilter, setAgentRepoFilter] = useState<string | null>("all");
   const [logsTarget, setLogsTarget] = useState<AgentDeployment | null>(null);
   const [agentLogs, setAgentLogs] = useState("");
   const [loadingAgentLogs, setLoadingAgentLogs] = useState(false);
+  const agentLogsViewportRef = useRef<HTMLDivElement | null>(null);
   const [selectedPlaygroundAgentId, setSelectedPlaygroundAgentId] = useState<string | null>(null);
   const [playgroundInput, setPlaygroundInput] = useState("");
   const [playgroundMessages, setPlaygroundMessages] = useState<Record<string, PlaygroundMessage[]>>({});
   const [sendingPlaygroundMessage, setSendingPlaygroundMessage] = useState(false);
+  const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>("member");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -235,6 +250,24 @@ export default function ProjectDetailPage() {
   const runningAgents = useMemo(
     () => agents.filter((agent) => agent.status === "running"),
     [agents],
+  );
+  const activeServingAgents = useMemo(
+    () => agents.filter((agent) => ["running", "deploying"].includes(agent.status)),
+    [agents],
+  );
+  const maxServingAgents = 2;
+  const hasServingCapacity = activeServingAgents.length < maxServingAgents;
+  const agentModelOptions = useMemo(
+    () =>
+      catalogModels.map((model) => ({
+        value: model.modelName,
+        label: model.isDefault ? `${model.modelName} (Default)` : model.modelName,
+      })),
+    [catalogModels],
+  );
+  const selectedAgentModel = useMemo(
+    () => catalogModels.find((model) => model.modelName === agentModelName) ?? null,
+    [agentModelName, catalogModels],
   );
   const agentStatusOptions = useMemo(
     () => [
@@ -327,6 +360,20 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const loadCatalogModels = async (targetProjectId: string) => {
+    try {
+      const models = await apiFetch<CatalogModel[]>(`llm/projects/${targetProjectId}/catalog-models`);
+      setCatalogModels(models);
+      setAgentModelName((current) =>
+        current && models.some((model) => model.modelName === current)
+          ? current
+          : models.find((model) => model.isDefault)?.modelName ?? models[0]?.modelName ?? null,
+      );
+    } catch {
+      toastError("Failed to load LiteLLM models.");
+    }
+  };
+
   const loadAvailableUsers = async (targetProjectId: string) => {
     try {
       const users = await apiFetch<PortalUser[]>(`projects/${targetProjectId}/available-users`);
@@ -349,7 +396,7 @@ export default function ProjectDetailPage() {
       }
       case "Agent": {
         const loadedProject = await loadProject(targetProjectId);
-        await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject)]);
+        await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject), loadCatalogModels(targetProjectId)]);
         return loadedProject;
       }
       case "Play Ground": {
@@ -437,8 +484,8 @@ export default function ProjectDetailPage() {
   };
 
   const deployAgent = async () => {
-    if (!project || !agentName.trim() || !agentRepoId) {
-      toastError("Fill in agent name and repo.");
+    if (!project || !agentName.trim() || !agentRepoId || !agentModelName) {
+      toastError("Fill in agent name, repo, and model.");
       return;
     }
 
@@ -452,6 +499,7 @@ export default function ProjectDetailPage() {
           agentName: agentName.trim(),
           description: agentDescription.trim(),
           dockerfilePath: agentDockerfilePath.trim() || "./Dockerfile",
+          litellmModel: agentModelName,
         }),
       });
       setAgents((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
@@ -460,9 +508,18 @@ export default function ProjectDetailPage() {
       setAgentDescription("");
       setAgentRepoId(null);
       setAgentDockerfilePath("./Dockerfile");
-      toastSuccess("Agent deployment requested.");
-    } catch {
-      toastError("Failed to deploy agent.");
+      setAgentModelName(catalogModels.find((model) => model.isDefault)?.modelName ?? catalogModels[0]?.modelName ?? null);
+      toastSuccess(
+        selectedAgentModel?.isDefault
+          ? "Agent build and deployment requested."
+          : "Agent build requested. Deployment will continue after admin approval.",
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError("Serving capacity limit reached. Stop an active agent before deploying another one.");
+      } else {
+        toastError("Failed to deploy agent.");
+      }
     } finally {
       setDeployingAgent(false);
     }
@@ -481,6 +538,73 @@ export default function ProjectDetailPage() {
       setLoadingAgentLogs(false);
     }
   };
+
+  const stopAgent = async (agent: AgentDeployment) => {
+    setStoppingAgentId(agent.id);
+    try {
+      const updated = await apiFetch<AgentDeployment>(`agents/${agent.id}/stop`, { method: "POST" });
+      setAgents((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
+      toastSuccess("Agent stopped.");
+    } catch {
+      toastError("Failed to stop agent.");
+    } finally {
+      setStoppingAgentId(null);
+    }
+  };
+
+  const restartAgent = async (agent: AgentDeployment) => {
+    setRestartingAgentId(agent.id);
+    try {
+      const updated = await apiFetch<AgentDeployment>(`agents/${agent.id}/restart`, { method: "POST" });
+      setAgents((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
+      toastSuccess("Agent restart requested.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError("No serving slot available for this project.");
+      } else {
+        toastError("Failed to restart agent.");
+      }
+    } finally {
+      setRestartingAgentId(null);
+    }
+  };
+
+  const deleteAgent = async (agent: AgentDeployment) => {
+    setDeletingAgentId(agent.id);
+    try {
+      await apiFetch(`agents/${agent.id}`, { method: "DELETE" });
+      setAgents((prev) => prev.filter((item) => item.id !== agent.id));
+      toastSuccess("Agent deleted.");
+    } catch {
+      toastError("Failed to delete agent.");
+    } finally {
+      setDeletingAgentId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!logsTarget) {
+      return;
+    }
+
+    void loadAgentLogs(logsTarget);
+    const timer = window.setInterval(() => {
+      void loadAgentLogs(logsTarget);
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [logsTarget]);
+
+  useEffect(() => {
+    if (!logsTarget || !agentLogsViewportRef.current) {
+      return;
+    }
+
+    agentLogsViewportRef.current.scrollTo({
+      top: agentLogsViewportRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [agentLogs, logsTarget]);
 
   const copyText = async (value: string, successMessage: string) => {
     try {
@@ -1050,10 +1174,20 @@ export default function ProjectDetailPage() {
                   </Text>
                 </div>
                 <Group gap="sm">
+                  <Badge variant="light">{activeServingAgents.length}/{maxServingAgents} serving</Badge>
                   <Button variant="light" onClick={() => void loadAgents()}>
                     Refresh
                   </Button>
-                  <Button onClick={() => setAgentModalOpen(true)}>Deploy</Button>
+                  <Tooltip
+                    label="Serving capacity limit reached. Stop an active agent before deploying another one."
+                    disabled={hasServingCapacity}
+                  >
+                    <span>
+                      <Button onClick={() => setAgentModalOpen(true)} disabled={!hasServingCapacity}>
+                        Deploy
+                      </Button>
+                    </span>
+                  </Tooltip>
                 </Group>
               </Group>
             </Paper>
@@ -1087,6 +1221,7 @@ export default function ProjectDetailPage() {
                     <Table.Th>Created</Table.Th>
                     <Table.Th>Endpoint</Table.Th>
                     <Table.Th>Logs</Table.Th>
+                    <Table.Th>Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -1112,11 +1247,47 @@ export default function ProjectDetailPage() {
                             Logs
                           </Button>
                         </Table.Td>
+                        <Table.Td>
+                          <Group gap="xs">
+                            <Button
+                              size="xs"
+                              variant="default"
+                              disabled={!["running", "stopped"].includes(agent.status)}
+                              loading={restartingAgentId === agent.id}
+                              onClick={() =>
+                                agent.status === "stopped"
+                                  ? void restartAgent(agent)
+                                  : window.open(agent.endpointUrl, "_blank", "noopener,noreferrer")
+                              }
+                            >
+                              {agent.status === "stopped" ? "Restart" : "Open"}
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="yellow"
+                              variant="light"
+                              disabled={!["running", "deploying"].includes(agent.status)}
+                              loading={stoppingAgentId === agent.id}
+                              onClick={() => void stopAgent(agent)}
+                            >
+                              Stop
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="light"
+                              loading={deletingAgentId === agent.id}
+                              onClick={() => void deleteAgent(agent)}
+                            >
+                              Delete
+                            </Button>
+                          </Group>
+                        </Table.Td>
                       </Table.Tr>
                     ))
                   ) : (
                     <Table.Tr>
-                      <Table.Td colSpan={7}>
+                      <Table.Td colSpan={8}>
                         <Text size="sm" c="dimmed">
                           {agents.length ? "No agents match the current filters." : "No agents deployed yet."}
                         </Text>
@@ -1263,24 +1434,47 @@ export default function ProjectDetailPage() {
             onChange={(event) => setAgentDescription(event.currentTarget.value)}
           />
           <Select label="Repository" data={repoOptions} value={agentRepoId} onChange={setAgentRepoId} searchable />
+          <Select label="LITELLM_MODEL" data={agentModelOptions} value={agentModelName} onChange={setAgentModelName} searchable />
+          {selectedAgentModel ? (
+            <Text size="sm" c={selectedAgentModel.isDefault ? "dimmed" : "orange"}>
+              {selectedAgentModel.isDefault
+                ? "Default model: build succeeds and deployment starts immediately."
+                : "Non-default model: build runs first, then admin approval is required before deployment."}
+            </Text>
+          ) : null}
           <TextInput
             label="Dockerfile Path"
             value={agentDockerfilePath}
             onChange={(event) => setAgentDockerfilePath(event.currentTarget.value)}
           />
-          <Button loading={deployingAgent} onClick={() => void deployAgent()}>
+          <Button loading={deployingAgent} disabled={!hasServingCapacity} onClick={() => void deployAgent()}>
             Deploy Agent
           </Button>
         </Stack>
       </Modal>
 
-      <Modal opened={logsTarget !== null} onClose={() => setLogsTarget(null)} title={logsTarget ? `${logsTarget.agentName} logs` : "Agent logs"} size="xl" centered>
+      <Modal
+        opened={logsTarget !== null}
+        onClose={() => setLogsTarget(null)}
+        title={logsTarget ? `${logsTarget.agentName} logs` : "Agent logs"}
+        size="90%"
+        centered
+      >
         <Stack>
-          <Button variant="light" loading={loadingAgentLogs} onClick={() => (logsTarget ? void loadAgentLogs(logsTarget) : undefined)}>
-            Refresh Logs
-          </Button>
-          <Paper withBorder p="md" style={{ maxHeight: 480, overflow: "auto", whiteSpace: "pre-wrap" }}>
-            <Text size="sm">{agentLogs || "No logs yet."}</Text>
+          <Group justify="space-between" align="center">
+            <Text size="sm" c="dimmed">
+              Logs refresh automatically every 3 seconds.
+            </Text>
+            <Badge variant="light" color={loadingAgentLogs ? "blue" : "gray"}>
+              {loadingAgentLogs ? "Syncing" : "Live"}
+            </Badge>
+          </Group>
+          <Paper withBorder p="md">
+            <ScrollArea viewportRef={agentLogsViewportRef} h={680} offsetScrollbars>
+              <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>
+                {agentLogs || "No logs yet."}
+              </Text>
+            </ScrollArea>
           </Paper>
         </Stack>
       </Modal>

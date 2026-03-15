@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as k8s from "@kubernetes/client-node";
@@ -7,6 +7,7 @@ import { AuthService } from "../auth/auth.service";
 import { GitlabService } from "../gitlab/gitlab.service";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
 import { LlmService } from "../llm/llm.service";
+import { LiteLlmModelAccessRequestEntity } from "../llm/entities/litellm-model-access-request.entity";
 import { ProjectsService } from "../projects/projects.service";
 import { CreateAgentDto } from "./dto/create-agent.dto";
 import { AgentDeploymentEntity } from "./entities/agent-deployment.entity";
@@ -27,6 +28,8 @@ export class AgentsService {
     private readonly llmService: LlmService,
     @InjectRepository(AgentDeploymentEntity)
     private readonly agentRepository: Repository<AgentDeploymentEntity>,
+    @InjectRepository(LiteLlmModelAccessRequestEntity)
+    private readonly modelAccessRequestRepository: Repository<LiteLlmModelAccessRequestEntity>,
   ) {
     const kc = new k8s.KubeConfig();
     const kubeConfigPath = this.configService.get<string>("KUBECONFIG_PATH");
@@ -47,9 +50,15 @@ export class AgentsService {
 
   async createAgent(dto: CreateAgentDto, userId: string): Promise<AgentDeploymentEntity> {
     await this.projectsService.getProject(dto.projectId);
+    await this.ensureProjectServingCapacity(dto.projectId);
     const repo = await this.gitlabService.getRepo(dto.projectId, dto.repoId);
     const user = await this.authService.findById(userId);
     const displayAgentName = dto.agentName.trim();
+    const selectedModel = dto.litellmModel.trim();
+    if (!selectedModel) {
+      throw new Error("LITELLM model is required");
+    }
+    const catalogModel = await this.llmService.getCatalogModel(selectedModel);
     const ecrRepository = this.configService.get<string>("AGENT_ECR_REPOSITORY")?.trim() ?? "";
     if (!ecrRepository) {
       throw new Error("AGENT_ECR_REPOSITORY is not configured");
@@ -75,6 +84,7 @@ export class AgentsService {
         agentName: displayAgentName,
         description: dto.description?.trim() ?? "",
         dockerfilePath: dto.dockerfilePath?.trim() || "./Dockerfile",
+        litellmModel: catalogModel.modelName,
         ecrRepository,
         imageTag,
         imageUrl,
@@ -87,8 +97,23 @@ export class AgentsService {
         ingressName,
         lastMessage: "Build requested",
         litellmApiKey: agentKey?.apiKey ?? null,
+        modelAccessRequestId: null,
       }),
     );
+
+    if (catalogModel.isDefault) {
+      await this.llmService.configureProjectKeyModels(agent.litellmApiKey ?? "", [catalogModel.modelName]);
+    } else {
+      const request = await this.llmService.createModelAccessRequest(userId, {
+        modelName: catalogModel.modelName,
+        requestType: "agent_deploy",
+        projectId: dto.projectId,
+        agentId: agent.id,
+      });
+      agent.modelAccessRequestId = request.id;
+      agent.lastMessage = "Build requested. Waiting for admin approval after successful build.";
+      await this.agentRepository.save(agent);
+    }
 
     await this.ensureNamespace(namespace);
     await this.ensureBuildJob(agent, repo, {
@@ -99,6 +124,49 @@ export class AgentsService {
     });
 
     return this.refreshAgentStatus(agent);
+  }
+
+  async stopAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId });
+    await this.deleteServingResources(agent);
+    agent.status = "stopped";
+    agent.lastMessage = "Agent stopped.";
+    return this.agentRepository.save(agent);
+  }
+
+  async restartAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId });
+    await this.ensureProjectServingCapacity(agent.projectId, agent.id);
+    if (agent.modelAccessRequestId) {
+      const request = await this.modelAccessRequestRepository.findOne({ where: { id: agent.modelAccessRequestId } });
+      if (!request || request.status === "pending") {
+        agent.status = "pending_approval";
+        agent.lastMessage = "Waiting for admin model approval.";
+        return this.agentRepository.save(agent);
+      }
+      if (request.status === "rejected") {
+        agent.status = "failed";
+        agent.lastMessage = "Model approval rejected by administrator.";
+        return this.agentRepository.save(agent);
+      }
+    }
+
+    agent.status = "deploying";
+    agent.lastMessage = "Restart requested.";
+    await this.agentRepository.save(agent);
+    await this.deleteServingResources(agent);
+    await this.ensureServingResources(agent);
+    return this.refreshAgentStatus(agent);
+  }
+
+  async deleteAgent(agentId: string, userId: string): Promise<{ id: string }> {
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId });
+    await this.deleteAgentResources(agent);
+    if (agent.modelAccessRequestId) {
+      await this.modelAccessRequestRepository.delete({ id: agent.modelAccessRequestId });
+    }
+    await this.agentRepository.delete({ id: agent.id, ownerUserId: userId });
+    return { id: agent.id };
   }
 
   async listByProject(projectId: string, _userId: string): Promise<AgentDeploymentEntity[]> {
@@ -118,7 +186,7 @@ export class AgentsService {
     const agent = await this.agentRepository.findOneByOrFail({ id: agentId });
     await this.refreshAgentStatus(agent);
 
-    if (agent.status === "building" || agent.status === "failed") {
+    if (agent.status === "building" || agent.status === "failed" || agent.status === "pending_approval") {
       const buildPod = await this.findFirstPodByLabel(agent.namespace, "job-name", agent.buildJobName);
       if (!buildPod) {
         return { logs: "" };
@@ -189,7 +257,7 @@ export class AgentsService {
   }
 
   private async refreshAgentStatus(agent: AgentDeploymentEntity): Promise<AgentDeploymentEntity> {
-    if (agent.status === "building" || agent.status === "deploying") {
+    if (agent.status === "building" || agent.status === "deploying" || agent.status === "pending_approval") {
       const refreshed = await this.refreshBuildAndDeployStatus(agent);
       return refreshed;
     }
@@ -220,8 +288,28 @@ export class AgentsService {
     }
 
     if (succeeded > 0) {
+      if (agent.modelAccessRequestId) {
+        const request = await this.modelAccessRequestRepository.findOne({ where: { id: agent.modelAccessRequestId } });
+        if (!request || request.status === "pending") {
+          agent.status = "pending_approval";
+          agent.lastMessage = "Build complete. Waiting for admin model approval.";
+          return this.agentRepository.save(agent);
+        }
+        if (request.status === "rejected") {
+          agent.status = "failed";
+          agent.lastMessage = "Model approval rejected by administrator.";
+          return this.agentRepository.save(agent);
+        }
+        await this.llmService.configureProjectKeyModels(agent.litellmApiKey ?? "", [agent.litellmModel]);
+      }
+
       const deployment = await this.safeReadDeployment(agent);
       if (!deployment) {
+        if (!(await this.hasProjectServingCapacity(agent.projectId, agent.id))) {
+          agent.status = "stopped";
+          agent.lastMessage = "Build complete. No serving slot available. Stop another agent and restart this one.";
+          return this.agentRepository.save(agent);
+        }
         await this.ensureServingResources(agent);
         agent.status = "deploying";
         agent.lastMessage = "Build complete. Deploying agent.";
@@ -260,6 +348,7 @@ export class AgentsService {
       "set -e",
       `if [ ! -f "/workspace/repo/${dockerfilePath}" ]; then echo "Dockerfile not found"; exit 1; fi`,
       "if ! grep -R -E -q \"LITELLM_API_KEY\" /workspace/repo; then echo \"LITELLM_API_KEY usage not found\"; exit 1; fi",
+      "if ! grep -R -E -q \"LITELLM_MODEL\" /workspace/repo; then echo \"LITELLM_MODEL usage not found\"; exit 1; fi",
       "if ! grep -R -E -q \"A2A|a2a\" /workspace/repo; then echo \"A2A usage not found\"; exit 1; fi",
       "echo \"Validation passed\"",
     ].join("\n");
@@ -332,6 +421,25 @@ export class AgentsService {
     await this.ensureAgentIngress(agent);
   }
 
+  private async deleteServingResources(agent: AgentDeploymentEntity): Promise<void> {
+    await Promise.allSettled([
+      this.kubeClientApps?.deleteNamespacedDeployment({ namespace: agent.namespace, name: agent.deploymentName }),
+      this.kubeClientCore?.deleteNamespacedService({ namespace: agent.namespace, name: agent.serviceName }),
+      this.kubeClientNetworking?.deleteNamespacedIngress({ namespace: agent.namespace, name: agent.ingressName }),
+    ]);
+  }
+
+  private async deleteAgentResources(agent: AgentDeploymentEntity): Promise<void> {
+    await this.deleteServingResources(agent);
+    await Promise.allSettled([
+      this.kubeClientBatch?.deleteNamespacedJob({
+        namespace: agent.namespace,
+        name: agent.buildJobName,
+        body: { propagationPolicy: "Background" } as k8s.V1DeleteOptions,
+      }),
+    ]);
+  }
+
   private async ensureAgentDeployment(agent: AgentDeploymentEntity): Promise<void> {
     await this.kubeClientApps!.createNamespacedDeployment({
       namespace: agent.namespace,
@@ -364,6 +472,8 @@ export class AgentsService {
                   env: [
                     { name: "PORT", value: "8080" },
                     { name: "LITELLM_API_KEY", value: agent.litellmApiKey ?? "" },
+                    { name: "LITELLM_BASE_URL", value: this.configService.get<string>("LITELLM_BASE_URL", "") },
+                    { name: "LITELLM_MODEL", value: agent.litellmModel },
                     { name: "AGENT_NAME", value: agent.agentName },
                     { name: "AGENT_DESCRIPTION", value: agent.description },
                   ],
@@ -555,6 +665,22 @@ export class AgentsService {
   private normalizeDockerfilePath(rawPath: string): string {
     const trimmed = rawPath.trim().replace(/^\.\/+/, "");
     return trimmed || "Dockerfile";
+  }
+
+  private async hasProjectServingCapacity(projectId: string, excludeAgentId?: string): Promise<boolean> {
+    const activeCount = await this.countProjectServingAgents(projectId, excludeAgentId);
+    return activeCount < 2;
+  }
+
+  private async ensureProjectServingCapacity(projectId: string, excludeAgentId?: string): Promise<void> {
+    if (!(await this.hasProjectServingCapacity(projectId, excludeAgentId))) {
+      throw new ConflictException("No serving slot available for this project");
+    }
+  }
+
+  private async countProjectServingAgents(projectId: string, excludeAgentId?: string): Promise<number> {
+    const agents = await this.agentRepository.find({ where: { projectId } });
+    return agents.filter((agent) => agent.id !== excludeAgentId && ["running", "deploying"].includes(agent.status)).length;
   }
 
   private sanitizeName(value: string): string {

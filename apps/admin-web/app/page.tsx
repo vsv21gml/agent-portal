@@ -127,6 +127,11 @@ type ModelAccessRequest = {
   ownerUserId: string;
   userEmail: string;
   userDisplayName: string;
+  requestType: "personal" | "agent_deploy";
+  projectId: string | null;
+  projectName: string | null;
+  agentId: string | null;
+  agentName: string | null;
   modelName: string;
   status: string;
   reviewNote: string | null;
@@ -886,8 +891,11 @@ export default function AdminPage() {
                   <Table withTableBorder highlightOnHover>
                     <Table.Thead>
                       <Table.Tr>
+                        <Table.Th>Type</Table.Th>
                         <Table.Th>User</Table.Th>
                         <Table.Th>Email</Table.Th>
+                        <Table.Th>Project</Table.Th>
+                        <Table.Th>Agent</Table.Th>
                         <Table.Th>Model</Table.Th>
                         <Table.Th>Status</Table.Th>
                         <Table.Th>Requested</Table.Th>
@@ -898,8 +906,11 @@ export default function AdminPage() {
                       {modelRequests.length ? (
                         modelRequests.map((request) => (
                           <Table.Tr key={request.id}>
+                            <Table.Td>{request.requestType === "agent_deploy" ? "Agent Deploy" : "Personal"}</Table.Td>
                             <Table.Td>{request.userDisplayName}</Table.Td>
                             <Table.Td>{request.userEmail}</Table.Td>
+                            <Table.Td>{request.projectName ?? "-"}</Table.Td>
+                            <Table.Td>{request.agentName ?? "-"}</Table.Td>
                             <Table.Td>{request.modelName}</Table.Td>
                             <Table.Td>{request.status}</Table.Td>
                             <Table.Td>{new Date(request.createdAt).toLocaleString()}</Table.Td>
@@ -930,7 +941,7 @@ export default function AdminPage() {
                         ))
                       ) : (
                         <Table.Tr>
-                          <Table.Td colSpan={6}>
+                          <Table.Td colSpan={9}>
                             <Text size="sm" c="dimmed">
                               No model access requests yet.
                             </Text>

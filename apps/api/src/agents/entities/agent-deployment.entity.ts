@@ -23,6 +23,9 @@ export class AgentDeploymentEntity {
   @Column()
   dockerfilePath!: string;
 
+  @Column({ default: "" })
+  litellmModel!: string;
+
   @Column()
   ecrRepository!: string;
 
@@ -58,6 +61,9 @@ export class AgentDeploymentEntity {
 
   @Column({ type: "text", nullable: true })
   litellmApiKey!: string | null;
+
+  @Column({ type: "uuid", nullable: true })
+  modelAccessRequestId!: string | null;
 
   @CreateDateColumn()
   createdAt!: Date;

@@ -9,6 +9,8 @@ import { LiteLlmModelEntity } from "./entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./entities/litellm-team.entity";
 import { LiteLlmUserKeyEntity } from "./entities/litellm-user-key.entity";
 import { UserEntity } from "../auth/entities/user.entity";
+import { ProjectEntity } from "../projects/entities/project.entity";
+import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { UserEntity } from "../auth/entities/user.entity";
       LiteLlmCatalogModelEntity,
       LiteLlmModelAccessRequestEntity,
       UserEntity,
+      ProjectEntity,
+      AgentDeploymentEntity,
     ]),
   ],
   controllers: [LlmController],

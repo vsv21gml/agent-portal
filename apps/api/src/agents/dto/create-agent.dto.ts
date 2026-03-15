@@ -20,4 +20,8 @@ export class CreateAgentDto {
   @IsString()
   @IsOptional()
   dockerfilePath?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  litellmModel!: string;
 }

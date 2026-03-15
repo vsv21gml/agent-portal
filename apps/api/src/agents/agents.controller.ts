@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtPayload } from "../auth/types/jwt-payload.type";
 import { CreateAgentDto } from "./dto/create-agent.dto";
@@ -30,6 +30,21 @@ export class AgentsController {
   @Get(":agentId/logs")
   getAgentLogs(@Param("agentId") agentId: string, @CurrentUser() user: JwtPayload) {
     return this.agentsService.getAgentLogs(agentId, user.sub);
+  }
+
+  @Post(":agentId/stop")
+  stopAgent(@Param("agentId") agentId: string, @CurrentUser() user: JwtPayload) {
+    return this.agentsService.stopAgent(agentId, user.sub);
+  }
+
+  @Post(":agentId/restart")
+  restartAgent(@Param("agentId") agentId: string, @CurrentUser() user: JwtPayload) {
+    return this.agentsService.restartAgent(agentId, user.sub);
+  }
+
+  @Delete(":agentId")
+  deleteAgent(@Param("agentId") agentId: string, @CurrentUser() user: JwtPayload) {
+    return this.agentsService.deleteAgent(agentId, user.sub);
   }
 
   @Post(":agentId/chat")
