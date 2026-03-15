@@ -223,12 +223,16 @@ export class AgentsService {
 
     const externalBaseUrl = refreshed.endpointUrl.replace(/\/+$/, "");
     const internalBaseUrl = `http://${refreshed.serviceName}.${refreshed.namespace}.svc.cluster.local:8080`;
+    const messageId = crypto.randomUUID();
     const endpointCandidates: Array<{ url: string; body: Record<string, unknown> }> = [
       {
         url: `${internalBaseUrl}/a2a/rest`,
         body: {
-          message,
-          input: message,
+          message: {
+            messageId,
+            role: "user",
+            parts: [{ type: "text", text: message }],
+          },
         },
       },
       {
@@ -239,6 +243,7 @@ export class AgentsService {
           method: "message/send",
           params: {
             message: {
+              messageId,
               role: "user",
               parts: [{ type: "text", text: message }],
             },
@@ -248,8 +253,11 @@ export class AgentsService {
       {
         url: `${externalBaseUrl}/a2a/rest`,
         body: {
-          message,
-          input: message,
+          message: {
+            messageId,
+            role: "user",
+            parts: [{ type: "text", text: message }],
+          },
         },
       },
       {
