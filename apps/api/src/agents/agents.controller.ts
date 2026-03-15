@@ -8,6 +8,15 @@ type AgentChatDto = {
   message: string;
 };
 
+type ExternalA2AInspectDto = {
+  url: string;
+};
+
+type ExternalA2AChatDto = {
+  url: string;
+  message: string;
+};
+
 @Controller("agents")
 export class AgentsController {
   constructor(private readonly agentsService: AgentsService) {}
@@ -50,5 +59,15 @@ export class AgentsController {
   @Post(":agentId/chat")
   chatWithAgent(@Param("agentId") agentId: string, @Body() dto: AgentChatDto, @CurrentUser() user: JwtPayload) {
     return this.agentsService.chatWithAgent(agentId, user.sub, dto.message);
+  }
+
+  @Post("playground/inspect")
+  inspectExternalA2A(@Body() dto: ExternalA2AInspectDto, @CurrentUser() user: JwtPayload) {
+    return this.agentsService.inspectExternalA2A(dto.url, user.sub);
+  }
+
+  @Post("playground/chat")
+  chatExternalA2A(@Body() dto: ExternalA2AChatDto, @CurrentUser() user: JwtPayload) {
+    return this.agentsService.chatExternalA2A(dto.url, dto.message, user.sub);
   }
 }

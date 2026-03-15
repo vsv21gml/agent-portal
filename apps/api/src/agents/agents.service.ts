@@ -223,81 +223,22 @@ export class AgentsService {
 
     const externalBaseUrl = refreshed.endpointUrl.replace(/\/+$/, "");
     const internalBaseUrl = `http://${refreshed.serviceName}.${refreshed.namespace}.svc.cluster.local:8080`;
-    const messageId = crypto.randomUUID();
-    const a2aMessage = {
-      messageId,
-      role: "user",
-      parts: [{ kind: "text", type: "text", text: message }],
-    };
-    const endpointCandidates: Array<{ url: string; body: Record<string, unknown> }> = [
-      {
-        url: `${internalBaseUrl}/a2a/rest`,
-        body: {
-          message: a2aMessage,
-        },
-      },
-      {
-        url: `${internalBaseUrl}/a2a/jsonrpc`,
-        body: {
-          jsonrpc: "2.0",
-          id: crypto.randomUUID(),
-          method: "message/send",
-          params: {
-            message: a2aMessage,
-          },
-        },
-      },
-      {
-        url: `${externalBaseUrl}/a2a/rest`,
-        body: {
-          message: a2aMessage,
-        },
-      },
-      {
-        url: `${externalBaseUrl}/a2a/jsonrpc`,
-        body: {
-          jsonrpc: "2.0",
-          id: crypto.randomUUID(),
-          method: "message/send",
-          params: {
-            message: a2aMessage,
-          },
-        },
-      },
-    ];
+    return this.chatWithA2AEndpoints([internalBaseUrl, externalBaseUrl], message);
+  }
 
-    for (const endpoint of endpointCandidates) {
-      try {
-        const response = await fetch(endpoint.url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(endpoint.body),
-        });
-        if (!response.ok) {
-          this.logger.warn(`Agent chat request failed endpoint=${endpoint.url} status=${response.status}`);
-          continue;
-        }
+  async inspectExternalA2A(rawUrl: string, _userId: string): Promise<{
+    normalizedUrl: string;
+    agentCardUrl: string;
+    agentCard: Record<string, unknown>;
+  }> {
+    const normalizedUrl = this.normalizeExternalAgentUrl(rawUrl);
+    const { agentCardUrl, agentCard } = await this.fetchAgentCard(normalizedUrl);
+    return { normalizedUrl, agentCardUrl, agentCard };
+  }
 
-        const contentType = response.headers.get("content-type") ?? "";
-        if (contentType.includes("application/json")) {
-          const payload = (await response.json()) as Record<string, unknown>;
-          const reply = this.extractAgentReply(payload);
-          return { reply, endpoint: endpoint.url };
-        }
-
-        const reply = await response.text();
-        return { reply: reply.trim(), endpoint: endpoint.url };
-      } catch (error) {
-        this.logger.warn(
-          `Agent chat request error endpoint=${endpoint.url}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
-      }
-    }
-
-    throw new Error("Failed to reach agent A2A endpoint");
+  async chatExternalA2A(rawUrl: string, message: string, _userId: string): Promise<{ reply: string; endpoint: string }> {
+    const normalizedUrl = this.normalizeExternalAgentUrl(rawUrl);
+    return this.chatWithA2AEndpoints([normalizedUrl], message);
   }
 
   private async refreshAgentStatus(agent: AgentDeploymentEntity): Promise<AgentDeploymentEntity> {
@@ -844,6 +785,10 @@ export class AgentsService {
 
   private extractAgentReply(payload: Record<string, unknown>): string {
     const candidates = [
+      (((payload.result as Record<string, unknown> | undefined)?.parts ?? []) as Array<Record<string, unknown>>)
+        .map((part) => (typeof part?.text === "string" ? part.text : ""))
+        .filter(Boolean)
+        .join("\n"),
       payload.reply,
       payload.message,
       payload.output,
@@ -882,6 +827,96 @@ export class AgentsService {
   private normalizeDockerfilePath(rawPath: string): string {
     const trimmed = rawPath.trim().replace(/^\.\/+/, "");
     return trimmed || "Dockerfile";
+  }
+
+  private async chatWithA2AEndpoints(baseUrls: string[], message: string): Promise<{ reply: string; endpoint: string }> {
+    const messageId = crypto.randomUUID();
+    const a2aMessage = {
+      messageId,
+      role: "user",
+      parts: [{ kind: "text", type: "text", text: message }],
+    };
+
+    const endpointCandidates = baseUrls.flatMap((baseUrl) => [
+      {
+        url: `${baseUrl}/a2a/rest`,
+        body: {
+          message: a2aMessage,
+        },
+      },
+      {
+        url: `${baseUrl}/a2a/jsonrpc`,
+        body: {
+          jsonrpc: "2.0",
+          id: crypto.randomUUID(),
+          method: "message/send",
+          params: {
+            message: a2aMessage,
+          },
+        },
+      },
+    ]);
+
+    for (const endpoint of endpointCandidates) {
+      try {
+        const response = await fetch(endpoint.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(endpoint.body),
+        });
+        if (!response.ok) {
+          this.logger.warn(`Agent chat request failed endpoint=${endpoint.url} status=${response.status}`);
+          continue;
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const payload = (await response.json()) as Record<string, unknown>;
+          const reply = this.extractAgentReply(payload);
+          return { reply, endpoint: endpoint.url };
+        }
+
+        const reply = await response.text();
+        return { reply: reply.trim(), endpoint: endpoint.url };
+      } catch (error) {
+        this.logger.warn(
+          `Agent chat request error endpoint=${endpoint.url}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    throw new Error("Failed to reach agent A2A endpoint");
+  }
+
+  private normalizeExternalAgentUrl(rawUrl: string): string {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) {
+      throw new Error("A2A URL is required");
+    }
+
+    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const url = new URL(withProtocol);
+    return url.toString().replace(/\/+$/, "");
+  }
+
+  private async fetchAgentCard(baseUrl: string): Promise<{ agentCardUrl: string; agentCard: Record<string, unknown> }> {
+    const url = new URL(baseUrl);
+    const agentCardUrl =
+      url.pathname.endsWith("/.well-known/agent-card.json") || url.pathname.endsWith("/agent-card.json")
+        ? url.toString()
+        : `${url.origin}/.well-known/agent-card.json`;
+    const response = await fetch(agentCardUrl, {
+      headers: {
+        accept: "application/json",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch agent card (${response.status})`);
+    }
+    const agentCard = (await response.json()) as Record<string, unknown>;
+    return { agentCardUrl, agentCard };
   }
 
   private async hasProjectServingCapacity(projectId: string, excludeAgentId?: string): Promise<boolean> {

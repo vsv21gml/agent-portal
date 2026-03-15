@@ -112,6 +112,14 @@ type PlaygroundMessage = {
   content: string;
 };
 
+type ExternalAgentCard = {
+  name?: string;
+  description?: string;
+  url?: string;
+  version?: string;
+  [key: string]: unknown;
+};
+
 type ProjectSection = "Info" | "Repo" | "Agent" | "Playground";
 
 const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "playground" }> = [
@@ -204,10 +212,16 @@ export default function ProjectDetailPage() {
   const [agentLogs, setAgentLogs] = useState("");
   const [loadingAgentLogs, setLoadingAgentLogs] = useState(false);
   const agentLogsViewportRef = useRef<HTMLDivElement | null>(null);
+  const [playgroundMode, setPlaygroundMode] = useState<"deployed" | "dev">("deployed");
   const [selectedPlaygroundAgentId, setSelectedPlaygroundAgentId] = useState<string | null>(null);
   const [playgroundInput, setPlaygroundInput] = useState("");
   const [playgroundMessages, setPlaygroundMessages] = useState<Record<string, PlaygroundMessage[]>>({});
   const [sendingPlaygroundMessage, setSendingPlaygroundMessage] = useState(false);
+  const [devA2AUrl, setDevA2AUrl] = useState("");
+  const [connectingDevAgent, setConnectingDevAgent] = useState(false);
+  const [devAgentCard, setDevAgentCard] = useState<ExternalAgentCard | null>(null);
+  const [devAgentCardUrl, setDevAgentCardUrl] = useState("");
+  const [devPlaygroundMessages, setDevPlaygroundMessages] = useState<PlaygroundMessage[]>([]);
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>("member");
@@ -443,14 +457,16 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     if (!runningAgents.length) {
-      setSelectedPlaygroundAgentId(null);
+      if (playgroundMode === "deployed") {
+        setSelectedPlaygroundAgentId(null);
+      }
       return;
     }
 
-    if (!selectedPlaygroundAgentId || !runningAgents.some((agent) => agent.id === selectedPlaygroundAgentId)) {
+    if (playgroundMode === "deployed" && (!selectedPlaygroundAgentId || !runningAgents.some((agent) => agent.id === selectedPlaygroundAgentId))) {
       setSelectedPlaygroundAgentId(runningAgents[0].id);
     }
-  }, [runningAgents, selectedPlaygroundAgentId]);
+  }, [playgroundMode, runningAgents, selectedPlaygroundAgentId]);
 
   const refreshWorkspace = async (workspaceId: string) => {
     const latest = await apiFetch<WorkspaceSession>(`workspaces/${workspaceId}`);
@@ -620,41 +636,88 @@ export default function ProjectDetailPage() {
   };
 
   const sendPlaygroundMessage = async () => {
-    if (!selectedPlaygroundAgent || !playgroundInput.trim()) {
+    if (!playgroundInput.trim()) {
       return;
     }
 
-    const agentId = selectedPlaygroundAgent.id;
     const userMessage: PlaygroundMessage = {
       id: `${Date.now()}-user`,
       role: "user",
       content: playgroundInput.trim(),
     };
-    setPlaygroundMessages((prev) => ({
-      ...prev,
-      [agentId]: [...(prev[agentId] ?? []), userMessage],
-    }));
+    if (playgroundMode === "dev") {
+      if (!devA2AUrl.trim() || !devAgentCard) {
+        toastError("Connect an A2A URL first.");
+        return;
+      }
+      setDevPlaygroundMessages((prev) => [...prev, userMessage]);
+    } else {
+      if (!selectedPlaygroundAgent) {
+        return;
+      }
+      const agentId = selectedPlaygroundAgent.id;
+      setPlaygroundMessages((prev) => ({
+        ...prev,
+        [agentId]: [...(prev[agentId] ?? []), userMessage],
+      }));
+    }
     setPlaygroundInput("");
     setSendingPlaygroundMessage(true);
 
     try {
-      const result = await apiFetch<{ reply: string; endpoint: string }>(`agents/${agentId}/chat`, {
-        method: "POST",
-        body: JSON.stringify({ message: userMessage.content }),
-      });
+      const result =
+        playgroundMode === "dev"
+          ? await apiFetch<{ reply: string; endpoint: string }>("agents/playground/chat", {
+              method: "POST",
+              body: JSON.stringify({ url: devA2AUrl.trim(), message: userMessage.content }),
+            })
+          : await apiFetch<{ reply: string; endpoint: string }>(`agents/${selectedPlaygroundAgent!.id}/chat`, {
+              method: "POST",
+              body: JSON.stringify({ message: userMessage.content }),
+            });
       const agentMessage: PlaygroundMessage = {
         id: `${Date.now()}-agent`,
         role: "agent",
         content: result.reply,
       };
-      setPlaygroundMessages((prev) => ({
-        ...prev,
-        [agentId]: [...(prev[agentId] ?? []), agentMessage],
-      }));
+      if (playgroundMode === "dev") {
+        setDevPlaygroundMessages((prev) => [...prev, agentMessage]);
+      } else {
+        const agentId = selectedPlaygroundAgent!.id;
+        setPlaygroundMessages((prev) => ({
+          ...prev,
+          [agentId]: [...(prev[agentId] ?? []), agentMessage],
+        }));
+      }
     } catch {
       toastError("Failed to chat with agent.");
     } finally {
       setSendingPlaygroundMessage(false);
+    }
+  };
+
+  const connectDevAgent = async () => {
+    if (!devA2AUrl.trim()) {
+      toastError("Enter an A2A URL.");
+      return;
+    }
+
+    setConnectingDevAgent(true);
+    try {
+      const result = await apiFetch<{ normalizedUrl: string; agentCardUrl: string; agentCard: ExternalAgentCard }>("agents/playground/inspect", {
+        method: "POST",
+        body: JSON.stringify({ url: devA2AUrl.trim() }),
+      });
+      setPlaygroundMode("dev");
+      setDevA2AUrl(result.normalizedUrl);
+      setDevAgentCardUrl(result.agentCardUrl);
+      setDevAgentCard(result.agentCard);
+      setDevPlaygroundMessages([]);
+      toastSuccess("A2A agent connected.");
+    } catch {
+      toastError("Failed to connect to the A2A URL.");
+    } finally {
+      setConnectingDevAgent(false);
     }
   };
 
@@ -1318,6 +1381,27 @@ export default function ProjectDetailPage() {
 
             <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md" style={{ alignItems: "stretch", flex: 1 }}>
               <Stack>
+                <Card
+                  withBorder
+                  radius="md"
+                  padding="lg"
+                  style={{
+                    cursor: "pointer",
+                    borderColor: playgroundMode === "dev" ? "var(--mantine-color-blue-6)" : undefined,
+                  }}
+                  onClick={() => setPlaygroundMode("dev")}
+                >
+                  <Stack gap={6}>
+                    <Group justify="space-between" align="center">
+                      <Text>Dev</Text>
+                      <Badge variant="light">A2A</Badge>
+                    </Group>
+                    <Text size="sm" c="dimmed">
+                      Connect any external A2A URL and validate the agent card.
+                    </Text>
+                  </Stack>
+                </Card>
+
                 {runningAgents.length ? (
                   runningAgents.map((agent) => (
                     <Card
@@ -1329,7 +1413,10 @@ export default function ProjectDetailPage() {
                         cursor: "pointer",
                         borderColor: selectedPlaygroundAgentId === agent.id ? "var(--mantine-color-blue-6)" : undefined,
                       }}
-                      onClick={() => setSelectedPlaygroundAgentId(agent.id)}
+                      onClick={() => {
+                        setPlaygroundMode("deployed");
+                        setSelectedPlaygroundAgentId(agent.id);
+                      }}
                     >
                       <Stack gap={6}>
                         <Group justify="space-between" align="center">
@@ -1339,7 +1426,7 @@ export default function ProjectDetailPage() {
                         <Text size="sm" c="dimmed">
                           {agent.description || "No description"}
                         </Text>
-                        <Text size="sm">{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Text>
+                        <Text size="sm">{agent.id}</Text>
                       </Stack>
                     </Card>
                   ))
@@ -1353,7 +1440,103 @@ export default function ProjectDetailPage() {
               </Stack>
 
               <Paper withBorder p="md" radius="md" style={{ gridColumn: "span 2", display: "flex", minHeight: 0, height: "100%" }}>
-                {selectedPlaygroundAgent ? (
+                {playgroundMode === "dev" ? (
+                  <Stack style={{ flex: 1 }}>
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Title order={4}>Dev A2A Test</Title>
+                        <Text size="sm" c="dimmed">
+                          Connect to an external A2A endpoint, inspect its agent card, and run a live chat test.
+                        </Text>
+                      </div>
+                      <Badge variant="light">A2A</Badge>
+                    </Group>
+
+                    <Group align="end">
+                      <TextInput
+                        label="A2A URL"
+                        placeholder="https://example.com"
+                        value={devA2AUrl}
+                        onChange={(event) => setDevA2AUrl(event.currentTarget.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <Button loading={connectingDevAgent} onClick={() => void connectDevAgent()}>
+                        Connect
+                      </Button>
+                    </Group>
+
+                    {devAgentCard ? (
+                      <Paper withBorder p="md" radius="md">
+                        <Stack gap={6}>
+                          <Text>{typeof devAgentCard.name === "string" && devAgentCard.name ? devAgentCard.name : "External Agent"}</Text>
+                          <Text size="sm" c="dimmed">
+                            {typeof devAgentCard.description === "string" && devAgentCard.description
+                              ? devAgentCard.description
+                              : "No description"}
+                          </Text>
+                          <Text size="sm">Agent Card: {devAgentCardUrl}</Text>
+                        </Stack>
+                      </Paper>
+                    ) : null}
+
+                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                      <Stack gap="sm">
+                        {devPlaygroundMessages.length ? (
+                          devPlaygroundMessages.map((message) => (
+                            <Paper
+                              key={message.id}
+                              p="sm"
+                              radius="md"
+                              withBorder
+                              style={{
+                                marginLeft: message.role === "user" ? "auto" : undefined,
+                                maxWidth: "85%",
+                                background: message.role === "user" ? "rgba(12, 74, 110, 0.08)" : undefined,
+                              }}
+                            >
+                              <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                                {message.role === "user"
+                                  ? "You"
+                                  : typeof devAgentCard?.name === "string" && devAgentCard.name
+                                    ? devAgentCard.name
+                                    : "Agent"}
+                              </Text>
+                              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                                {message.content}
+                              </Text>
+                            </Paper>
+                          ))
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            Connect an A2A URL and start a conversation.
+                          </Text>
+                        )}
+                      </Stack>
+                    </Paper>
+
+                    <Textarea
+                      label="Message"
+                      minRows={4}
+                      autosize
+                      maxRows={10}
+                      value={playgroundInput}
+                      onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.ctrlKey && event.key === "Enter") {
+                          event.preventDefault();
+                          void sendPlaygroundMessage();
+                        }
+                      }}
+                      placeholder="Ask this agent something..."
+                      description="Press Ctrl+Enter to send."
+                    />
+                    <Group justify="end">
+                      <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
+                        Send
+                      </Button>
+                    </Group>
+                  </Stack>
+                ) : selectedPlaygroundAgent ? (
                   <Stack style={{ flex: 1 }}>
                     <Group justify="space-between" align="center">
                       <div>
