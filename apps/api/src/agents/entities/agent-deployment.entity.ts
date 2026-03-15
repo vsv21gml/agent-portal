@@ -41,6 +41,9 @@ export class AgentDeploymentEntity {
   @Column({ default: "pending" })
   status!: string;
 
+  @Column({ default: "N" })
+  deleteYn!: string;
+
   @Column()
   namespace!: string;
 

@@ -95,6 +95,7 @@ export class AgentsService {
         imageUrl,
         endpointUrl,
         status: "building",
+        deleteYn: "N",
         namespace,
         buildJobName,
         deploymentName,
@@ -143,7 +144,7 @@ export class AgentsService {
   }
 
   async stopAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
-    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId });
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId, deleteYn: "N" });
     await this.deleteServingResources(agent);
     agent.status = "stopped";
     agent.lastMessage = "Agent stopped.";
@@ -160,7 +161,7 @@ export class AgentsService {
   }
 
   async restartAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
-    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId });
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId, deleteYn: "N" });
     await this.ensureProjectServingCapacity(agent.projectId, agent.id);
     if (agent.modelAccessRequestId) {
       const request = await this.modelAccessRequestRepository.findOne({ where: { id: agent.modelAccessRequestId } });
@@ -193,12 +194,12 @@ export class AgentsService {
   }
 
   async deleteAgent(agentId: string, userId: string): Promise<{ id: string }> {
-    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId });
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId, deleteYn: "N" });
     await this.deleteAgentResources(agent);
-    if (agent.modelAccessRequestId) {
-      await this.modelAccessRequestRepository.delete({ id: agent.modelAccessRequestId });
-    }
-    await this.agentRepository.delete({ id: agent.id, ownerUserId: userId });
+    agent.deleteYn = "Y";
+    agent.status = "deleted";
+    agent.lastMessage = "Agent deleted.";
+    await this.agentRepository.save(agent);
     await this.logsService.writeAuditLog({
       userId,
       actionKey: "AGENT_DELETED",
@@ -212,19 +213,19 @@ export class AgentsService {
 
   async listByProject(projectId: string, _userId: string): Promise<AgentDeploymentEntity[]> {
     const agents = await this.agentRepository.find({
-      where: { projectId },
+      where: { projectId, deleteYn: "N" },
       order: { createdAt: "DESC" },
     });
     return Promise.all(agents.map((agent) => this.refreshAgentStatus(agent)));
   }
 
   async getAgent(agentId: string, _userId: string): Promise<AgentDeploymentEntity> {
-    const agent = await this.agentRepository.findOneByOrFail({ id: agentId });
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, deleteYn: "N" });
     return this.refreshAgentStatus(agent);
   }
 
   async getAgentLogs(agentId: string, _userId: string): Promise<{ logs: string }> {
-    const agent = await this.agentRepository.findOneByOrFail({ id: agentId });
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, deleteYn: "N" });
     await this.refreshAgentStatus(agent);
 
     if (agent.status === "building" || agent.status === "failed" || agent.status === "pending_approval") {
@@ -290,7 +291,7 @@ export class AgentsService {
     message: string,
     contextId: string | null,
   ): Promise<{ reply: string; endpoint: string; contextId: string | null }> {
-    const agent = await this.agentRepository.findOneByOrFail({ id: agentId });
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, deleteYn: "N" });
     const refreshed = await this.refreshAgentStatus(agent);
     if (refreshed.status !== "running") {
       throw new Error("Agent is not running");
@@ -1153,7 +1154,7 @@ export class AgentsService {
   }
 
   private async countProjectServingAgents(projectId: string, excludeAgentId?: string): Promise<number> {
-    const agents = await this.agentRepository.find({ where: { projectId } });
+    const agents = await this.agentRepository.find({ where: { projectId, deleteYn: "N" } });
     return agents.filter((agent) => agent.id !== excludeAgentId && ["running", "deploying"].includes(agent.status)).length;
   }
 

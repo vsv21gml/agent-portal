@@ -189,6 +189,7 @@ export class AdminService {
   async getAgentResourceOverview(): Promise<AgentResourceOverview> {
     const configuredNamespace = this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving");
     const agents = await this.agentRepository.find({
+      where: { deleteYn: "N" },
       order: { createdAt: "DESC" },
     });
     const namespaces = Array.from(new Set(agents.map((agent) => agent.namespace).filter(Boolean)));

@@ -450,7 +450,7 @@ export class LlmService {
       this.modelAccessRequestRepository.find({ order: { createdAt: "DESC" } }),
       this.userRepository.find(),
       this.projectRepository.find(),
-      this.agentRepository.find(),
+        this.agentRepository.find({ where: { deleteYn: "N" } }),
     ]);
 
     const userMap = new Map(users.map((user) => [user.id, user]));
