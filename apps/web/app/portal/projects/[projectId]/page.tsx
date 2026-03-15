@@ -26,7 +26,7 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
-import { ComponentPropsWithoutRef, forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { ComponentPropsWithoutRef, Fragment, forwardRef, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "../../../../src/components/app-frame";
 import { ProfileMenu } from "../../../../src/components/profile-menu";
@@ -138,6 +138,134 @@ const runtimeOptions = [
 type SectionMenuButtonProps = ComponentPropsWithoutRef<typeof ActionIcon> & {
   label: string;
 };
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const segments = text.split(/(\*\*.*?\*\*)/g).filter(Boolean);
+  return segments.map((segment, index) => {
+    const match = /^\*\*(.*?)\*\*$/.exec(segment);
+    if (match) {
+      return <strong key={`${segment}-${index}`}>{match[1]}</strong>;
+    }
+    return <Fragment key={`${segment}-${index}`}>{segment}</Fragment>;
+  });
+}
+
+function renderMarkdownContent(content: string): ReactNode {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  let key = 0;
+
+  while (index < lines.length) {
+    const line = lines[index].trimEnd();
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (/^---+$/.test(trimmed)) {
+      blocks.push(<Divider key={`divider-${key++}`} my="xs" />);
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (headingMatch) {
+      const order = Math.min(6, headingMatch[1].length + 1) as 1 | 2 | 3 | 4 | 5 | 6;
+      blocks.push(
+        <Title key={`heading-${key++}`} order={order}>
+          {renderInlineMarkdown(headingMatch[2])}
+        </Title>,
+      );
+      index += 1;
+      continue;
+    }
+
+    const nextLine = lines[index + 1]?.trim() ?? "";
+    if (trimmed.includes("|") && /^\|?[\s:-|]+\|?$/.test(nextLine)) {
+      const headerCells = trimmed.split("|").map((cell) => cell.trim()).filter(Boolean);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length) {
+        const rowLine = lines[index].trim();
+        if (!rowLine || !rowLine.includes("|")) {
+          break;
+        }
+        rows.push(rowLine.split("|").map((cell) => cell.trim()).filter(Boolean));
+        index += 1;
+      }
+      blocks.push(
+        <Table key={`table-${key++}`} withTableBorder highlightOnHover>
+          <Table.Thead>
+            <Table.Tr>
+              {headerCells.map((cell, cellIndex) => (
+                <Table.Th key={`header-${cellIndex}`}>{renderInlineMarkdown(cell)}</Table.Th>
+              ))}
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {rows.map((row, rowIndex) => (
+              <Table.Tr key={`row-${rowIndex}`}>
+                {headerCells.map((_, cellIndex) => (
+                  <Table.Td key={`cell-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(row[cellIndex] ?? "")}</Table.Td>
+                ))}
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>,
+      );
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^[-*]\s+/, ""));
+        index += 1;
+      }
+      blocks.push(
+        <Stack key={`list-${key++}`} gap={4}>
+          {items.map((item, itemIndex) => (
+            <Text key={`item-${itemIndex}`} size="sm">
+              {"- "}
+              {renderInlineMarkdown(item)}
+            </Text>
+          ))}
+        </Stack>,
+      );
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (index < lines.length) {
+      const candidate = lines[index].trim();
+      const candidateNext = lines[index + 1]?.trim() ?? "";
+      if (!candidate) {
+        break;
+      }
+      if (/^(#{1,6})\s+/.test(candidate) || /^---+$/.test(candidate)) {
+        break;
+      }
+      if (/^[-*]\s+/.test(candidate)) {
+        break;
+      }
+      if (candidate.includes("|") && /^\|?[\s:-|]+\|?$/.test(candidateNext)) {
+        break;
+      }
+      paragraphLines.push(candidate);
+      index += 1;
+    }
+    blocks.push(
+      <Text key={`paragraph-${key++}`} size="sm" style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+        {renderInlineMarkdown(paragraphLines.join("\n"))}
+      </Text>,
+    );
+  }
+
+  return <Stack gap="sm">{blocks}</Stack>;
+}
 
 const SectionMenuButton = forwardRef<HTMLButtonElement, SectionMenuButtonProps>(function SectionMenuButton(
   { label, ...props },
@@ -1501,9 +1629,13 @@ export default function ProjectDetailPage() {
                                     ? devAgentCard.name
                                     : "Agent"}
                               </Text>
-                              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-                                {message.content}
-                              </Text>
+                              {message.role === "user" ? (
+                                <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                                  {message.content}
+                                </Text>
+                              ) : (
+                                renderMarkdownContent(message.content)
+                              )}
                             </Paper>
                           ))
                         ) : (
@@ -1566,9 +1698,13 @@ export default function ProjectDetailPage() {
                               <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
                                 {message.role === "user" ? "You" : selectedPlaygroundAgent.agentName}
                               </Text>
-                              <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
-                                {message.content}
-                              </Text>
+                              {message.role === "user" ? (
+                                <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                                  {message.content}
+                                </Text>
+                              ) : (
+                                renderMarkdownContent(message.content)
+                              )}
                             </Paper>
                           ))
                         ) : (
