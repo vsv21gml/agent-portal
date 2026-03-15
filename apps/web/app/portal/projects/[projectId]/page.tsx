@@ -112,13 +112,13 @@ type PlaygroundMessage = {
   content: string;
 };
 
-type ProjectSection = "Info" | "Repo" | "Agent" | "Play Ground";
+type ProjectSection = "Info" | "Repo" | "Agent" | "PlayGround";
 
 const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "playground" }> = [
   { label: "Info", slug: "info" },
   { label: "Repo", slug: "repo" },
   { label: "Agent", slug: "agent" },
-  { label: "Play Ground", slug: "playground" },
+  { label: "PlayGround", slug: "playground" },
 ];
 const runtimeOptions = [
   { value: "NODE22", label: "NODE22" },
@@ -154,7 +154,7 @@ function getSectionFromPathname(pathname: string): ProjectSection {
     return "Agent";
   }
   if (pathname.endsWith("/playground")) {
-    return "Play Ground";
+    return "PlayGround";
   }
   return "Info";
 }
@@ -399,7 +399,7 @@ export default function ProjectDetailPage() {
         await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject), loadCatalogModels(targetProjectId)]);
         return loadedProject;
       }
-      case "Play Ground": {
+      case "PlayGround": {
         const loadedProject = await loadProject(targetProjectId);
         await loadAgents(loadedProject);
         return loadedProject;
@@ -1297,13 +1297,13 @@ export default function ProjectDetailPage() {
           </Stack>
         ) : null}
 
-        {activeMenu === "Play Ground" ? (
+        {activeMenu === "PlayGround" ? (
           <Stack>
             <Paper withBorder p="md" radius="md">
               <Stack gap="xs">
                 <Group justify="space-between" align="center">
                   <div>
-                    <Title order={4}>Play Ground</Title>
+                    <Title order={4}>PlayGround</Title>
                     <Text size="sm" c="dimmed">
                       Chat with deployed agents through A2A.
                     </Text>

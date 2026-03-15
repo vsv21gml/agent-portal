@@ -221,39 +221,53 @@ export class AgentsService {
       throw new Error("Agent is not running");
     }
 
+    const externalBaseUrl = refreshed.endpointUrl.replace(/\/+$/, "");
+    const internalBaseUrl = `http://${refreshed.serviceName}.${refreshed.namespace}.svc.cluster.local:8080`;
     const endpointCandidates = [
-      `${refreshed.endpointUrl.replace(/\/+$/, "")}/a2a/message`,
-      `${refreshed.endpointUrl.replace(/\/+$/, "")}/a2a/chat`,
-      `${refreshed.endpointUrl.replace(/\/+$/, "")}/chat`,
+      `${internalBaseUrl}/a2a/message`,
+      `${internalBaseUrl}/a2a/chat`,
+      `${internalBaseUrl}/chat`,
+      `${externalBaseUrl}/a2a/message`,
+      `${externalBaseUrl}/a2a/chat`,
+      `${externalBaseUrl}/chat`,
+    ];
+    const payloadCandidates = [
+      { message, input: message },
+      { input: message },
+      { message },
+      { messages: [{ role: "user", content: message }] },
     ];
 
     for (const endpoint of endpointCandidates) {
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            message,
-            input: message,
-          }),
-        });
-        if (!response.ok) {
+      for (const payload of payloadCandidates) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            this.logger.warn(`Agent chat request failed endpoint=${endpoint} status=${response.status}`);
+            continue;
+          }
+
+          const contentType = response.headers.get("content-type") ?? "";
+          if (contentType.includes("application/json")) {
+            const payload = (await response.json()) as Record<string, unknown>;
+            const reply = this.extractAgentReply(payload);
+            return { reply, endpoint };
+          }
+
+          const reply = await response.text();
+          return { reply: reply.trim(), endpoint };
+        } catch (error) {
+          this.logger.warn(
+            `Agent chat request error endpoint=${endpoint}: ${error instanceof Error ? error.message : String(error)}`,
+          );
           continue;
         }
-
-        const contentType = response.headers.get("content-type") ?? "";
-        if (contentType.includes("application/json")) {
-          const payload = (await response.json()) as Record<string, unknown>;
-          const reply = this.extractAgentReply(payload);
-          return { reply, endpoint };
-        }
-
-        const reply = await response.text();
-        return { reply: reply.trim(), endpoint };
-      } catch {
-        continue;
       }
     }
 
