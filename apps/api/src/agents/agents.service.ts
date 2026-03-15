@@ -223,51 +223,79 @@ export class AgentsService {
 
     const externalBaseUrl = refreshed.endpointUrl.replace(/\/+$/, "");
     const internalBaseUrl = `http://${refreshed.serviceName}.${refreshed.namespace}.svc.cluster.local:8080`;
-    const endpointCandidates = [
-      `${internalBaseUrl}/a2a/message`,
-      `${internalBaseUrl}/a2a/chat`,
-      `${internalBaseUrl}/chat`,
-      `${externalBaseUrl}/a2a/message`,
-      `${externalBaseUrl}/a2a/chat`,
-      `${externalBaseUrl}/chat`,
-    ];
-    const payloadCandidates = [
-      { message, input: message },
-      { input: message },
-      { message },
-      { messages: [{ role: "user", content: message }] },
+    const endpointCandidates: Array<{ url: string; body: Record<string, unknown> }> = [
+      {
+        url: `${internalBaseUrl}/a2a/rest`,
+        body: {
+          message,
+          input: message,
+        },
+      },
+      {
+        url: `${internalBaseUrl}/a2a/jsonrpc`,
+        body: {
+          jsonrpc: "2.0",
+          id: crypto.randomUUID(),
+          method: "message/send",
+          params: {
+            message: {
+              role: "user",
+              parts: [{ type: "text", text: message }],
+            },
+          },
+        },
+      },
+      {
+        url: `${externalBaseUrl}/a2a/rest`,
+        body: {
+          message,
+          input: message,
+        },
+      },
+      {
+        url: `${externalBaseUrl}/a2a/jsonrpc`,
+        body: {
+          jsonrpc: "2.0",
+          id: crypto.randomUUID(),
+          method: "message/send",
+          params: {
+            message: {
+              role: "user",
+              parts: [{ type: "text", text: message }],
+            },
+          },
+        },
+      },
     ];
 
     for (const endpoint of endpointCandidates) {
-      for (const payload of payloadCandidates) {
-        try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-            },
-            body: JSON.stringify(payload),
-          });
-          if (!response.ok) {
-            this.logger.warn(`Agent chat request failed endpoint=${endpoint} status=${response.status}`);
-            continue;
-          }
-
-          const contentType = response.headers.get("content-type") ?? "";
-          if (contentType.includes("application/json")) {
-            const payload = (await response.json()) as Record<string, unknown>;
-            const reply = this.extractAgentReply(payload);
-            return { reply, endpoint };
-          }
-
-          const reply = await response.text();
-          return { reply: reply.trim(), endpoint };
-        } catch (error) {
-          this.logger.warn(
-            `Agent chat request error endpoint=${endpoint}: ${error instanceof Error ? error.message : String(error)}`,
-          );
+      try {
+        const response = await fetch(endpoint.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(endpoint.body),
+        });
+        if (!response.ok) {
+          this.logger.warn(`Agent chat request failed endpoint=${endpoint.url} status=${response.status}`);
           continue;
         }
+
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const payload = (await response.json()) as Record<string, unknown>;
+          const reply = this.extractAgentReply(payload);
+          return { reply, endpoint: endpoint.url };
+        }
+
+        const reply = await response.text();
+        return { reply: reply.trim(), endpoint: endpoint.url };
+      } catch (error) {
+        this.logger.warn(
+          `Agent chat request error endpoint=${endpoint.url}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
       }
     }
 
@@ -822,10 +850,17 @@ export class AgentsService {
       payload.message,
       payload.output,
       payload.content,
+      (payload.result as Record<string, unknown> | undefined)?.message,
+      (payload.result as Record<string, unknown> | undefined)?.output,
+      ((payload.result as Record<string, unknown> | undefined)?.message as Record<string, unknown> | undefined)?.content,
+      ((((payload.result as Record<string, unknown> | undefined)?.message as Record<string, unknown> | undefined)?.parts ??
+        []) as Array<Record<string, unknown>>)
+        .map((part) => (typeof part?.text === "string" ? part.text : ""))
+        .filter(Boolean)
+        .join("\n"),
       (payload.data as Record<string, unknown> | undefined)?.reply,
       (payload.data as Record<string, unknown> | undefined)?.message,
       (payload.result as Record<string, unknown> | undefined)?.reply,
-      (payload.result as Record<string, unknown> | undefined)?.message,
     ];
 
     for (const candidate of candidates) {

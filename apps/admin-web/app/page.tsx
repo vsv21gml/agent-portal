@@ -200,6 +200,16 @@ export default function AdminPage() {
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [modelRequests, setModelRequests] = useState<ModelAccessRequest[]>([]);
   const [activePage, setActivePage] = useState(1);
+  const [gitlabGroupPage, setGitlabGroupPage] = useState(1);
+  const [gitlabRepoPage, setGitlabRepoPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
+  const [accessPage, setAccessPage] = useState(1);
+  const [gitlabSearch, setGitlabSearch] = useState("");
+  const [auditSearch, setAuditSearch] = useState("");
+  const [accessSearch, setAccessSearch] = useState("");
+  const [auditMethodFilter, setAuditMethodFilter] = useState<string | null>("all");
+  const [accessMethodFilter, setAccessMethodFilter] = useState<string | null>("all");
+  const [accessStatusFilter, setAccessStatusFilter] = useState<string | null>("all");
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -335,6 +345,19 @@ export default function AdminPage() {
     setInviteDisplayName("");
     setInviteRole("user");
   }, [inviteOpen]);
+
+  useEffect(() => {
+    setGitlabGroupPage(1);
+    setGitlabRepoPage(1);
+  }, [gitlabSearch]);
+
+  useEffect(() => {
+    setAuditPage(1);
+  }, [auditMethodFilter, auditSearch]);
+
+  useEffect(() => {
+    setAccessPage(1);
+  }, [accessMethodFilter, accessSearch, accessStatusFilter]);
 
   const buildPortalInviteUrl = (token: string) => {
     if (typeof window === "undefined") {
@@ -481,6 +504,87 @@ export default function AdminPage() {
     const start = (activePage - 1) * PAGE_SIZE;
     return projects.slice(start, start + PAGE_SIZE);
   }, [activePage, projects]);
+  const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
+  const auditMethodOptions = useMemo(
+    () => [{ value: "all", label: "All methods" }, ...Array.from(new Set(auditLogs.map((log) => log.method))).map((method) => ({ value: method, label: method }))],
+    [auditLogs],
+  );
+  const accessMethodOptions = useMemo(
+    () => [{ value: "all", label: "All methods" }, ...Array.from(new Set(accessLogs.map((log) => log.method))).map((method) => ({ value: method, label: method }))],
+    [accessLogs],
+  );
+  const accessStatusOptions = useMemo(
+    () => [
+      { value: "all", label: "All status codes" },
+      ...Array.from(new Set(accessLogs.map((log) => String(log.statusCode ?? ""))).values())
+        .filter(Boolean)
+        .map((status) => ({ value: status, label: status })),
+    ],
+    [accessLogs],
+  );
+  const filteredGitlabGroups = useMemo(() => {
+    const query = gitlabSearch.trim().toLowerCase();
+    if (!query) {
+      return groups;
+    }
+    return groups.filter((group) => {
+      const projectName = projectNameById.get(group.projectId) ?? "";
+      return [group.groupPath, group.projectId, projectName].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [gitlabSearch, groups, projectNameById]);
+  const filteredGitlabRepos = useMemo(() => {
+    const query = gitlabSearch.trim().toLowerCase();
+    if (!query) {
+      return repos;
+    }
+    return repos.filter((repo) => {
+      const projectName = projectNameById.get(repo.projectId) ?? "";
+      return [repo.repoName, repo.namespacePath, repo.projectId, projectName].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [gitlabSearch, projectNameById, repos]);
+  const gitlabGroupPages = Math.max(1, Math.ceil(filteredGitlabGroups.length / PAGE_SIZE));
+  const pagedGitlabGroups = useMemo(() => {
+    const start = (gitlabGroupPage - 1) * PAGE_SIZE;
+    return filteredGitlabGroups.slice(start, start + PAGE_SIZE);
+  }, [filteredGitlabGroups, gitlabGroupPage]);
+  const gitlabRepoPages = Math.max(1, Math.ceil(filteredGitlabRepos.length / PAGE_SIZE));
+  const pagedGitlabRepos = useMemo(() => {
+    const start = (gitlabRepoPage - 1) * PAGE_SIZE;
+    return filteredGitlabRepos.slice(start, start + PAGE_SIZE);
+  }, [filteredGitlabRepos, gitlabRepoPage]);
+  const filteredAuditLogs = useMemo(() => {
+    const query = auditSearch.trim().toLowerCase();
+    return auditLogs.filter((log) => {
+      const matchesMethod = auditMethodFilter === "all" || log.method === auditMethodFilter;
+      const matchesQuery =
+        !query ||
+        [log.method, log.path, log.statusCode != null ? String(log.statusCode) : ""].some((value) => value.toLowerCase().includes(query));
+      return matchesMethod && matchesQuery;
+    });
+  }, [auditLogs, auditMethodFilter, auditSearch]);
+  const auditPages = Math.max(1, Math.ceil(filteredAuditLogs.length / PAGE_SIZE));
+  const pagedAuditLogs = useMemo(() => {
+    const start = (auditPage - 1) * PAGE_SIZE;
+    return filteredAuditLogs.slice(start, start + PAGE_SIZE);
+  }, [auditPage, filteredAuditLogs]);
+  const filteredAccessLogs = useMemo(() => {
+    const query = accessSearch.trim().toLowerCase();
+    return accessLogs.filter((log) => {
+      const matchesMethod = accessMethodFilter === "all" || log.method === accessMethodFilter;
+      const matchesStatus = accessStatusFilter === "all" || String(log.statusCode ?? "") === accessStatusFilter;
+      const matchesQuery =
+        !query ||
+        [log.method, log.path, log.statusCode != null ? String(log.statusCode) : "", log.elapsedMs != null ? String(log.elapsedMs) : ""].some((value) =>
+          value.toLowerCase().includes(query),
+        );
+      return matchesMethod && matchesStatus && matchesQuery;
+    });
+  }, [accessLogs, accessMethodFilter, accessSearch, accessStatusFilter]);
+  const accessPages = Math.max(1, Math.ceil(filteredAccessLogs.length / PAGE_SIZE));
+  const pagedAccessLogs = useMemo(() => {
+    const start = (accessPage - 1) * PAGE_SIZE;
+    return filteredAccessLogs.slice(start, start + PAGE_SIZE);
+  }, [accessPage, filteredAccessLogs]);
 
   const refreshCurrentPage = async () => {
     setRefreshing(true);
@@ -957,52 +1061,205 @@ export default function AdminPage() {
         ) : null}
 
         {activeSection === "gitlab" ? (
-          <Paper withBorder p="md">
-            <Title order={4}>GitLab Group Status</Title>
-            <Stack mt="sm">
-              {groups.map((group) => (
-                <Text size="sm" key={group.id}>
-                  {group.groupPath} (project: {group.projectId})
-                </Text>
-              ))}
-            </Stack>
-            <Title order={5} mt="md">
-              GitLab Repo Status
-            </Title>
-            <Stack mt="sm">
-              {repos.map((repo) => (
-                <Text size="sm" key={repo.id}>
-                  {repo.namespacePath}
-                </Text>
-              ))}
-            </Stack>
-          </Paper>
+          <Stack gap="md">
+            <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+                <TextInput
+                  label="Search"
+                  placeholder="Project, group, or repo"
+                  value={gitlabSearch}
+                  onChange={(event) => setGitlabSearch(event.currentTarget.value)}
+                />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>GitLab Groups</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Project</Table.Th>
+                      <Table.Th>Project ID</Table.Th>
+                      <Table.Th>Group Path</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedGitlabGroups.length ? (
+                      pagedGitlabGroups.map((group) => (
+                        <Table.Tr key={group.id}>
+                          <Table.Td>{projectNameById.get(group.projectId) ?? "-"}</Table.Td>
+                          <Table.Td>{group.projectId}</Table.Td>
+                          <Table.Td>{group.groupPath}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={3}>
+                          <Text size="sm" c="dimmed">
+                            No GitLab groups match the current filters.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={gitlabGroupPages} value={gitlabGroupPage} onChange={setGitlabGroupPage} />
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>GitLab Repositories</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Project</Table.Th>
+                      <Table.Th>Repo</Table.Th>
+                      <Table.Th>Namespace Path</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedGitlabRepos.length ? (
+                      pagedGitlabRepos.map((repo) => (
+                        <Table.Tr key={repo.id}>
+                          <Table.Td>{projectNameById.get(repo.projectId) ?? "-"}</Table.Td>
+                          <Table.Td>{repo.repoName}</Table.Td>
+                          <Table.Td>{repo.namespacePath}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={3}>
+                          <Text size="sm" c="dimmed">
+                            No GitLab repositories match the current filters.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={gitlabRepoPages} value={gitlabRepoPage} onChange={setGitlabRepoPage} />
+              </Group>
+            </Paper>
+          </Stack>
         ) : null}
 
         {activeSection === "audit" ? (
-          <Paper withBorder p="md">
-            <Title order={4}>Audit Logs</Title>
-            <Stack mt="sm">
-              {auditLogs.map((log) => (
-                <Text key={log.id} size="sm">
-                  [{new Date(log.createdAt).toLocaleString()}] {log.method} {log.path}
-                </Text>
-              ))}
-            </Stack>
-          </Paper>
+          <Stack gap="md">
+            <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+                <TextInput
+                  label="Search"
+                  placeholder="Method, path, or status code"
+                  value={auditSearch}
+                  onChange={(event) => setAuditSearch(event.currentTarget.value)}
+                />
+                <Select label="Method" data={auditMethodOptions} value={auditMethodFilter} onChange={setAuditMethodFilter} />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>Audit Logs</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Time</Table.Th>
+                      <Table.Th>Method</Table.Th>
+                      <Table.Th>Path</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedAuditLogs.length ? (
+                      pagedAuditLogs.map((log) => (
+                        <Table.Tr key={log.id}>
+                          <Table.Td>{new Date(log.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>{log.method}</Table.Td>
+                          <Table.Td>{log.path}</Table.Td>
+                          <Table.Td>{log.statusCode ?? "-"}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={4}>
+                          <Text size="sm" c="dimmed">
+                            No audit logs match the current filters.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={auditPages} value={auditPage} onChange={setAuditPage} />
+              </Group>
+            </Paper>
+          </Stack>
         ) : null}
 
         {activeSection === "access" ? (
-          <Paper withBorder p="md">
-            <Title order={4}>Access Logs</Title>
-            <Stack mt="sm">
-              {accessLogs.map((log) => (
-                <Text key={log.id} size="sm">
-                  [{new Date(log.createdAt).toLocaleString()}] {log.method} {log.path} ({log.statusCode} / {log.elapsedMs}ms)
-                </Text>
-              ))}
-            </Stack>
-          </Paper>
+          <Stack gap="md">
+            <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                <TextInput
+                  label="Search"
+                  placeholder="Method, path, status, or elapsed time"
+                  value={accessSearch}
+                  onChange={(event) => setAccessSearch(event.currentTarget.value)}
+                />
+                <Select label="Method" data={accessMethodOptions} value={accessMethodFilter} onChange={setAccessMethodFilter} />
+                <Select label="Status code" data={accessStatusOptions} value={accessStatusFilter} onChange={setAccessStatusFilter} />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>Access Logs</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Time</Table.Th>
+                      <Table.Th>Method</Table.Th>
+                      <Table.Th>Path</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Elapsed</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedAccessLogs.length ? (
+                      pagedAccessLogs.map((log) => (
+                        <Table.Tr key={log.id}>
+                          <Table.Td>{new Date(log.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>{log.method}</Table.Td>
+                          <Table.Td>{log.path}</Table.Td>
+                          <Table.Td>{log.statusCode ?? "-"}</Table.Td>
+                          <Table.Td>{log.elapsedMs != null ? `${log.elapsedMs} ms` : "-"}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={5}>
+                          <Text size="sm" c="dimmed">
+                            No access logs match the current filters.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={accessPages} value={accessPage} onChange={setAccessPage} />
+              </Group>
+            </Paper>
+          </Stack>
         ) : null}
       </Stack>
 
