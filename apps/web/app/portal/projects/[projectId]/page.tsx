@@ -52,22 +52,9 @@ type ProjectMember = {
   globalRole: string | null;
 };
 
-type ResourceLimit = {
-  cpu: number;
-  memoryGi: number;
-};
-
 type ProjectOverview = {
   project: Project;
   members: ProjectMember[];
-  resourceLimit: ResourceLimit;
-};
-
-type GitGroup = {
-  id: string;
-  projectId: string;
-  groupPath: string;
-  webUrl: string | null;
 };
 
 type GitRepo = {
@@ -144,8 +131,6 @@ export default function ProjectDetailPage() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [availableUsers, setAvailableUsers] = useState<PortalUser[]>([]);
-  const [resourceLimit, setResourceLimit] = useState<ResourceLimit | null>(null);
-  const [gitGroup, setGitGroup] = useState<GitGroup | null>(null);
   const [repos, setRepos] = useState<GitRepo[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceSession[]>([]);
   const [newRepoName, setNewRepoName] = useState("");
@@ -178,13 +163,20 @@ export default function ProjectDetailPage() {
 
   const managerCount = useMemo(() => members.filter((member) => member.role === "manager").length, [members]);
 
+  const runningWorkspaces = useMemo(
+    () => workspaces.filter((workspace) => workspace.status === "running"),
+    [workspaces],
+  );
+
+  const runningWorkspaceCpu = runningWorkspaces.length;
+  const runningWorkspaceMemoryGi = runningWorkspaces.length * 4;
+
   const loadMembersAndProject = async (targetProjectId: string) => {
     const overview = await apiFetch<ProjectOverview>(`projects/${targetProjectId}/overview`);
     setProject(overview.project);
     setEditName(overview.project.name);
     setEditDescription(overview.project.description);
     setMembers(overview.members);
-    setResourceLimit(overview.resourceLimit);
     return overview;
   };
 
@@ -196,12 +188,11 @@ export default function ProjectDetailPage() {
 
     setLoadingRepos(true);
     try {
-      const [groupRow, repoRows, workspaceRows] = await Promise.all([
-        apiFetch<GitGroup>(`gitlab/projects/${activeProject.id}/group`, { method: "POST" }),
+      const [, repoRows, workspaceRows] = await Promise.all([
+        apiFetch(`gitlab/projects/${activeProject.id}/group`, { method: "POST" }),
         apiFetch<GitRepo[]>(`gitlab/projects/${activeProject.id}/repos`),
         apiFetch<WorkspaceSession[]>(`workspaces/project/${activeProject.id}`),
       ]);
-      setGitGroup(groupRow);
       setRepos(repoRows);
       setWorkspaces(workspaceRows);
     } catch {
@@ -564,18 +555,26 @@ export default function ProjectDetailPage() {
                   </Card>
                   <Card withBorder radius="md" padding="lg">
                     <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                      Resource Limit
+                      Git / Repos
                     </Text>
                     <Text mt="sm" fw={600}>
-                      CPU {resourceLimit?.cpu ?? "-"} / MEM {resourceLimit?.memoryGi ?? "-"} Gi
+                      {repos.length} repos
                     </Text>
                   </Card>
                   <Card withBorder radius="md" padding="lg">
                     <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                      Git / Repos
+                      Running VS Code
                     </Text>
                     <Text mt="sm" fw={600}>
-                      {gitGroup?.groupPath ?? "Pending"} / {repos.length} repos
+                      {runningWorkspaces.length} sessions
+                    </Text>
+                  </Card>
+                  <Card withBorder radius="md" padding="lg">
+                    <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                      VS Code Usage
+                    </Text>
+                    <Text mt="sm" fw={600}>
+                      CPU {runningWorkspaceCpu} / MEM {runningWorkspaceMemoryGi} Gi
                     </Text>
                   </Card>
                 </SimpleGrid>

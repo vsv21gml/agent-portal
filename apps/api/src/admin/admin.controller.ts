@@ -13,12 +13,14 @@ import { SetDefaultModelDto } from "../llm/dto/set-default-model.dto";
 import { LlmService } from "../llm/llm.service";
 import { ProjectsService } from "../projects/projects.service";
 import { VectorDbService } from "../vectordb/vectordb.service";
+import { AdminService } from "./admin.service";
 
 @Controller("admin")
 @Roles(GlobalRole.ADMIN)
 @UseGuards(PermissionsGuard)
 export class AdminController {
   constructor(
+    private readonly adminService: AdminService,
     private readonly authService: AuthService,
     private readonly projectsService: ProjectsService,
     private readonly gitlabService: GitlabService,
@@ -50,6 +52,12 @@ export class AdminController {
     const limit = await this.projectsService.getResourceLimit(projectId);
     const usage = { usedCpu: 0, usedMemoryGi: 0 };
     return { limit, usage };
+  }
+
+  @Get("resources/workspaces")
+  @Permissions(Permission.READ_RESOURCE)
+  workspaceResources() {
+    return this.adminService.getWorkspaceResourceOverview();
   }
 
   @Get("gitlab/groups")

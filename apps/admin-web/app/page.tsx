@@ -8,8 +8,10 @@ import {
   LoadingOverlay,
   Paper,
   Pagination,
+  RingProgress,
   ScrollArea,
   Select,
+  SimpleGrid,
   Stack,
   Table,
   Tabs,
@@ -58,11 +60,36 @@ type LogRow = {
   createdAt: string;
 };
 
-type ResourceStatus = {
+type ResourceRow = {
+  sessionId: string;
   projectId: string;
   projectName: string;
-  limit: { cpu: number; memoryGi: number };
-  usage: { usedCpu: number; usedMemoryGi: number };
+  repoId: string;
+  repoName: string;
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+  status: string;
+  cpu: number;
+  memoryGi: number;
+  nodeName: string | null;
+  createdAt: string;
+};
+
+type ResourceOverview = {
+  nodePool: {
+    nodeCount: number;
+    totalCpu: number;
+    totalMemoryGi: number;
+  };
+  running: {
+    workspaceCount: number;
+    usedCpu: number;
+    usedMemoryGi: number;
+    cpuUsagePercent: number;
+    memoryUsagePercent: number;
+  };
+  rows: ResourceRow[];
 };
 
 type GitlabGroup = {
@@ -161,7 +188,7 @@ export default function AdminPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<LogRow[]>([]);
   const [accessLogs, setAccessLogs] = useState<LogRow[]>([]);
-  const [resourceRows, setResourceRows] = useState<ResourceStatus[]>([]);
+  const [resourceOverview, setResourceOverview] = useState<ResourceOverview | null>(null);
   const [groups, setGroups] = useState<GitlabGroup[]>([]);
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
   const [vectorKeys, setVectorKeys] = useState<VectorKey[]>([]);
@@ -211,21 +238,7 @@ export default function AdminPage() {
   };
 
   const loadResourceData = async () => {
-    const loadedProjects = projects.length ? projects : await loadProjectsData();
-    const statusResults = await Promise.allSettled(
-      loadedProjects.map(async (project) => {
-        const data = await apiFetch<{ limit: { cpu: number; memoryGi: number }; usage: { usedCpu: number; usedMemoryGi: number } }>(
-          `admin/projects/${project.id}/resource-status`,
-        );
-        return {
-          projectId: project.id,
-          projectName: project.name,
-          limit: data.limit,
-          usage: data.usage,
-        };
-      }),
-    );
-    setResourceRows(statusResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])));
+    setResourceOverview(await apiFetch<ResourceOverview>("admin/resources/workspaces"));
   };
 
   const loadGitlabData = async () => {
@@ -685,33 +698,136 @@ export default function AdminPage() {
         ) : null}
 
         {activeSection === "resources" ? (
-          <Paper withBorder p="md">
-            <Title order={4}>Workspace Resource Status</Title>
-            <ScrollArea mt="sm">
-              <Table withTableBorder highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Project</Table.Th>
-                    <Table.Th>CPU(used/limit)</Table.Th>
-                    <Table.Th>MEM Gi(used/limit)</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {resourceRows.map((resource) => (
-                    <Table.Tr key={resource.projectId}>
-                      <Table.Td>{resource.projectName}</Table.Td>
-                      <Table.Td>
-                        {resource.usage.usedCpu}/{resource.limit.cpu}
-                      </Table.Td>
-                      <Table.Td>
-                        {resource.usage.usedMemoryGi}/{resource.limit.memoryGi}
-                      </Table.Td>
+          <Stack gap="md">
+            <Paper withBorder p="md">
+              <Stack gap="md">
+                <Title order={4}>VS Code Resource Overview</Title>
+                <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                  <Paper withBorder p="md" radius="md">
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                          Workspace Nodes
+                        </Text>
+                        <Text mt="sm" fw={700} size="xl">
+                          {resourceOverview?.nodePool.nodeCount ?? 0}
+                        </Text>
+                      </div>
+                      <Badge variant="light">{resourceOverview?.running.workspaceCount ?? 0} running</Badge>
+                    </Group>
+                  </Paper>
+
+                  <Paper withBorder p="md" radius="md">
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                          Total Node CPU
+                        </Text>
+                        <Text mt="sm" fw={700} size="xl">
+                          {(resourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                        </Text>
+                      </div>
+                      <RingProgress
+                        size={88}
+                        thickness={10}
+                        sections={[{ value: resourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
+                        label={
+                          <Text ta="center" size="xs" fw={700}>
+                            {Math.round(resourceOverview?.running.cpuUsagePercent ?? 0)}%
+                          </Text>
+                        }
+                      />
+                    </Group>
+                    <Text size="sm" c="dimmed" mt="sm">
+                      Used {(resourceOverview?.running.usedCpu ?? 0).toFixed(1)} CPU
+                    </Text>
+                  </Paper>
+
+                  <Paper withBorder p="md" radius="md">
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                          Total Node MEM
+                        </Text>
+                        <Text mt="sm" fw={700} size="xl">
+                          {(resourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
+                        </Text>
+                      </div>
+                      <RingProgress
+                        size={88}
+                        thickness={10}
+                        sections={[{ value: resourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
+                        label={
+                          <Text ta="center" size="xs" fw={700}>
+                            {Math.round(resourceOverview?.running.memoryUsagePercent ?? 0)}%
+                          </Text>
+                        }
+                      />
+                    </Group>
+                    <Text size="sm" c="dimmed" mt="sm">
+                      Used {(resourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                    </Text>
+                  </Paper>
+
+                  <Paper withBorder p="md" radius="md">
+                    <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                      Running VS Code
+                    </Text>
+                    <Text mt="sm" fw={700} size="xl">
+                      {resourceOverview?.running.workspaceCount ?? 0}
+                    </Text>
+                    <Text size="sm" c="dimmed" mt="sm">
+                      CPU {(resourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(resourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                    </Text>
+                  </Paper>
+                </SimpleGrid>
+              </Stack>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>Running VS Code Workspaces</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Project</Table.Th>
+                      <Table.Th>Repo</Table.Th>
+                      <Table.Th>User</Table.Th>
+                      <Table.Th>Email</Table.Th>
+                      <Table.Th>CPU</Table.Th>
+                      <Table.Th>MEM Gi</Table.Th>
+                      <Table.Th>Node</Table.Th>
+                      <Table.Th>Started</Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          </Paper>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {resourceOverview?.rows.length ? (
+                      resourceOverview.rows.map((resource) => (
+                        <Table.Tr key={resource.sessionId}>
+                          <Table.Td>{resource.projectName}</Table.Td>
+                          <Table.Td>{resource.repoName}</Table.Td>
+                          <Table.Td>{resource.userDisplayName}</Table.Td>
+                          <Table.Td>{resource.userEmail || "-"}</Table.Td>
+                          <Table.Td>{resource.cpu}</Table.Td>
+                          <Table.Td>{resource.memoryGi}</Table.Td>
+                          <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
+                          <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={8}>
+                          <Text size="sm" c="dimmed">
+                            No running VS Code workspaces.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            </Paper>
+          </Stack>
         ) : null}
 
         {activeSection === "models" ? (
