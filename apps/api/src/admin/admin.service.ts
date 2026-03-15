@@ -6,6 +6,7 @@ import { Repository } from "typeorm";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
 import { UserEntity } from "../auth/entities/user.entity";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
+import { LlmService } from "../llm/llm.service";
 import { ProjectEntity } from "../projects/entities/project.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 
@@ -82,6 +83,24 @@ type AgentResourceOverview = {
   rows: AgentResourceRow[];
 };
 
+type AgentAdminRow = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  ownerUserId: string;
+  ownerUserEmail: string;
+  ownerUserDisplayName: string;
+  agentName: string;
+  description: string;
+  litellmModel: string;
+  status: string;
+  endpointUrl: string;
+  spendUsd: number;
+  createdAt: string;
+};
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -89,6 +108,7 @@ export class AdminService {
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly llmService: LlmService,
     @InjectRepository(WorkspaceSessionEntity)
     private readonly workspaceRepository: Repository<WorkspaceSessionEntity>,
     @InjectRepository(AgentDeploymentEntity)
@@ -255,6 +275,51 @@ export class AdminService {
       },
       rows,
     };
+  }
+
+  async listAgents(): Promise<AgentAdminRow[]> {
+    const agents = await this.agentRepository.find({
+      where: { deleteYn: "N" },
+      order: { createdAt: "DESC" },
+    });
+    const projectIds = [...new Set(agents.map((agent) => agent.projectId))];
+    const repoIds = [...new Set(agents.map((agent) => agent.repoId))];
+    const userIds = [...new Set(agents.map((agent) => agent.ownerUserId))];
+
+    const [projects, repos, users, spendRows] = await Promise.all([
+      projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
+      repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
+      userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
+      Promise.all(agents.map((agent) => this.llmService.getApiKeySpend(agent.litellmApiKey))),
+    ]);
+
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const repoMap = new Map(repos.map((repo) => [repo.id, repo]));
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    return agents.map((agent, index) => {
+      const project = projectMap.get(agent.projectId);
+      const repo = repoMap.get(agent.repoId);
+      const user = userMap.get(agent.ownerUserId);
+
+      return {
+        id: agent.id,
+        projectId: agent.projectId,
+        projectName: project?.name ?? agent.projectId,
+        repoId: agent.repoId,
+        repoName: repo?.repoName ?? agent.repoId,
+        ownerUserId: agent.ownerUserId,
+        ownerUserEmail: user?.email ?? "",
+        ownerUserDisplayName: user?.displayName ?? user?.email ?? agent.ownerUserId,
+        agentName: agent.agentName,
+        description: agent.description,
+        litellmModel: agent.litellmModel,
+        status: agent.status,
+        endpointUrl: agent.endpointUrl,
+        spendUsd: spendRows[index] ?? 0,
+        createdAt: agent.createdAt.toISOString(),
+      };
+    });
   }
 
   private async getWorkspacePodsByDeployment(namespace: string): Promise<Map<string, k8s.V1Pod>> {

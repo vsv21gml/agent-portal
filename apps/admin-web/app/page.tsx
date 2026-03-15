@@ -148,6 +148,24 @@ type AgentResourceOverview = {
   rows: AgentResourceRow[];
 };
 
+type AgentAdminRow = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  ownerUserId: string;
+  ownerUserEmail: string;
+  ownerUserDisplayName: string;
+  agentName: string;
+  description: string;
+  litellmModel: string;
+  status: string;
+  endpointUrl: string;
+  spendUsd: number;
+  createdAt: string;
+};
+
 type GitlabGroup = {
   id: string;
   projectId: string;
@@ -202,6 +220,7 @@ const sectionMeta: Record<AdminSection, { title: string; description: string }> 
   users: { title: "Users", description: "Manage portal users, invitations, and roles." },
   projects: { title: "Projects", description: "Review projects and open project-level administration actions." },
   resources: { title: "Resources", description: "Track workspace and agent resource usage across dedicated node pools." },
+  agents: { title: "Agents", description: "Review all deployed agents and their LiteLLM spend." },
   models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
   gitlab: { title: "GitLab", description: "Review GitLab groups and repositories mapped to portal projects." },
   audit: { title: "Audit", description: "Inspect keyed user actions performed through the portal." },
@@ -235,6 +254,9 @@ function getSectionFromPathname(pathname: string): AdminSection {
   if (pathname === "/resources") {
     return "resources";
   }
+  if (pathname === "/agents") {
+    return "agents";
+  }
   if (pathname === "/models") {
     return "models";
   }
@@ -257,6 +279,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [adminAgents, setAdminAgents] = useState<AgentAdminRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [accessLogs, setAccessLogs] = useState<AccessLogRow[]>([]);
   const [workspaceResourceOverview, setWorkspaceResourceOverview] = useState<WorkspaceResourceOverview | null>(null);
@@ -273,8 +296,12 @@ export default function AdminPage() {
   const [auditPage, setAuditPage] = useState(1);
   const [accessPage, setAccessPage] = useState(1);
   const [gitlabSearch, setGitlabSearch] = useState("");
+  const [agentSearch, setAgentSearch] = useState("");
+  const [agentStatusFilter, setAgentStatusFilter] = useState<string | null>("all");
+  const [agentProjectFilter, setAgentProjectFilter] = useState<string | null>("all");
   const [auditSearch, setAuditSearch] = useState("");
   const [accessSearch, setAccessSearch] = useState("");
+  const [agentPage, setAgentPage] = useState(1);
   const [auditActionFilter, setAuditActionFilter] = useState<string | null>("all");
   const [accessEventFilter, setAccessEventFilter] = useState<string | null>("all");
   const [accessStatusFilter, setAccessStatusFilter] = useState<string | null>("all");
@@ -318,6 +345,11 @@ export default function AdminPage() {
     const loadedProjects = await apiFetch<ProjectRow[]>("admin/projects");
     setProjects(loadedProjects);
     return loadedProjects;
+  };
+
+  const loadAgentsData = async () => {
+    const loadedAgents = await apiFetch<AgentAdminRow[]>("admin/agents");
+    setAdminAgents(loadedAgents);
   };
 
   const loadResourceData = async () => {
@@ -366,6 +398,9 @@ export default function AdminPage() {
         break;
       case "resources":
         await loadResourceData();
+        break;
+      case "agents":
+        await loadAgentsData();
         break;
       case "models":
         await loadModelData();
@@ -423,6 +458,10 @@ export default function AdminPage() {
     setGitlabGroupPage(1);
     setGitlabRepoPage(1);
   }, [gitlabSearch]);
+
+  useEffect(() => {
+    setAgentPage(1);
+  }, [agentProjectFilter, agentSearch, agentStatusFilter]);
 
   useEffect(() => {
     setAuditPage(1);
@@ -595,6 +634,49 @@ export default function AdminPage() {
     ],
     [accessLogs],
   );
+  const agentStatusOptions = useMemo(
+    () => [
+      { value: "all", label: "All statuses" },
+      ...Array.from(new Set(adminAgents.map((agent) => agent.status)))
+        .filter(Boolean)
+        .map((status) => ({ value: status, label: status })),
+    ],
+    [adminAgents],
+  );
+  const agentProjectOptions = useMemo(
+    () => [
+      { value: "all", label: "All projects" },
+      ...Array.from(new Map(adminAgents.map((agent) => [agent.projectId, agent.projectName])).entries()).map(
+        ([value, label]) => ({ value, label }),
+      ),
+    ],
+    [adminAgents],
+  );
+  const filteredAdminAgents = useMemo(() => {
+    const query = agentSearch.trim().toLowerCase();
+    return adminAgents.filter((agent) => {
+      const matchesQuery =
+        !query ||
+        [
+          agent.agentName,
+          agent.description,
+          agent.repoName,
+          agent.projectName,
+          agent.ownerUserDisplayName,
+          agent.ownerUserEmail,
+          agent.id,
+          agent.litellmModel,
+        ].some((value) => value.toLowerCase().includes(query));
+      const matchesStatus = agentStatusFilter === "all" || agent.status === agentStatusFilter;
+      const matchesProject = agentProjectFilter === "all" || agent.projectId === agentProjectFilter;
+      return matchesQuery && matchesStatus && matchesProject;
+    });
+  }, [adminAgents, agentProjectFilter, agentSearch, agentStatusFilter]);
+  const agentPages = Math.max(1, Math.ceil(filteredAdminAgents.length / PAGE_SIZE));
+  const pagedAdminAgents = useMemo(() => {
+    const start = (agentPage - 1) * PAGE_SIZE;
+    return filteredAdminAgents.slice(start, start + PAGE_SIZE);
+  }, [agentPage, filteredAdminAgents]);
   const filteredGitlabGroups = useMemo(() => {
     const query = gitlabSearch.trim().toLowerCase();
     if (!query) {
@@ -1236,6 +1318,74 @@ export default function AdminPage() {
                 </Stack>
               </Tabs.Panel>
             </Tabs>
+          </Stack>
+        ) : null}
+
+        {activeSection === "agents" ? (
+          <Stack gap="md">
+            <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                <TextInput
+                  label="Search"
+                  placeholder="Agent, repo, project, owner, or model"
+                  value={agentSearch}
+                  onChange={(event) => setAgentSearch(event.currentTarget.value)}
+                />
+                <Select label="Status" data={agentStatusOptions} value={agentStatusFilter} onChange={setAgentStatusFilter} />
+                <Select label="Project" data={agentProjectOptions} value={agentProjectFilter} onChange={setAgentProjectFilter} />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>All Agents</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Created</Table.Th>
+                      <Table.Th>Agent</Table.Th>
+                      <Table.Th>Description</Table.Th>
+                      <Table.Th>Project</Table.Th>
+                      <Table.Th>Repo</Table.Th>
+                      <Table.Th>Owner</Table.Th>
+                      <Table.Th>Model</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Spend USD</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedAdminAgents.length ? (
+                      pagedAdminAgents.map((agent) => (
+                        <Table.Tr key={agent.id}>
+                          <Table.Td>{new Date(agent.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>{agent.agentName}</Table.Td>
+                          <Table.Td>{agent.description || "-"}</Table.Td>
+                          <Table.Td>{agent.projectName}</Table.Td>
+                          <Table.Td>{agent.repoName}</Table.Td>
+                          <Table.Td>{agent.ownerUserDisplayName || agent.ownerUserEmail || "-"}</Table.Td>
+                          <Table.Td>{agent.litellmModel || "-"}</Table.Td>
+                          <Table.Td>
+                            <Badge variant="light">{agent.status}</Badge>
+                          </Table.Td>
+                          <Table.Td>${agent.spendUsd.toFixed(4)}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={9}>
+                          <Text size="sm" c="dimmed">
+                            No agents match the current filters.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={agentPages} value={agentPage} onChange={setAgentPage} />
+              </Group>
+            </Paper>
           </Stack>
         ) : null}
 

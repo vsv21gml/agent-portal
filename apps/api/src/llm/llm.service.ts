@@ -289,6 +289,16 @@ export class LlmService {
     };
   }
 
+  async getApiKeySpend(apiKey: string | null | undefined): Promise<number> {
+    const normalizedKey = apiKey?.trim() ?? "";
+    if (!normalizedKey) {
+      return 0;
+    }
+
+    const keyInfo = await this.fetchKeyInfo(normalizedKey);
+    return this.toNumber(keyInfo?.spend);
+  }
+
   async getCurrentUserAccess(ownerUserId: string, userEmail: string, displayName?: string) {
     const userKey = await this.ensureUserVirtualKey(ownerUserId, userEmail, displayName);
     const catalogModels = await this.listCatalogModels();

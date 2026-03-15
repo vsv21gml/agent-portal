@@ -40,6 +40,12 @@ export class AdminController {
     return this.projectsService.listAllProjects();
   }
 
+  @Get("agents")
+  @Permissions(Permission.READ_PROJECT)
+  agents() {
+    return this.adminService.listAgents();
+  }
+
   @Get("projects/:projectId/resource-limit")
   @Permissions(Permission.READ_RESOURCE)
   resourceLimit(@Param("projectId") projectId: string) {
