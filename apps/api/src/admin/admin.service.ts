@@ -286,7 +286,10 @@ export class AdminService {
       for (const pod of result.items) {
         const deploymentName = pod.metadata?.labels?.[labelKey];
         if (deploymentName) {
-          map.set(deploymentName, pod);
+          const existing = map.get(deploymentName);
+          if (!existing || this.comparePodPriority(pod, existing) > 0) {
+            map.set(deploymentName, pod);
+          }
         }
       }
       return map;
@@ -345,6 +348,32 @@ export class AdminService {
     const phase = pod.status?.phase ?? "";
     const containersReady = pod.status?.containerStatuses?.every((status) => status.ready) ?? false;
     return phase === "Running" && containersReady;
+  }
+
+  private comparePodPriority(candidate: k8s.V1Pod, current: k8s.V1Pod): number {
+    return this.getPodPriority(candidate) - this.getPodPriority(current);
+  }
+
+  private getPodPriority(pod: k8s.V1Pod): number {
+    const ownerKinds = (pod.metadata?.ownerReferences ?? []).map((owner) => owner.kind ?? "");
+    const labels = pod.metadata?.labels ?? {};
+    const phase = pod.status?.phase ?? "";
+    const containersReady = pod.status?.containerStatuses?.every((status) => status.ready) ?? false;
+
+    let score = 0;
+    if (ownerKinds.includes("ReplicaSet")) {
+      score += 40;
+    }
+    if (ownerKinds.includes("Job") || labels["job-name"]) {
+      score -= 40;
+    }
+    if (phase === "Running") {
+      score += 20;
+    }
+    if (containersReady) {
+      score += 10;
+    }
+    return score;
   }
 
   private getWorkspaceNodeSelector(): Record<string, string> {
