@@ -78,11 +78,18 @@ type ResourceRow = {
   createdAt: string;
 };
 
-type ResourceOverview = {
+type ResourceNodeRow = {
+  nodeName: string;
+  cpu: number;
+  memoryGi: number;
+};
+
+type WorkspaceResourceOverview = {
   nodePool: {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    nodes: ResourceNodeRow[];
   };
   running: {
     workspaceCount: number;
@@ -92,6 +99,40 @@ type ResourceOverview = {
     memoryUsagePercent: number;
   };
   rows: ResourceRow[];
+};
+
+type AgentResourceRow = {
+  agentId: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  agentName: string;
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+  status: string;
+  cpu: number;
+  memoryGi: number;
+  nodeName: string | null;
+  createdAt: string;
+};
+
+type AgentResourceOverview = {
+  nodePool: {
+    nodeCount: number;
+    totalCpu: number;
+    totalMemoryGi: number;
+    nodes: ResourceNodeRow[];
+  };
+  running: {
+    agentCount: number;
+    usedCpu: number;
+    usedMemoryGi: number;
+    cpuUsagePercent: number;
+    memoryUsagePercent: number;
+  };
+  rows: AgentResourceRow[];
 };
 
 type GitlabGroup = {
@@ -147,7 +188,7 @@ const PAGE_SIZE = 8;
 const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
   users: { title: "Users", description: "Manage portal users, invitations, and roles." },
   projects: { title: "Projects", description: "Review projects and open project-level administration actions." },
-  resources: { title: "Resources", description: "Track VS Code resource usage and workspace node capacity." },
+  resources: { title: "Resources", description: "Track workspace and agent resource usage across dedicated node pools." },
   models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
   gitlab: { title: "GitLab", description: "Review GitLab groups and repositories mapped to portal projects." },
   audit: { title: "Audit", description: "Inspect audit trail events for administrative and write actions." },
@@ -205,7 +246,9 @@ export default function AdminPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<LogRow[]>([]);
   const [accessLogs, setAccessLogs] = useState<LogRow[]>([]);
-  const [resourceOverview, setResourceOverview] = useState<ResourceOverview | null>(null);
+  const [workspaceResourceOverview, setWorkspaceResourceOverview] = useState<WorkspaceResourceOverview | null>(null);
+  const [agentResourceOverview, setAgentResourceOverview] = useState<AgentResourceOverview | null>(null);
+  const [resourceTab, setResourceTab] = useState<string | null>("workspace");
   const [groups, setGroups] = useState<GitlabGroup[]>([]);
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
   const [vectorKeys, setVectorKeys] = useState<VectorKey[]>([]);
@@ -265,7 +308,12 @@ export default function AdminPage() {
   };
 
   const loadResourceData = async () => {
-    setResourceOverview(await apiFetch<ResourceOverview>("admin/resources/workspaces"));
+    const [workspaceResult, agentResult] = await Promise.all([
+      apiFetch<WorkspaceResourceOverview>("admin/resources/workspaces"),
+      apiFetch<AgentResourceOverview>("admin/resources/agents"),
+    ]);
+    setWorkspaceResourceOverview(workspaceResult);
+    setAgentResourceOverview(agentResult);
   };
 
   const loadGitlabData = async () => {
@@ -827,136 +875,352 @@ export default function AdminPage() {
 
         {activeSection === "resources" ? (
           <Stack gap="md">
-            <Paper withBorder p="md">
-              <Stack gap="md">
-                <Title order={4}>VS Code Resource Overview</Title>
-                <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
-                  <Paper withBorder p="md" radius="md">
-                    <Group justify="space-between" align="center">
-                      <div>
-                        <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                          Workspace Nodes
-                        </Text>
-                        <Text mt="sm" fw={700} size="xl">
-                          {resourceOverview?.nodePool.nodeCount ?? 0}
-                        </Text>
-                      </div>
-                      <Badge variant="light">{resourceOverview?.running.workspaceCount ?? 0} running</Badge>
-                    </Group>
-                  </Paper>
+            <Tabs value={resourceTab} onChange={setResourceTab}>
+              <Tabs.List>
+                <Tabs.Tab value="workspace">Workspace</Tabs.Tab>
+                <Tabs.Tab value="agent">Agent</Tabs.Tab>
+              </Tabs.List>
 
-                  <Paper withBorder p="md" radius="md">
-                    <Group justify="space-between" align="center">
-                      <div>
-                        <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                          Node CPU Capacity
-                        </Text>
-                        <Text mt="sm" fw={700} size="xl">
-                          {Number.isInteger(resourceOverview?.nodePool.totalCpu ?? 0)
-                            ? (resourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
-                            : (resourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
-                        </Text>
-                      </div>
-                      <RingProgress
-                        size={88}
-                        thickness={10}
-                        sections={[{ value: resourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
-                        label={
-                          <Text ta="center" size="xs" fw={700}>
-                            {Math.round(resourceOverview?.running.cpuUsagePercent ?? 0)}%
+              <Tabs.Panel value="workspace" pt="md">
+                <Stack gap="md">
+                  <Paper withBorder p="md">
+                    <Stack gap="md">
+                      <Title order={4}>Workspace Resource Overview</Title>
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Workspace Nodes
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {workspaceResourceOverview?.nodePool.nodeCount ?? 0}
+                              </Text>
+                            </div>
+                            <Badge variant="light">{workspaceResourceOverview?.running.workspaceCount ?? 0} running</Badge>
+                          </Group>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Node CPU Capacity
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {Number.isInteger(workspaceResourceOverview?.nodePool.totalCpu ?? 0)
+                                  ? (workspaceResourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
+                                  : (workspaceResourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                              </Text>
+                            </div>
+                            <RingProgress
+                              size={88}
+                              thickness={10}
+                              sections={[{ value: workspaceResourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
+                              label={
+                                <Text ta="center" size="xs" fw={700}>
+                                  {Math.round(workspaceResourceOverview?.running.cpuUsagePercent ?? 0)}%
+                                </Text>
+                              }
+                            />
+                          </Group>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            Kubernetes reported capacity
                           </Text>
-                        }
-                      />
-                    </Group>
-                    <Text size="sm" c="dimmed" mt="sm">
-                      Kubernetes reported capacity
-                    </Text>
-                  </Paper>
+                        </Paper>
 
-                  <Paper withBorder p="md" radius="md">
-                    <Group justify="space-between" align="center">
-                      <div>
-                        <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                          Node MEM Capacity
-                        </Text>
-                        <Text mt="sm" fw={700} size="xl">
-                          {(resourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
-                        </Text>
-                      </div>
-                      <RingProgress
-                        size={88}
-                        thickness={10}
-                        sections={[{ value: resourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
-                        label={
-                          <Text ta="center" size="xs" fw={700}>
-                            {Math.round(resourceOverview?.running.memoryUsagePercent ?? 0)}%
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Node MEM Capacity
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {(workspaceResourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
+                              </Text>
+                            </div>
+                            <RingProgress
+                              size={88}
+                              thickness={10}
+                              sections={[{ value: workspaceResourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
+                              label={
+                                <Text ta="center" size="xs" fw={700}>
+                                  {Math.round(workspaceResourceOverview?.running.memoryUsagePercent ?? 0)}%
+                                </Text>
+                              }
+                            />
+                          </Group>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            Kubernetes reported capacity
                           </Text>
-                        }
-                      />
-                    </Group>
-                    <Text size="sm" c="dimmed" mt="sm">
-                      Kubernetes reported capacity
-                    </Text>
-                  </Paper>
+                        </Paper>
 
-                  <Paper withBorder p="md" radius="md">
-                    <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                      Running VS Code
-                    </Text>
-                    <Text mt="sm" fw={700} size="xl">
-                      {resourceOverview?.running.workspaceCount ?? 0}
-                    </Text>
-                    <Text size="sm" c="dimmed" mt="sm">
-                      CPU {(resourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(resourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
-                    </Text>
-                  </Paper>
-                </SimpleGrid>
-              </Stack>
-            </Paper>
-
-            <Paper withBorder p="md">
-              <Title order={4}>Running VS Code Workspaces</Title>
-              <ScrollArea mt="sm">
-                <Table withTableBorder highlightOnHover>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Project</Table.Th>
-                      <Table.Th>Repo</Table.Th>
-                      <Table.Th>User</Table.Th>
-                      <Table.Th>Email</Table.Th>
-                      <Table.Th>CPU</Table.Th>
-                      <Table.Th>MEM Gi</Table.Th>
-                      <Table.Th>Node</Table.Th>
-                      <Table.Th>Started</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {resourceOverview?.rows.length ? (
-                      resourceOverview.rows.map((resource) => (
-                        <Table.Tr key={resource.sessionId}>
-                          <Table.Td>{resource.projectName}</Table.Td>
-                          <Table.Td>{resource.repoName}</Table.Td>
-                          <Table.Td>{resource.userDisplayName}</Table.Td>
-                          <Table.Td>{resource.userEmail || "-"}</Table.Td>
-                          <Table.Td>{resource.cpu}</Table.Td>
-                          <Table.Td>{resource.memoryGi}</Table.Td>
-                          <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
-                          <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
-                        </Table.Tr>
-                      ))
-                    ) : (
-                      <Table.Tr>
-                        <Table.Td colSpan={8}>
-                          <Text size="sm" c="dimmed">
-                            No running VS Code workspaces.
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Running Workspace
                           </Text>
-                        </Table.Td>
-                      </Table.Tr>
-                    )}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            </Paper>
+                          <Text mt="sm" fw={700} size="xl">
+                            {workspaceResourceOverview?.running.workspaceCount ?? 0}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            CPU {(workspaceResourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(workspaceResourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                          </Text>
+                        </Paper>
+                      </SimpleGrid>
+                    </Stack>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Title order={4}>Running Workspace Sessions</Title>
+                    <ScrollArea mt="sm">
+                      <Table withTableBorder highlightOnHover>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Project</Table.Th>
+                            <Table.Th>Repo</Table.Th>
+                            <Table.Th>User</Table.Th>
+                            <Table.Th>Email</Table.Th>
+                            <Table.Th>CPU</Table.Th>
+                            <Table.Th>MEM Gi</Table.Th>
+                            <Table.Th>Node</Table.Th>
+                            <Table.Th>Started</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {workspaceResourceOverview?.rows.length ? (
+                            workspaceResourceOverview.rows.map((resource) => (
+                              <Table.Tr key={resource.sessionId}>
+                                <Table.Td>{resource.projectName}</Table.Td>
+                                <Table.Td>{resource.repoName}</Table.Td>
+                                <Table.Td>{resource.userDisplayName}</Table.Td>
+                                <Table.Td>{resource.userEmail || "-"}</Table.Td>
+                                <Table.Td>{resource.cpu}</Table.Td>
+                                <Table.Td>{resource.memoryGi}</Table.Td>
+                                <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
+                                <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                              </Table.Tr>
+                            ))
+                          ) : (
+                            <Table.Tr>
+                              <Table.Td colSpan={8}>
+                                <Text size="sm" c="dimmed">
+                                  No running workspace sessions.
+                                </Text>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Title order={4}>Workspace Node List</Title>
+                    <ScrollArea mt="sm">
+                      <Table withTableBorder highlightOnHover>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Node</Table.Th>
+                            <Table.Th>CPU</Table.Th>
+                            <Table.Th>MEM Gi</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {workspaceResourceOverview?.nodePool.nodes.length ? (
+                            workspaceResourceOverview.nodePool.nodes.map((node) => (
+                              <Table.Tr key={node.nodeName}>
+                                <Table.Td>{node.nodeName}</Table.Td>
+                                <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
+                                <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                              </Table.Tr>
+                            ))
+                          ) : (
+                            <Table.Tr>
+                              <Table.Td colSpan={3}>
+                                <Text size="sm" c="dimmed">
+                                  No workspace nodes matched the configured selector.
+                                </Text>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Paper>
+                </Stack>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="agent" pt="md">
+                <Stack gap="md">
+                  <Paper withBorder p="md">
+                    <Stack gap="md">
+                      <Title order={4}>Agent Resource Overview</Title>
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Agent Nodes
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {agentResourceOverview?.nodePool.nodeCount ?? 0}
+                              </Text>
+                            </div>
+                            <Badge variant="light">{agentResourceOverview?.running.agentCount ?? 0} running</Badge>
+                          </Group>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Node CPU Capacity
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {Number.isInteger(agentResourceOverview?.nodePool.totalCpu ?? 0)
+                                  ? (agentResourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
+                                  : (agentResourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                              </Text>
+                            </div>
+                            <RingProgress
+                              size={88}
+                              thickness={10}
+                              sections={[{ value: agentResourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
+                              label={
+                                <Text ta="center" size="xs" fw={700}>
+                                  {Math.round(agentResourceOverview?.running.cpuUsagePercent ?? 0)}%
+                                </Text>
+                              }
+                            />
+                          </Group>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            Kubernetes reported capacity
+                          </Text>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Node MEM Capacity
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {(agentResourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
+                              </Text>
+                            </div>
+                            <RingProgress
+                              size={88}
+                              thickness={10}
+                              sections={[{ value: agentResourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
+                              label={
+                                <Text ta="center" size="xs" fw={700}>
+                                  {Math.round(agentResourceOverview?.running.memoryUsagePercent ?? 0)}%
+                                </Text>
+                              }
+                            />
+                          </Group>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            Kubernetes reported capacity
+                          </Text>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Running Agent
+                          </Text>
+                          <Text mt="sm" fw={700} size="xl">
+                            {agentResourceOverview?.running.agentCount ?? 0}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            CPU {(agentResourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(agentResourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                          </Text>
+                        </Paper>
+                      </SimpleGrid>
+                    </Stack>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Title order={4}>Running Agents</Title>
+                    <ScrollArea mt="sm">
+                      <Table withTableBorder highlightOnHover>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Project</Table.Th>
+                            <Table.Th>Agent</Table.Th>
+                            <Table.Th>Repo</Table.Th>
+                            <Table.Th>User</Table.Th>
+                            <Table.Th>Email</Table.Th>
+                            <Table.Th>CPU</Table.Th>
+                            <Table.Th>MEM Gi</Table.Th>
+                            <Table.Th>Node</Table.Th>
+                            <Table.Th>Started</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {agentResourceOverview?.rows.length ? (
+                            agentResourceOverview.rows.map((resource) => (
+                              <Table.Tr key={resource.agentId}>
+                                <Table.Td>{resource.projectName}</Table.Td>
+                                <Table.Td>{resource.agentName}</Table.Td>
+                                <Table.Td>{resource.repoName}</Table.Td>
+                                <Table.Td>{resource.userDisplayName}</Table.Td>
+                                <Table.Td>{resource.userEmail || "-"}</Table.Td>
+                                <Table.Td>{resource.cpu.toFixed(1)}</Table.Td>
+                                <Table.Td>{resource.memoryGi.toFixed(1)}</Table.Td>
+                                <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
+                                <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                              </Table.Tr>
+                            ))
+                          ) : (
+                            <Table.Tr>
+                              <Table.Td colSpan={9}>
+                                <Text size="sm" c="dimmed">
+                                  No running agents.
+                                </Text>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Title order={4}>Agent Node List</Title>
+                    <ScrollArea mt="sm">
+                      <Table withTableBorder highlightOnHover>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Node</Table.Th>
+                            <Table.Th>CPU</Table.Th>
+                            <Table.Th>MEM Gi</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {agentResourceOverview?.nodePool.nodes.length ? (
+                            agentResourceOverview.nodePool.nodes.map((node) => (
+                              <Table.Tr key={node.nodeName}>
+                                <Table.Td>{node.nodeName}</Table.Td>
+                                <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
+                                <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                              </Table.Tr>
+                            ))
+                          ) : (
+                            <Table.Tr>
+                              <Table.Td colSpan={3}>
+                                <Text size="sm" c="dimmed">
+                                  No agent nodes matched the configured selector.
+                                </Text>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Paper>
+                </Stack>
+              </Tabs.Panel>
+            </Tabs>
           </Stack>
         ) : null}
 

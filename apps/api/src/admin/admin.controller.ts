@@ -60,6 +60,12 @@ export class AdminController {
     return this.adminService.getWorkspaceResourceOverview();
   }
 
+  @Get("resources/agents")
+  @Permissions(Permission.READ_RESOURCE)
+  agentResources() {
+    return this.adminService.getAgentResourceOverview();
+  }
+
   @Get("gitlab/groups")
   @Permissions(Permission.READ_GITLAB)
   groups() {
