@@ -19,6 +19,11 @@ export class AgentsService {
   private readonly kubeClientBatch: k8s.BatchV1Api | null;
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
+  private readonly insecureTlsDispatcher = new (require("undici").Agent as new (options: unknown) => unknown)({
+    connect: {
+      rejectUnauthorized: false,
+    },
+  });
 
   constructor(
     private readonly configService: ConfigService,
@@ -774,7 +779,11 @@ export class AgentsService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const response = await fetch(endpointUrl, { method: "GET", redirect: "manual", signal: controller.signal });
+      const response = await this.fetchWithOptionalInsecureTls(endpointUrl, {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal,
+      });
       return response.status < 500;
     } catch {
       return false;
@@ -859,7 +868,7 @@ export class AgentsService {
 
     for (const endpoint of endpointCandidates) {
       try {
-        const response = await fetch(endpoint.url, {
+        const response = await this.fetchWithOptionalInsecureTls(endpoint.url, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -890,6 +899,16 @@ export class AgentsService {
     throw new Error("Failed to reach agent A2A endpoint");
   }
 
+  private fetchWithOptionalInsecureTls(url: string, init?: RequestInit): Promise<Response> {
+    if (/^https:\/\//i.test(url)) {
+      return fetch(url, {
+        ...init,
+        dispatcher: this.insecureTlsDispatcher,
+      } as RequestInit & { dispatcher: unknown });
+    }
+    return fetch(url, init);
+  }
+
   private normalizeExternalAgentUrl(rawUrl: string): string {
     const trimmed = rawUrl.trim();
     if (!trimmed) {
@@ -903,20 +922,34 @@ export class AgentsService {
 
   private async fetchAgentCard(baseUrl: string): Promise<{ agentCardUrl: string; agentCard: Record<string, unknown> }> {
     const url = new URL(baseUrl);
-    const agentCardUrl =
+    const candidateUrls =
       url.pathname.endsWith("/.well-known/agent-card.json") || url.pathname.endsWith("/agent-card.json")
-        ? url.toString()
-        : `${url.origin}/.well-known/agent-card.json`;
-    const response = await fetch(agentCardUrl, {
-      headers: {
-        accept: "application/json",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch agent card (${response.status})`);
+        ? [url.toString()]
+        : [
+            new URL(`${url.pathname.replace(/\/+$/, "")}/.well-known/agent-card.json`, url.origin).toString(),
+            `${url.origin}/.well-known/agent-card.json`,
+          ];
+
+    let lastError: Error | null = null;
+    for (const agentCardUrl of candidateUrls) {
+      try {
+        const response = await this.fetchWithOptionalInsecureTls(agentCardUrl, {
+          headers: {
+            accept: "application/json",
+          },
+        });
+        if (!response.ok) {
+          lastError = new Error(`Failed to fetch agent card (${response.status})`);
+          continue;
+        }
+        const agentCard = (await response.json()) as Record<string, unknown>;
+        return { agentCardUrl, agentCard };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
     }
-    const agentCard = (await response.json()) as Record<string, unknown>;
-    return { agentCardUrl, agentCard };
+
+    throw lastError ?? new Error("Failed to fetch agent card");
   }
 
   private async hasProjectServingCapacity(projectId: string, excludeAgentId?: string): Promise<boolean> {
