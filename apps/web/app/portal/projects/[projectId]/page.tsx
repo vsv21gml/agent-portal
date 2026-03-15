@@ -136,6 +136,7 @@ export default function ProjectDetailPage() {
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [stoppingWorkspaceId, setStoppingWorkspaceId] = useState<string | null>(null);
   const [restartingWorkspaceId, setRestartingWorkspaceId] = useState<string | null>(null);
+  const [openingWorkspaceId, setOpeningWorkspaceId] = useState<string | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<WorkspaceSession | null>(null);
   const [updatingMembers, setUpdatingMembers] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
@@ -259,18 +260,23 @@ export default function ProjectDetailPage() {
   };
 
   const waitForWorkspaceAndOpen = async (workspaceId: string) => {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const latest = await refreshWorkspace(workspaceId);
-      if (latest.status === "running") {
-        window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
-        toastSuccess("VS Code workspace is ready.");
-        return;
+    setOpeningWorkspaceId(workspaceId);
+    try {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const latest = await refreshWorkspace(workspaceId);
+        if (latest.status === "running") {
+          window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
+          toastSuccess("VS Code workspace is ready.");
+          return;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      toastError("Workspace is still provisioning. Try opening it again shortly.");
+    } finally {
+      setOpeningWorkspaceId(null);
     }
-
-    toastError("Workspace is still provisioning. Try opening it again shortly.");
   };
 
   const createRepo = async () => {
@@ -743,11 +749,11 @@ export default function ProjectDetailPage() {
                                   size="xs"
                                   variant="default"
                                   disabled={!["running", "stopped"].includes(workspace.status)}
-                                  loading={restartingWorkspaceId === workspace.id}
+                                  loading={openingWorkspaceId === workspace.id || restartingWorkspaceId === workspace.id}
                                   onClick={() =>
                                     workspace.status === "stopped"
                                       ? void restartWorkspace(workspace)
-                                      : window.open(workspace.endpointUrl, "_blank", "noopener,noreferrer")
+                                      : void waitForWorkspaceAndOpen(workspace.id)
                                   }
                                 >
                                   {workspace.status === "stopped" ? "Restart" : "Open"}
