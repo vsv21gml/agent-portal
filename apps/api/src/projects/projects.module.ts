@@ -10,6 +10,7 @@ import { LiteLlmKeyEntity } from "../llm/entities/litellm-key.entity";
 import { LiteLlmModelEntity } from "../llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "../llm/entities/litellm-team.entity";
 import { LlmModule } from "../llm/llm.module";
+import { LogsModule } from "../logs/logs.module";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 import { VectorKeyEntity } from "../vectordb/entities/vector-key.entity";
 import { ProjectMemberEntity } from "./entities/project-member.entity";
@@ -38,6 +39,7 @@ import { ProjectsService } from "./projects.service";
     AuthModule,
     GitlabModule,
     LlmModule,
+    LogsModule,
   ],
   controllers: [ProjectsController],
   providers: [ProjectsService, ProjectManagerGuard],

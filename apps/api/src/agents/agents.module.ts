@@ -4,13 +4,14 @@ import { AuthModule } from "../auth/auth.module";
 import { GitlabModule } from "../gitlab/gitlab.module";
 import { LlmModule } from "../llm/llm.module";
 import { LiteLlmModelAccessRequestEntity } from "../llm/entities/litellm-model-access-request.entity";
+import { LogsModule } from "../logs/logs.module";
 import { ProjectsModule } from "../projects/projects.module";
 import { AgentsController } from "./agents.controller";
 import { AgentsService } from "./agents.service";
 import { AgentDeploymentEntity } from "./entities/agent-deployment.entity";
 
 @Module({
-  imports: [TypeOrmModule.forFeature([AgentDeploymentEntity, LiteLlmModelAccessRequestEntity]), ProjectsModule, GitlabModule, AuthModule, LlmModule],
+  imports: [TypeOrmModule.forFeature([AgentDeploymentEntity, LiteLlmModelAccessRequestEntity]), ProjectsModule, GitlabModule, AuthModule, LlmModule, LogsModule],
   controllers: [AgentsController],
   providers: [AgentsService],
   exports: [AgentsService, TypeOrmModule],
