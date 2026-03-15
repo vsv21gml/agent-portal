@@ -82,5 +82,6 @@ env:
   WORKSPACE_IMAGE_PYTHON38: "agent-portal-vscode-python38:latest"
   AGENT_GIT_IMAGE: "alpine/git:2.47.2"
   AGENT_VALIDATOR_IMAGE: "node:24-alpine"
+  AGENT_VALIDATOR_LLM_MODEL: "gpt-4.1-mini"
   KANIKO_EXECUTOR_IMAGE: "gcr.io/kaniko-project/executor:latest"
   AGENT_ECR_REPOSITORY: ""

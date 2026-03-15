@@ -74,6 +74,7 @@ export class AgentsService {
     const imageUrl = `${ecrRepository.replace(/\/+$/, "")}:${imageTag}`;
     const endpointUrl = this.buildAgentEndpointUrl(deploymentName);
     const agentKey = await this.llmService.ensureProjectVirtualKey(dto.projectId, userId, `agent-${id}`);
+    const userKey = user ? await this.llmService.ensureUserVirtualKey(userId, user.email, user.displayName) : null;
 
     const agent = await this.agentRepository.save(
       this.agentRepository.create({
@@ -121,6 +122,9 @@ export class AgentsService {
       gitUserEmail: user?.email || "agent@example.com",
       gitlabToken: this.configService.get<string>("GITLAB_TOKEN")?.trim() ?? "",
       liteLlmApiKey: agent.litellmApiKey ?? "",
+      validatorLiteLlmApiKey: userKey?.apiKey ?? "",
+      validatorLiteLlmBaseUrl: this.configService.get<string>("LITELLM_BASE_URL", ""),
+      validatorLiteLlmModel: this.configService.get<string>("AGENT_VALIDATOR_LLM_MODEL", "gpt-4.1-mini"),
     });
 
     return this.refreshAgentStatus(agent);
@@ -329,7 +333,15 @@ export class AgentsService {
   private async ensureBuildJob(
     agent: AgentDeploymentEntity,
     repo: GitlabRepoEntity,
-    options: { gitUserName: string; gitUserEmail: string; gitlabToken: string; liteLlmApiKey: string },
+    options: {
+      gitUserName: string;
+      gitUserEmail: string;
+      gitlabToken: string;
+      liteLlmApiKey: string;
+      validatorLiteLlmApiKey: string;
+      validatorLiteLlmBaseUrl: string;
+      validatorLiteLlmModel: string;
+    },
   ): Promise<void> {
     const repoCloneUrl = repo.cloneUrl ?? repo.webUrl?.concat(".git") ?? "";
     const dockerfilePath = this.normalizeDockerfilePath(agent.dockerfilePath);
@@ -343,14 +355,7 @@ export class AgentsService {
       "fi",
       "git clone \"$TARGET_URL\" /workspace/repo",
     ].join("\n");
-    const validateScript = [
-      "set -e",
-      `if [ ! -f "/workspace/repo/${dockerfilePath}" ]; then echo "Dockerfile not found"; exit 1; fi`,
-      "if ! grep -R -E -q \"LITELLM_API_KEY\" /workspace/repo; then echo \"LITELLM_API_KEY usage not found\"; exit 1; fi",
-      "if ! grep -R -E -q \"LITELLM_MODEL\" /workspace/repo; then echo \"LITELLM_MODEL usage not found\"; exit 1; fi",
-      "if ! grep -R -E -q \"A2A|a2a\" /workspace/repo; then echo \"A2A usage not found\"; exit 1; fi",
-      "echo \"Validation passed\"",
-    ].join("\n");
+    const validateScript = this.buildValidatorScript(agent, dockerfilePath);
 
     await this.kubeClientBatch!.createNamespacedJob({
       namespace: agent.namespace,
@@ -384,6 +389,14 @@ export class AgentsService {
                   name: "validate-source",
                   image: this.configService.get<string>("AGENT_VALIDATOR_IMAGE", "node:24-alpine"),
                   command: ["sh", "-c", validateScript],
+                  env: [
+                    { name: "VALIDATOR_LITELLM_API_KEY", value: options.validatorLiteLlmApiKey },
+                    { name: "VALIDATOR_LITELLM_BASE_URL", value: options.validatorLiteLlmBaseUrl },
+                    { name: "VALIDATOR_LITELLM_MODEL", value: options.validatorLiteLlmModel },
+                    { name: "DEPLOY_LITELLM_BASE_URL", value: this.configService.get<string>("LITELLM_BASE_URL", "") },
+                    { name: "DEPLOY_LITELLM_API_KEY", value: options.liteLlmApiKey },
+                    { name: "DEPLOY_LITELLM_MODEL", value: agent.litellmModel },
+                  ],
                   volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
                 },
               ],
@@ -412,6 +425,155 @@ export class AgentsService {
         },
       } as k8s.V1Job,
     });
+  }
+
+  private buildValidatorScript(agent: AgentDeploymentEntity, dockerfilePath: string): string {
+    const escapedDockerfilePath = dockerfilePath.replace(/"/g, '\\"');
+
+    return [
+      "set -e",
+      "if [ -z \"$VALIDATOR_LITELLM_API_KEY\" ]; then echo \"Validator LiteLLM key is missing\"; exit 1; fi",
+      "if [ -z \"$VALIDATOR_LITELLM_BASE_URL\" ]; then echo \"Validator LiteLLM base URL is missing\"; exit 1; fi",
+      `if [ ! -f "/workspace/repo/${escapedDockerfilePath}" ]; then echo "Dockerfile not found"; exit 1; fi`,
+      "mkdir -p /tmp/agent-validator",
+      "cd /tmp/agent-validator",
+      "npm init -y >/dev/null 2>&1",
+      "npm install --silent @langchain/openai >/dev/null 2>&1",
+      "cat <<'EOF' > /tmp/agent-validator/validate.js",
+      "const fs = require(\"fs\");",
+      "const path = require(\"path\");",
+      "const { ChatOpenAI } = require(\"@langchain/openai\");",
+      "",
+      "const repoRoot = \"/workspace/repo\";",
+      "const maxFiles = 120;",
+      "const maxSnippetLength = 1200;",
+      "const includeExt = new Set([\".ts\", \".tsx\", \".js\", \".jsx\", \".mjs\", \".cjs\", \".py\", \".go\", \".java\", \".kt\", \".rs\", \".json\", \".yaml\", \".yml\", \".sh\", \".md\", \".txt\"]);",
+      "const suspiciousPatterns = [",
+      "  /rm\\s+-rf\\s+\\//i,",
+      "  /curl[^\\n]+\\|\\s*(sh|bash)/i,",
+      "  /wget[^\\n]+\\|\\s*(sh|bash)/i,",
+      "  /child_process/i,",
+      "  /execSync\\s*\\(/i,",
+      "  /spawn\\s*\\(/i,",
+      "  /eval\\s*\\(/i,",
+      "  /new Function\\s*\\(/i,",
+      "  /subprocess\\.(Popen|run|call)/i,",
+      "  /os\\.system\\s*\\(/i",
+      "];",
+      "",
+      "function shouldSkip(name) {",
+      "  return [\".git\", \"node_modules\", \".next\", \"dist\", \"build\", \"coverage\", \".turbo\", \".venv\", \"venv\", \"__pycache__\"].includes(name);",
+      "}",
+      "",
+      "function walk(dir, acc = []) {",
+      "  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {",
+      "    if (shouldSkip(entry.name)) continue;",
+      "    const full = path.join(dir, entry.name);",
+      "    if (entry.isDirectory()) {",
+      "      walk(full, acc);",
+      "      continue;",
+      "    }",
+      "    if (!includeExt.has(path.extname(entry.name))) continue;",
+      "    acc.push(full);",
+      "    if (acc.length >= maxFiles) return acc;",
+      "  }",
+      "  return acc;",
+      "}",
+      "",
+      "function safeRead(filePath) {",
+      "  try {",
+      "    return fs.readFileSync(filePath, \"utf8\");",
+      "  } catch {",
+      "    return \"\";",
+      "  }",
+      "}",
+      "",
+      "const files = walk(repoRoot);",
+      "const a2aMatches = [];",
+      "const envMatches = { LITELLM_API_KEY: [], LITELLM_BASE_URL: [], LITELLM_MODEL: [] };",
+      "const suspiciousMatches = [];",
+      "const snippets = [];",
+      "",
+      "for (const filePath of files) {",
+      "  const content = safeRead(filePath);",
+      "  if (!content) continue;",
+      "  const rel = path.relative(repoRoot, filePath);",
+      "  if (/A2A|a2a/.test(content)) a2aMatches.push(rel);",
+      "  for (const key of Object.keys(envMatches)) {",
+      "    if (content.includes(key)) envMatches[key].push(rel);",
+      "  }",
+      "  for (const pattern of suspiciousPatterns) {",
+      "    const match = content.match(pattern);",
+      "    if (match) {",
+      "      suspiciousMatches.push({ file: rel, pattern: pattern.toString(), sample: match[0].slice(0, 200) });",
+      "    }",
+      "  }",
+      "  if ((/A2A|a2a/.test(content) || /LITELLM_API_KEY|LITELLM_BASE_URL|LITELLM_MODEL/.test(content)) && snippets.length < 18) {",
+      "    snippets.push({ file: rel, content: content.slice(0, maxSnippetLength) });",
+      "  }",
+      "}",
+      "",
+      "if (a2aMatches.length === 0) {",
+      "  console.error(\"A2A usage not found in repository\");",
+      "  process.exit(1);",
+      "}",
+      "for (const key of Object.keys(envMatches)) {",
+      "  if (envMatches[key].length === 0) {",
+      "    console.error(`${key} usage not found in repository`);",
+      "    process.exit(1);",
+      "  }",
+      "}",
+      "",
+      "const llm = new ChatOpenAI({",
+      "  model: process.env.VALIDATOR_LITELLM_MODEL || \"gpt-4.1-mini\",",
+      "  apiKey: process.env.VALIDATOR_LITELLM_API_KEY,",
+      "  configuration: { baseURL: `${String(process.env.VALIDATOR_LITELLM_BASE_URL || \"\").replace(/\\/+$/, \"\")}/v1` },",
+      "  temperature: 0,",
+      "});",
+      "",
+      "const prompt = [",
+      "  \"You are reviewing a repository before container build.\",",
+      "  \"Decide if it is safe and compatible for agent deployment.\",",
+      "  \"Validation requirements:\",",
+      "  \"1. The code must appear to implement an A2A-callable agent/service.\",",
+      "  \"2. The code must be structured to receive and use injected env vars LITELLM_BASE_URL, LITELLM_API_KEY, LITELLM_MODEL at runtime.\",",
+      "  \"3. Flag obviously malicious, destructive, or suspicious code paths.\",",
+      "  \"Return strict JSON only: {\\\"pass\\\":boolean,\\\"summary\\\":string,\\\"reasons\\\":string[],\\\"risks\\\":string[]}\",",
+      "  `Deployment env LITELLM_BASE_URL=${process.env.DEPLOY_LITELLM_BASE_URL || \"\"}`,",
+      "  `Deployment env LITELLM_MODEL=${process.env.DEPLOY_LITELLM_MODEL || \"\"}`,",
+      "  `A2A matches: ${JSON.stringify(a2aMatches)}`,",
+      "  `Env matches: ${JSON.stringify(envMatches)}`,",
+      "  `Suspicious matches: ${JSON.stringify(suspiciousMatches)}`,",
+      "  `Relevant snippets: ${JSON.stringify(snippets)}`",
+      "].join(\"\\n\");",
+      "",
+      "async function main() {",
+      "  const response = await llm.invoke(prompt);",
+      "  const text = typeof response.content === \"string\" ? response.content : JSON.stringify(response.content);",
+      "  const jsonText = text.slice(text.indexOf(\"{\"), text.lastIndexOf(\"}\") + 1);",
+      "  let parsed;",
+      "  try {",
+      "    parsed = JSON.parse(jsonText);",
+      "  } catch (error) {",
+      "    console.error(\"Validator returned invalid JSON:\", text);",
+      "    process.exit(1);",
+      "  }",
+      "  if (!parsed.pass) {",
+      "    console.error(parsed.summary || \"Validation failed\");",
+      "    for (const reason of parsed.reasons || []) console.error(`- ${reason}`);",
+      "    for (const risk of parsed.risks || []) console.error(`risk: ${risk}`);",
+      "    process.exit(1);",
+      "  }",
+      "  console.log(parsed.summary || \"Validation passed\");",
+      "}",
+      "",
+      "main().catch((error) => {",
+      "  console.error(error instanceof Error ? error.message : String(error));",
+      "  process.exit(1);",
+      "});",
+      "EOF",
+      "node /tmp/agent-validator/validate.js",
+    ].join("\n");
   }
 
   private async ensureServingResources(agent: AgentDeploymentEntity): Promise<void> {
