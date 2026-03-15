@@ -224,15 +224,16 @@ export class AgentsService {
     const externalBaseUrl = refreshed.endpointUrl.replace(/\/+$/, "");
     const internalBaseUrl = `http://${refreshed.serviceName}.${refreshed.namespace}.svc.cluster.local:8080`;
     const messageId = crypto.randomUUID();
+    const a2aMessage = {
+      messageId,
+      role: "user",
+      parts: [{ kind: "text", type: "text", text: message }],
+    };
     const endpointCandidates: Array<{ url: string; body: Record<string, unknown> }> = [
       {
         url: `${internalBaseUrl}/a2a/rest`,
         body: {
-          message: {
-            messageId,
-            role: "user",
-            parts: [{ type: "text", text: message }],
-          },
+          message: a2aMessage,
         },
       },
       {
@@ -242,22 +243,14 @@ export class AgentsService {
           id: crypto.randomUUID(),
           method: "message/send",
           params: {
-            message: {
-              messageId,
-              role: "user",
-              parts: [{ type: "text", text: message }],
-            },
+            message: a2aMessage,
           },
         },
       },
       {
         url: `${externalBaseUrl}/a2a/rest`,
         body: {
-          message: {
-            messageId,
-            role: "user",
-            parts: [{ type: "text", text: message }],
-          },
+          message: a2aMessage,
         },
       },
       {
@@ -267,10 +260,7 @@ export class AgentsService {
           id: crypto.randomUUID(),
           method: "message/send",
           params: {
-            message: {
-              role: "user",
-              parts: [{ type: "text", text: message }],
-            },
+            message: a2aMessage,
           },
         },
       },
@@ -858,6 +848,15 @@ export class AgentsService {
       payload.message,
       payload.output,
       payload.content,
+      (((payload.result as Record<string, unknown> | undefined)?.status as Record<string, unknown> | undefined)?.message as
+        | Record<string, unknown>
+        | undefined)?.content,
+      ((((payload.result as Record<string, unknown> | undefined)?.status as Record<string, unknown> | undefined)?.message as
+        | Record<string, unknown>
+        | undefined)?.parts as Array<Record<string, unknown>> | undefined)
+        ?.map((part) => (typeof part?.text === "string" ? part.text : ""))
+        .filter(Boolean)
+        .join("\n"),
       (payload.result as Record<string, unknown> | undefined)?.message,
       (payload.result as Record<string, unknown> | undefined)?.output,
       ((payload.result as Record<string, unknown> | undefined)?.message as Record<string, unknown> | undefined)?.content,
