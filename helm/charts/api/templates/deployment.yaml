@@ -38,3 +38,15 @@ spec:
               value: {{ .Values.workspaceScheduling.nodeSelector | toJson | quote }}
             - name: K8S_WORKSPACE_TOLERATIONS_JSON
               value: {{ .Values.workspaceScheduling.tolerations | toJson | quote }}
+            - name: AGENT_HOST_TEMPLATE
+              value: {{ .Values.agentIngress.hostTemplate | quote }}
+            - name: AGENT_PATH_TEMPLATE
+              value: {{ .Values.agentIngress.pathTemplate | quote }}
+            - name: AGENT_URL_SCHEME
+              value: {{ .Values.agentIngress.scheme | quote }}
+            - name: K8S_AGENT_INGRESS_ANNOTATIONS_JSON
+              value: {{ .Values.agentIngress.annotations | toJson | quote }}
+            - name: K8S_AGENT_NODE_SELECTOR_JSON
+              value: {{ .Values.agentScheduling.nodeSelector | toJson | quote }}
+            - name: K8S_AGENT_TOLERATIONS_JSON
+              value: {{ .Values.agentScheduling.tolerations | toJson | quote }}

@@ -27,6 +27,16 @@ workspaceScheduling:
   nodeSelector: {}
   tolerations: []
 
+agentIngress:
+  scheme: "http"
+  hostTemplate: ""
+  pathTemplate: "/"
+  annotations: {}
+
+agentScheduling:
+  nodeSelector: {}
+  tolerations: []
+
 env:
   AUTH_BYPASS: "false"
   INITIAL_ADMIN_EMAIL: "admin@samsung.com"
@@ -56,9 +66,15 @@ env:
   K8S_WORKSPACE_ENABLED: "false"
   K8S_WORKSPACE_NAMESPACE: "agent-workspaces"
   K8S_WORKSPACE_INGRESS_CLASS: "nginx"
+  K8S_AGENT_ENABLED: "true"
+  K8S_AGENT_NAMESPACE: "agent-serving"
+  K8S_AGENT_INGRESS_CLASS: "nginx"
   KUBECONFIG_PATH: ""
   WORKSPACE_HOST_SUFFIX: "127.0.0.1.nip.io"
   WORKSPACE_IMAGE_NODE22: "agent-portal-vscode-node22:latest"
   WORKSPACE_IMAGE_NODE23: "agent-portal-vscode-node23:latest"
   WORKSPACE_IMAGE_NODE24: "agent-portal-vscode-node24:latest"
   WORKSPACE_IMAGE_PYTHON38: "agent-portal-vscode-python38:latest"
+  AGENT_GIT_IMAGE: "alpine/git:2.47.2"
+  AGENT_VALIDATOR_IMAGE: "node:24-alpine"
+  KANIKO_EXECUTOR_IMAGE: "gcr.io/kaniko-project/executor:latest"

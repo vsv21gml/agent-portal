@@ -118,15 +118,40 @@ export class LlmService {
 
   async issueKey(projectId: string, ownerUserId: string, dto: IssueLlmKeyDto): Promise<LiteLlmKeyEntity> {
     const team = await this.teamRepository.findOneByOrFail({ projectId });
-    await this.issueRemoteKeyIfConfigured(team.teamName, dto.keyAlias);
+    const remoteKey = await this.issueRemoteKeyIfConfigured(team.teamName, dto.keyAlias);
     return this.keyRepository.save(
       this.keyRepository.create({
         projectId,
         teamId: team.id,
         ownerUserId,
         keyAlias: dto.keyAlias,
+        remoteKeyId: remoteKey?.token_id ?? null,
+        apiKey: remoteKey?.key ?? remoteKey?.token ?? null,
       }),
     );
+  }
+
+  async ensureProjectVirtualKey(projectId: string, ownerUserId: string, keyAlias: string): Promise<LiteLlmKeyEntity | null> {
+    const normalizedAlias = keyAlias.trim();
+    if (!normalizedAlias) {
+      return null;
+    }
+
+    const existing = await this.keyRepository.findOne({
+      where: { projectId, ownerUserId, keyAlias: normalizedAlias },
+      order: { createdAt: "DESC" },
+    });
+    if (existing?.apiKey) {
+      return existing;
+    }
+
+    const team = await this.ensureTeam(projectId);
+    const remoteKey = await this.issueRemoteKeyIfConfigured(team.teamName, normalizedAlias);
+    const row = existing ?? this.keyRepository.create({ projectId, teamId: team.id, ownerUserId, keyAlias: normalizedAlias });
+    row.teamId = team.id;
+    row.remoteKeyId = remoteKey?.token_id ?? row.remoteKeyId ?? null;
+    row.apiKey = remoteKey?.key ?? remoteKey?.token ?? row.apiKey ?? null;
+    return this.keyRepository.save(row);
   }
 
   listProjectKeys(projectId: string): Promise<LiteLlmKeyEntity[]> {
@@ -438,13 +463,13 @@ export class LlmService {
     });
   }
 
-  private async issueRemoteKeyIfConfigured(teamName: string, alias: string): Promise<void> {
+  private async issueRemoteKeyIfConfigured(teamName: string, alias: string): Promise<LiteLlmKeyResponse | null> {
     const baseUrl = this.getBaseUrl();
     const masterKey = this.getMasterKey();
     if (!baseUrl || !masterKey) {
-      return;
+      return null;
     }
-    await fetch(`${baseUrl}/key/generate`, {
+    const response = await fetch(`${baseUrl}/key/generate`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -452,6 +477,10 @@ export class LlmService {
       },
       body: JSON.stringify({ key_alias: alias, team_id: teamName }),
     });
+    if (!response.ok) {
+      throw new BadGatewayException(`Failed to issue LiteLLM key (${response.status})`);
+    }
+    return (await response.json()) as LiteLlmKeyResponse;
   }
 
   private async fetchRemoteModelsIfConfigured(teamName: string): Promise<string[]> {

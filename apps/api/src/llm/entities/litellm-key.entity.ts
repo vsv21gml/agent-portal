@@ -17,6 +17,12 @@ export class LiteLlmKeyEntity {
   @Column()
   keyAlias!: string;
 
+  @Column({ type: "varchar", nullable: true })
+  remoteKeyId!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  apiKey!: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }

@@ -3,6 +3,8 @@ import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { AdminModule } from "./admin/admin.module";
+import { AgentsModule } from "./agents/agents.module";
+import { AgentDeploymentEntity } from "./agents/entities/agent-deployment.entity";
 import { AppController } from "./app.controller";
 import { JwtAuthGuard } from "./auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "./auth/guards/permissions.guard";
@@ -69,6 +71,7 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
           VectorKeyEntity,
           AuditLogEntity,
           AccessLogEntity,
+          AgentDeploymentEntity,
         ],
       }),
     }),
@@ -80,6 +83,7 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
     LogsModule,
     AdminModule,
     VectorDbModule,
+    AgentsModule,
   ],
   controllers: [AppController],
   providers: [

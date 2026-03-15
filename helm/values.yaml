@@ -49,6 +49,14 @@ api:
   workspaceScheduling:
     nodeSelector: {}
     tolerations: []
+  agentIngress:
+    scheme: "http"
+    hostTemplate: ""
+    pathTemplate: "/"
+    annotations: {}
+  agentScheduling:
+    nodeSelector: {}
+    tolerations: []
   service:
     type: ClusterIP
     port: 4000
@@ -79,6 +87,12 @@ api:
     OPENSEARCH_ADMIN_PASSWORD: ""
     OPENSEARCH_INDEX_PREFIX: "project"
     KUBECONFIG_PATH: ""
+    K8S_AGENT_ENABLED: "true"
+    K8S_AGENT_NAMESPACE: "agent-serving"
+    K8S_AGENT_INGRESS_CLASS: "nginx"
+    AGENT_GIT_IMAGE: "alpine/git:2.47.2"
+    AGENT_VALIDATOR_IMAGE: "node:24-alpine"
+    KANIKO_EXECUTOR_IMAGE: "gcr.io/kaniko-project/executor:latest"
 
 gitlab:
   enabled: false

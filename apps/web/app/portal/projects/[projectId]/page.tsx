@@ -82,7 +82,21 @@ type WorkspaceModalState = {
   workspace?: WorkspaceSession;
 } | null;
 
-const menuItems = ["Info", "Repo"] as const;
+type AgentDeployment = {
+  id: string;
+  repoId: string;
+  agentName: string;
+  description: string;
+  dockerfilePath: string;
+  ecrRepository: string;
+  imageUrl: string;
+  endpointUrl: string;
+  status: string;
+  lastMessage: string | null;
+  createdAt: string;
+};
+
+const menuItems = ["Info", "Repo", "Agent"] as const;
 const runtimeOptions = [
   { value: "NODE22", label: "NODE22" },
   { value: "NODE23", label: "NODE23" },
@@ -136,6 +150,17 @@ export default function ProjectDetailPage() {
   const [newRepoName, setNewRepoName] = useState("");
   const [workspaceRuntime, setWorkspaceRuntime] = useState<string | null>("NODE22");
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
+  const [agents, setAgents] = useState<AgentDeployment[]>([]);
+  const [agentModalOpen, setAgentModalOpen] = useState(false);
+  const [agentName, setAgentName] = useState("");
+  const [agentDescription, setAgentDescription] = useState("");
+  const [agentRepoId, setAgentRepoId] = useState<string | null>(null);
+  const [agentDockerfilePath, setAgentDockerfilePath] = useState("./Dockerfile");
+  const [agentEcrRepository, setAgentEcrRepository] = useState("");
+  const [deployingAgent, setDeployingAgent] = useState(false);
+  const [logsTarget, setLogsTarget] = useState<AgentDeployment | null>(null);
+  const [agentLogs, setAgentLogs] = useState("");
+  const [loadingAgentLogs, setLoadingAgentLogs] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>("member");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -170,6 +195,10 @@ export default function ProjectDetailPage() {
 
   const runningWorkspaceCpu = runningWorkspaces.length;
   const runningWorkspaceMemoryGi = runningWorkspaces.length * 4;
+  const repoOptions = useMemo(
+    () => repos.map((repo) => ({ value: repo.id, label: repo.repoName })),
+    [repos],
+  );
 
   const loadMembersAndProject = async (targetProjectId: string) => {
     const overview = await apiFetch<ProjectOverview>(`projects/${targetProjectId}/overview`);
@@ -202,6 +231,20 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const loadAgents = async (targetProject?: Project | null) => {
+    const activeProject = targetProject ?? project;
+    if (!activeProject) {
+      return;
+    }
+
+    try {
+      const agentRows = await apiFetch<AgentDeployment[]>(`agents/project/${activeProject.id}`);
+      setAgents(agentRows);
+    } catch {
+      toastError("Failed to load agents.");
+    }
+  };
+
   const loadAvailableUsers = async (targetProjectId: string) => {
     try {
       const users = await apiFetch<PortalUser[]>(`projects/${targetProjectId}/available-users`);
@@ -218,6 +261,7 @@ export default function ProjectDetailPage() {
         setCurrentUser(me);
         const overview = await loadMembersAndProject(projectId);
         await loadRepos(overview.project);
+        await loadAgents(overview.project);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           router.replace(`/login?next=/portal/projects/${projectId}`);
@@ -292,6 +336,53 @@ export default function ProjectDetailPage() {
       toastError("Failed to create repository.");
     } finally {
       setCreatingRepo(false);
+    }
+  };
+
+  const deployAgent = async () => {
+    if (!project || !agentName.trim() || !agentRepoId || !agentEcrRepository.trim()) {
+      toastError("Fill in agent name, repo, and ECR repository.");
+      return;
+    }
+
+    setDeployingAgent(true);
+    try {
+      const created = await apiFetch<AgentDeployment>("agents", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: project.id,
+          repoId: agentRepoId,
+          agentName: agentName.trim(),
+          description: agentDescription.trim(),
+          dockerfilePath: agentDockerfilePath.trim() || "./Dockerfile",
+          ecrRepository: agentEcrRepository.trim(),
+        }),
+      });
+      setAgents((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
+      setAgentModalOpen(false);
+      setAgentName("");
+      setAgentDescription("");
+      setAgentRepoId(null);
+      setAgentDockerfilePath("./Dockerfile");
+      toastSuccess("Agent deployment requested.");
+    } catch {
+      toastError("Failed to deploy agent.");
+    } finally {
+      setDeployingAgent(false);
+    }
+  };
+
+  const loadAgentLogs = async (agent: AgentDeployment) => {
+    setLogsTarget(agent);
+    setLoadingAgentLogs(true);
+    try {
+      const result = await apiFetch<{ logs: string }>(`agents/${agent.id}/logs`);
+      setAgentLogs(result.logs);
+    } catch {
+      setAgentLogs("");
+      toastError("Failed to load agent logs.");
+    } finally {
+      setLoadingAgentLogs(false);
     }
   };
 
@@ -792,7 +883,129 @@ export default function ProjectDetailPage() {
           </Stack>
         ) : null}
 
+        {activeMenu === "Agent" ? (
+          <Stack>
+            <Paper withBorder p="md" radius="md">
+              <Group justify="space-between" align="center">
+                <div>
+                  <Title order={4}>Agents</Title>
+                  <Text size="sm" c="dimmed">
+                    Build, deploy, and inspect project agents.
+                  </Text>
+                </div>
+                <Group gap="sm">
+                  <Button variant="light" onClick={() => void loadAgents()}>
+                    Refresh
+                  </Button>
+                  <Button onClick={() => setAgentModalOpen(true)}>Deploy</Button>
+                </Group>
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md" radius="md">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Agent</Table.Th>
+                    <Table.Th>Repo</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Image</Table.Th>
+                    <Table.Th>Endpoint</Table.Th>
+                    <Table.Th>Message</Table.Th>
+                    <Table.Th />
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {agents.length ? (
+                    agents.map((agent) => (
+                      <Table.Tr key={agent.id}>
+                        <Table.Td>
+                          <Text fw={600}>{agent.agentName}</Text>
+                          <Text size="sm" c="dimmed">
+                            {agent.description || "-"}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Table.Td>
+                        <Table.Td>
+                          <Badge variant="light">{agent.status}</Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm">{agent.imageUrl}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          {agent.status === "running" ? (
+                            <Text component="a" href={agent.endpointUrl} target="_blank" rel="noreferrer" size="sm">
+                              {agent.endpointUrl}
+                            </Text>
+                          ) : (
+                            <Text size="sm" c="dimmed">
+                              {agent.endpointUrl}
+                            </Text>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm">{agent.lastMessage ?? "-"}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Button size="xs" variant="light" onClick={() => void loadAgentLogs(agent)}>
+                            Logs
+                          </Button>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))
+                  ) : (
+                    <Table.Tr>
+                      <Table.Td colSpan={7}>
+                        <Text size="sm" c="dimmed">
+                          No agents deployed yet.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          </Stack>
+        ) : null}
+
       </Stack>
+
+      <Modal opened={agentModalOpen} onClose={() => setAgentModalOpen(false)} title="Deploy Agent" centered>
+        <Stack>
+          <TextInput label="Agent Name" value={agentName} onChange={(event) => setAgentName(event.currentTarget.value)} />
+          <TextInput
+            label="Agent Description"
+            value={agentDescription}
+            onChange={(event) => setAgentDescription(event.currentTarget.value)}
+          />
+          <Select label="Repository" data={repoOptions} value={agentRepoId} onChange={setAgentRepoId} searchable />
+          <TextInput
+            label="Dockerfile Path"
+            value={agentDockerfilePath}
+            onChange={(event) => setAgentDockerfilePath(event.currentTarget.value)}
+          />
+          <TextInput
+            label="ECR Repository"
+            placeholder="7550...amazonaws.com/team/agent"
+            value={agentEcrRepository}
+            onChange={(event) => setAgentEcrRepository(event.currentTarget.value)}
+          />
+          <Button loading={deployingAgent} onClick={() => void deployAgent()}>
+            Deploy Agent
+          </Button>
+        </Stack>
+      </Modal>
+
+      <Modal opened={logsTarget !== null} onClose={() => setLogsTarget(null)} title={logsTarget ? `${logsTarget.agentName} logs` : "Agent logs"} size="xl" centered>
+        <Stack>
+          <Button variant="light" loading={loadingAgentLogs} onClick={() => (logsTarget ? void loadAgentLogs(logsTarget) : undefined)}>
+            Refresh Logs
+          </Button>
+          <Paper withBorder p="md" style={{ maxHeight: 480, overflow: "auto", whiteSpace: "pre-wrap" }}>
+            <Text size="sm">{agentLogs || "No logs yet."}</Text>
+          </Paper>
+        </Stack>
+      </Modal>
 
       <Modal
         opened={workspaceModal !== null}
