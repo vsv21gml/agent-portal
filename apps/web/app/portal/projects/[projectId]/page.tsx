@@ -1122,7 +1122,14 @@ export default function ProjectDetailPage() {
 
   return (
     <AppFrame title={breadcrumbs} headerActions={<ProfileMenu />} navbar={navbar} navbarWidth={280}>
-      <Stack pos="relative" style={{ minHeight: "calc(100dvh - 96px)" }}>
+      <Stack
+        pos="relative"
+        style={{
+          minHeight: "calc(100dvh - 96px)",
+          height: activeMenu === "Playground" ? "calc(100dvh - 96px)" : undefined,
+          overflow: activeMenu === "Playground" ? "hidden" : undefined,
+        }}
+      >
         <LoadingOverlay visible={authChecking || loadingProject} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
 
         {activeMenu === "Info" ? (
@@ -1545,7 +1552,7 @@ export default function ProjectDetailPage() {
         ) : null}
 
         {activeMenu === "Playground" ? (
-          <Stack style={{ flex: 1, minHeight: 0 }}>
+          <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <Paper withBorder p="md" radius="md">
               <Stack gap="xs">
                 <Group justify="space-between" align="center">
@@ -1562,8 +1569,12 @@ export default function ProjectDetailPage() {
               </Stack>
             </Paper>
 
-            <SimpleGrid cols={{ base: 1, xl: 3 }} spacing="md" style={{ alignItems: "stretch", flex: 1, minHeight: 0, overflow: "hidden" }}>
-              <Stack style={{ minHeight: 0, overflow: "hidden" }}>
+            <SimpleGrid
+              cols={{ base: 1, xl: 3 }}
+              spacing="md"
+              style={{ alignItems: "stretch", flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}
+            >
+              <Stack style={{ minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
                 <Card
                   withBorder
                   radius="md"
