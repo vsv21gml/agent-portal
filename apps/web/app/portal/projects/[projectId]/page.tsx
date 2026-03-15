@@ -25,7 +25,7 @@ import {
   Title,
 } from "@mantine/core";
 import { ComponentPropsWithoutRef, forwardRef, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "../../../../src/components/app-frame";
 import { ProfileMenu } from "../../../../src/components/profile-menu";
 import { ApiError, apiFetch } from "../../../../src/lib/api-client";
@@ -103,7 +103,14 @@ type PlaygroundMessage = {
   content: string;
 };
 
-const menuItems = ["Info", "Repo", "Agent", "Play Ground"] as const;
+type ProjectSection = "Info" | "Repo" | "Agent" | "Play Ground";
+
+const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "playground" }> = [
+  { label: "Info", slug: "info" },
+  { label: "Repo", slug: "repo" },
+  { label: "Agent", slug: "agent" },
+  { label: "Play Ground", slug: "playground" },
+];
 const runtimeOptions = [
   { value: "NODE22", label: "NODE22" },
   { value: "NODE23", label: "NODE23" },
@@ -130,14 +137,28 @@ const SectionMenuButton = forwardRef<HTMLButtonElement, SectionMenuButtonProps>(
   );
 });
 
+function getSectionFromPathname(pathname: string): ProjectSection {
+  if (pathname.endsWith("/repo")) {
+    return "Repo";
+  }
+  if (pathname.endsWith("/agent")) {
+    return "Agent";
+  }
+  if (pathname.endsWith("/playground")) {
+    return "Play Ground";
+  }
+  return "Info";
+}
+
 export default function ProjectDetailPage() {
   const params = useParams<{ projectId: string }>();
+  const pathname = usePathname();
   const router = useRouter();
   const projectId = params?.projectId ?? "";
+  const activeMenu = getSectionFromPathname(pathname);
 
   const [authChecking, setAuthChecking] = useState(true);
   const [loadingProject, setLoadingProject] = useState(true);
-  const [activeMenu, setActiveMenu] = useState<(typeof menuItems)[number]>("Info");
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
@@ -221,7 +242,15 @@ export default function ProjectDetailPage() {
     [playgroundMessages, selectedPlaygroundAgentId],
   );
 
-  const loadMembersAndProject = async (targetProjectId: string) => {
+  const loadProject = async (targetProjectId: string) => {
+    const loadedProject = await apiFetch<Project>(`projects/${targetProjectId}`);
+    setProject(loadedProject);
+    setEditName(loadedProject.name);
+    setEditDescription(loadedProject.description);
+    return loadedProject;
+  };
+
+  const loadInfoData = async (targetProjectId: string) => {
     const overview = await apiFetch<ProjectOverview>(`projects/${targetProjectId}/overview`);
     setProject(overview.project);
     setEditName(overview.project.name);
@@ -275,20 +304,44 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const loadSectionData = async (targetProjectId: string) => {
+    switch (activeMenu) {
+      case "Info": {
+        const overview = await loadInfoData(targetProjectId);
+        return overview.project;
+      }
+      case "Repo": {
+        const loadedProject = await loadProject(targetProjectId);
+        await loadRepos(loadedProject);
+        return loadedProject;
+      }
+      case "Agent": {
+        const loadedProject = await loadProject(targetProjectId);
+        await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject)]);
+        return loadedProject;
+      }
+      case "Play Ground": {
+        const loadedProject = await loadProject(targetProjectId);
+        await loadAgents(loadedProject);
+        return loadedProject;
+      }
+      default:
+        return loadProject(targetProjectId);
+    }
+  };
+
   useEffect(() => {
     const load = async () => {
       try {
         const me = await apiFetch<CurrentUser>("auth/me");
         setCurrentUser(me);
-        const overview = await loadMembersAndProject(projectId);
-        await loadRepos(overview.project);
-        await loadAgents(overview.project);
+        await loadSectionData(projectId);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          router.replace(`/login?next=/portal/projects/${projectId}`);
+          router.replace(`/login?next=${pathname}`);
           return;
         }
-        toastError("Failed to load project workspace.");
+        toastError("Failed to load project.");
       } finally {
         setAuthChecking(false);
         setLoadingProject(false);
@@ -298,16 +351,16 @@ export default function ProjectDetailPage() {
     if (projectId) {
       void load();
     }
-  }, [projectId, router]);
+  }, [activeMenu, pathname, projectId, router]);
 
   useEffect(() => {
-    if (projectId && isManager) {
+    if (activeMenu === "Info" && projectId && isManager) {
       void loadAvailableUsers(projectId);
       return;
     }
 
     setAvailableUsers([]);
-  }, [isManager, projectId]);
+  }, [activeMenu, isManager, projectId]);
 
   useEffect(() => {
     if (!runningAgents.length) {
@@ -394,6 +447,19 @@ export default function ProjectDetailPage() {
       toastError("Failed to load agent logs.");
     } finally {
       setLoadingAgentLogs(false);
+    }
+  };
+
+  const copyText = async (value: string, successMessage: string) => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        throw new Error("Clipboard unavailable");
+      }
+      toastSuccess(successMessage);
+    } catch {
+      toastError("Failed to copy.");
     }
   };
 
@@ -535,7 +601,7 @@ export default function ProjectDetailPage() {
       });
       setSelectedUserId(null);
       setSelectedRole("member");
-      await loadMembersAndProject(project.id);
+      await loadInfoData(project.id);
       await loadAvailableUsers(project.id);
       toastSuccess("Member added.");
     } catch {
@@ -556,7 +622,7 @@ export default function ProjectDetailPage() {
         method: "POST",
         body: JSON.stringify({ userId, role }),
       });
-      await loadMembersAndProject(project.id);
+      await loadInfoData(project.id);
       toastSuccess("Member role updated.");
     } catch {
       toastError("Failed to update member role.");
@@ -573,7 +639,7 @@ export default function ProjectDetailPage() {
     setUpdatingMembers(true);
     try {
       await apiFetch(`projects/${project.id}/members/${userId}`, { method: "DELETE" });
-      await loadMembersAndProject(project.id);
+      await loadInfoData(project.id);
       await loadAvailableUsers(project.id);
       toastSuccess("Member removed.");
     } catch {
@@ -630,14 +696,24 @@ export default function ProjectDetailPage() {
       <Text component={Link} href="/portal" inherit>
         User Portal
       </Text>
-      <Text inherit>{project?.name ?? "Project"}</Text>
+      <Text component={Link} href={`/portal/projects/${projectId}/info`} inherit>
+        {project?.name ?? "Project"}
+      </Text>
+      <Text inherit>{activeMenu}</Text>
     </Breadcrumbs>
   );
 
   const navbar = (
     <Stack gap="xs">
       {menuItems.map((item) => (
-        <NavLink key={item} active={activeMenu === item} label={item} onClick={() => setActiveMenu(item)} variant="filled" />
+        <NavLink
+          key={item.label}
+          component={Link}
+          href={item.slug ? `/portal/projects/${projectId}/${item.slug}` : `/portal/projects/${projectId}/info`}
+          active={activeMenu === item.label}
+          label={item.label}
+          variant="filled"
+        />
       ))}
     </Stack>
   );
@@ -955,12 +1031,12 @@ export default function ProjectDetailPage() {
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Agent</Table.Th>
+                    <Table.Th>Description</Table.Th>
                     <Table.Th>Repo</Table.Th>
                     <Table.Th>Status</Table.Th>
-                    <Table.Th>Image</Table.Th>
+                    <Table.Th>Created</Table.Th>
                     <Table.Th>Endpoint</Table.Th>
-                    <Table.Th>Message</Table.Th>
-                    <Table.Th />
+                    <Table.Th>Logs</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -969,30 +1045,17 @@ export default function ProjectDetailPage() {
                       <Table.Tr key={agent.id}>
                         <Table.Td>
                           <Text fw={600}>{agent.agentName}</Text>
-                          <Text size="sm" c="dimmed">
-                            {agent.description || "-"}
-                          </Text>
                         </Table.Td>
+                        <Table.Td>{agent.description || "-"}</Table.Td>
                         <Table.Td>{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Table.Td>
                         <Table.Td>
                           <Badge variant="light">{agent.status}</Badge>
                         </Table.Td>
+                        <Table.Td>{new Date(agent.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>
-                          <Text size="sm">{agent.imageUrl}</Text>
-                        </Table.Td>
-                        <Table.Td>
-                          {agent.status === "running" ? (
-                            <Text component="a" href={agent.endpointUrl} target="_blank" rel="noreferrer" size="sm">
-                              {agent.endpointUrl}
-                            </Text>
-                          ) : (
-                            <Text size="sm" c="dimmed">
-                              {agent.endpointUrl}
-                            </Text>
-                          )}
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">{agent.lastMessage ?? "-"}</Text>
+                          <Button size="xs" variant="light" onClick={() => void copyText(agent.endpointUrl, "Endpoint copied.")}>
+                            Copy
+                          </Button>
                         </Table.Td>
                         <Table.Td>
                           <Button size="xs" variant="light" onClick={() => void loadAgentLogs(agent)}>
