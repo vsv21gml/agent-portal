@@ -17,6 +17,8 @@ import { GitlabMemberSyncEntity } from "./gitlab/entities/gitlab-member-sync.ent
 import { GitlabRepoEntity } from "./gitlab/entities/gitlab-repo.entity";
 import { LlmModule } from "./llm/llm.module";
 import { LiteLlmKeyEntity } from "./llm/entities/litellm-key.entity";
+import { LiteLlmCatalogModelEntity } from "./llm/entities/litellm-catalog-model.entity";
+import { LiteLlmModelAccessRequestEntity } from "./llm/entities/litellm-model-access-request.entity";
 import { LiteLlmModelEntity } from "./llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./llm/entities/litellm-team.entity";
 import { LiteLlmUserKeyEntity } from "./llm/entities/litellm-user-key.entity";
@@ -61,6 +63,8 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
           LiteLlmTeamEntity,
           LiteLlmKeyEntity,
           LiteLlmModelEntity,
+          LiteLlmCatalogModelEntity,
+          LiteLlmModelAccessRequestEntity,
           LiteLlmUserKeyEntity,
           VectorKeyEntity,
           AuditLogEntity,

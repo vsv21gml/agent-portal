@@ -12,18 +12,19 @@ import {
   Select,
   Stack,
   Table,
+  Tabs,
   Text,
   TextInput,
-  Textarea,
   Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AdminFrame } from "../src/components/admin-frame";
 import { ProfileMenu } from "../src/components/profile-menu";
 import { ApiError, apiFetch } from "../src/lib/api-client";
 import { clearToken } from "../src/lib/auth";
+import { AdminSection, adminNavigation } from "../src/lib/admin-navigation";
 
 type UserRow = {
   id: string;
@@ -77,15 +78,6 @@ type GitlabRepo = {
   namespacePath: string;
 };
 
-type LlmKey = {
-  id: string;
-  projectId: string;
-  teamId: string;
-  ownerUserId: string;
-  keyAlias: string;
-  createdAt: string;
-};
-
 type VectorKey = {
   id: string;
   projectId: string;
@@ -95,6 +87,25 @@ type VectorKey = {
   remoteKeyId: string | null;
   createdAt: string;
   apiKey?: string | null;
+};
+
+type CatalogModel = {
+  id: string;
+  modelName: string;
+  isDefault: boolean;
+};
+
+type ModelAccessRequest = {
+  id: string;
+  ownerUserId: string;
+  userEmail: string;
+  userDisplayName: string;
+  modelName: string;
+  status: string;
+  reviewNote: string | null;
+  reviewerUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 const PAGE_SIZE = 8;
@@ -119,9 +130,32 @@ function fallbackCopyText(text: string): boolean {
   }
 }
 
+function getSectionFromPathname(pathname: string): AdminSection {
+  if (pathname === "/projects") {
+    return "projects";
+  }
+  if (pathname === "/resources") {
+    return "resources";
+  }
+  if (pathname === "/models") {
+    return "models";
+  }
+  if (pathname === "/gitlab") {
+    return "gitlab";
+  }
+  if (pathname === "/audit") {
+    return "audit";
+  }
+  if (pathname === "/access") {
+    return "access";
+  }
+  return "users";
+}
+
 export default function AdminPage() {
   const router = useRouter();
-  const [activeSection, setActiveSection] = useState("users");
+  const pathname = usePathname();
+  const activeSection = getSectionFromPathname(pathname);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -130,8 +164,9 @@ export default function AdminPage() {
   const [resourceRows, setResourceRows] = useState<ResourceStatus[]>([]);
   const [groups, setGroups] = useState<GitlabGroup[]>([]);
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
-  const [llmKeys, setLlmKeys] = useState<LlmKey[]>([]);
   const [vectorKeys, setVectorKeys] = useState<VectorKey[]>([]);
+  const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
+  const [modelRequests, setModelRequests] = useState<ModelAccessRequest[]>([]);
   const [activePage, setActivePage] = useState(1);
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -143,72 +178,120 @@ export default function AdminPage() {
   const [gitlabOpen, setGitlabOpen] = useState(false);
   const [gitlabRepoName, setGitlabRepoName] = useState("");
   const [gitlabError, setGitlabError] = useState<string | null>(null);
-  const [llmOpen, setLlmOpen] = useState(false);
-  const [llmAlias, setLlmAlias] = useState("");
-  const [llmError, setLlmError] = useState<string | null>(null);
   const [vectorOpen, setVectorOpen] = useState(false);
   const [vectorAlias, setVectorAlias] = useState("");
   const [vectorError, setVectorError] = useState<string | null>(null);
+  const [updatingDefaultModelName, setUpdatingDefaultModelName] = useState<string | null>(null);
+  const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const verifyAdmin = async () => {
+    const me = await apiFetch<{ role: string }>("auth/me");
+    if (me.role !== "admin") {
+      clearToken();
+      router.replace(`/login?next=${pathname}`);
+      throw new Error("Admin role required");
+    }
+  };
+
+  const loadUsersData = async () => {
+    const [usersResult, invitationsResult] = await Promise.all([
+      apiFetch<UserRow[]>("admin/users"),
+      apiFetch<InvitationRow[]>("auth/invitations"),
+    ]);
+    setUsers(usersResult);
+    setInvitations(invitationsResult);
+  };
+
+  const loadProjectsData = async () => {
+    const loadedProjects = await apiFetch<ProjectRow[]>("admin/projects");
+    setProjects(loadedProjects);
+    return loadedProjects;
+  };
+
+  const loadResourceData = async () => {
+    const loadedProjects = projects.length ? projects : await loadProjectsData();
+    const statusResults = await Promise.allSettled(
+      loadedProjects.map(async (project) => {
+        const data = await apiFetch<{ limit: { cpu: number; memoryGi: number }; usage: { usedCpu: number; usedMemoryGi: number } }>(
+          `admin/projects/${project.id}/resource-status`,
+        );
+        return {
+          projectId: project.id,
+          projectName: project.name,
+          limit: data.limit,
+          usage: data.usage,
+        };
+      }),
+    );
+    setResourceRows(statusResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])));
+  };
+
+  const loadGitlabData = async () => {
+    const loadedProjects = projects.length ? projects : await loadProjectsData();
+    const [groupsResult, repoResults] = await Promise.all([
+      apiFetch<GitlabGroup[]>("admin/gitlab/groups"),
+      Promise.allSettled(loadedProjects.map((project) => apiFetch<GitlabRepo[]>(`admin/projects/${project.id}/gitlab/repos`))),
+    ]);
+    setGroups(groupsResult);
+    setRepos(repoResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
+  };
+
+  const loadModelData = async () => {
+    const [catalogModelsResult, modelRequestsResult] = await Promise.all([
+      apiFetch<CatalogModel[]>("admin/llm/models"),
+      apiFetch<ModelAccessRequest[]>("admin/llm/model-requests"),
+    ]);
+    setCatalogModels(catalogModelsResult);
+    setModelRequests(modelRequestsResult);
+  };
+
+  const loadAuditData = async () => {
+    setAuditLogs(await apiFetch<LogRow[]>("admin/logs/audit"));
+  };
+
+  const loadAccessData = async () => {
+    setAccessLogs(await apiFetch<LogRow[]>("admin/logs/access"));
+  };
+
+  const loadSectionData = async () => {
+    switch (activeSection) {
+      case "users":
+        await loadUsersData();
+        break;
+      case "projects":
+        await loadProjectsData();
+        break;
+      case "resources":
+        await loadResourceData();
+        break;
+      case "models":
+        await loadModelData();
+        break;
+      case "gitlab":
+        await loadGitlabData();
+        break;
+      case "audit":
+        await loadAuditData();
+        break;
+      case "access":
+        await loadAccessData();
+        break;
+      default:
+        await loadUsersData();
+        break;
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
       try {
-        const me = await apiFetch<{ role: string }>("auth/me");
-        if (me.role !== "admin") {
-          clearToken();
-          router.replace("/login?next=/");
-          return;
-        }
-
-        const [usersResult, projectsResult, auditResult, accessResult, groupsResult, invitationsResult] = await Promise.allSettled([
-          apiFetch<UserRow[]>("admin/users"),
-          apiFetch<ProjectRow[]>("admin/projects"),
-          apiFetch<LogRow[]>("admin/logs/audit"),
-          apiFetch<LogRow[]>("admin/logs/access"),
-          apiFetch<GitlabGroup[]>("admin/gitlab/groups"),
-          apiFetch<InvitationRow[]>("auth/invitations"),
-        ]);
-
-        if (usersResult.status !== "fulfilled" || projectsResult.status !== "fulfilled") {
-          throw new Error("Failed to load admin core data");
-        }
-
-        const loadedUsers = usersResult.value;
-        const loadedProjects = projectsResult.value;
-        setUsers(loadedUsers);
-        setProjects(loadedProjects);
-        setAuditLogs(auditResult.status === "fulfilled" ? auditResult.value : []);
-        setAccessLogs(accessResult.status === "fulfilled" ? accessResult.value : []);
-        setGroups(groupsResult.status === "fulfilled" ? groupsResult.value : []);
-        setInvitations(invitationsResult.status === "fulfilled" ? invitationsResult.value : []);
-
-        const [statusResults, repoResults, llmResults, vectorResults] = await Promise.all([
-          Promise.allSettled(
-            loadedProjects.map(async (project) => {
-              const data = await apiFetch<{ limit: { cpu: number; memoryGi: number }; usage: { usedCpu: number; usedMemoryGi: number } }>(
-                `admin/projects/${project.id}/resource-status`,
-              );
-              return {
-                projectId: project.id,
-                projectName: project.name,
-                limit: data.limit,
-                usage: data.usage,
-              };
-            }),
-          ),
-          Promise.allSettled(loadedProjects.map((project) => apiFetch<GitlabRepo[]>(`admin/projects/${project.id}/gitlab/repos`))),
-          Promise.allSettled(loadedProjects.map((project) => apiFetch<LlmKey[]>(`llm/projects/${project.id}/keys`))),
-          Promise.allSettled(loadedProjects.map((project) => apiFetch<VectorKey[]>(`vectordb/projects/${project.id}/keys`))),
-        ]);
-
-        setResourceRows(statusResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])));
-        setRepos(repoResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
-        setLlmKeys(llmResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
-        setVectorKeys(vectorResults.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
+        await verifyAdmin();
+        await loadSectionData();
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          router.replace("/login?next=/");
+          router.replace(`/login?next=${pathname}`);
           return;
         }
         notifications.show({
@@ -223,7 +306,7 @@ export default function AdminPage() {
     };
 
     void load();
-  }, [router]);
+  }, [pathname, router]);
 
   useEffect(() => {
     if (!inviteOpen) {
@@ -278,30 +361,6 @@ export default function AdminPage() {
       notifications.show({ title: "Created", message: "GitLab repo created.", color: "teal" });
     } catch {
       notifications.show({ title: "Failed", message: "Failed to create GitLab repo.", color: "red" });
-    }
-  };
-
-  const issueLlmKey = async () => {
-    if (!detailProject) {
-      return;
-    }
-    if (!llmAlias.trim()) {
-      setLlmError("Key alias is required.");
-      return;
-    }
-    setLlmError(null);
-    try {
-      await apiFetch(`llm/projects/${detailProject.id}/team`, { method: "POST" });
-      const created = await apiFetch<LlmKey>(`llm/projects/${detailProject.id}/keys`, {
-        method: "POST",
-        body: JSON.stringify({ keyAlias: llmAlias.trim() }),
-      });
-      setLlmKeys((prev) => [created, ...prev]);
-      setLlmAlias("");
-      setLlmOpen(false);
-      notifications.show({ title: "Issued", message: "LiteLLM key issued.", color: "teal" });
-    } catch {
-      notifications.show({ title: "Failed", message: "Failed to issue LiteLLM key.", color: "red" });
     }
   };
 
@@ -405,21 +464,92 @@ export default function AdminPage() {
     return projects.slice(start, start + PAGE_SIZE);
   }, [activePage, projects]);
 
-  const navigation = [
-    { key: "users", label: "Users" },
-    { key: "projects", label: "Projects" },
-    { key: "resources", label: "Resources" },
-    { key: "gitlab", label: "GitLab" },
-    { key: "audit", label: "Audit" },
-    { key: "access", label: "Access" },
-  ];
+  const refreshCurrentPage = async () => {
+    setRefreshing(true);
+    try {
+      await verifyAdmin();
+      await loadSectionData();
+      notifications.show({
+        title: "Refreshed",
+        message: `${activeSection} data refreshed.`,
+        color: "teal",
+      });
+    } catch {
+      notifications.show({
+        title: "Failed",
+        message: "Failed to refresh data.",
+        color: "red",
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const toggleDefaultModel = async (model: CatalogModel) => {
+    setUpdatingDefaultModelName(model.modelName);
+    try {
+      const updated = await apiFetch<CatalogModel>(`admin/llm/models/${encodeURIComponent(model.modelName)}/default`, {
+        method: "PATCH",
+        body: JSON.stringify({ isDefault: !model.isDefault }),
+      });
+      setCatalogModels((prev) =>
+        prev
+          .map((item) => (item.id === updated.id ? updated : item))
+          .sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || left.modelName.localeCompare(right.modelName)),
+      );
+      notifications.show({
+        title: "Updated",
+        message: `${updated.modelName} default setting updated.`,
+        color: "teal",
+      });
+    } catch {
+      notifications.show({
+        title: "Failed",
+        message: "Failed to update default model.",
+        color: "red",
+      });
+    } finally {
+      setUpdatingDefaultModelName(null);
+    }
+  };
+
+  const reviewModelRequest = async (requestId: string, action: "approve" | "reject") => {
+    setReviewingRequestId(requestId);
+    try {
+      await apiFetch(`admin/llm/model-requests/${requestId}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      const refreshed = await apiFetch<ModelAccessRequest[]>("admin/llm/model-requests");
+      setModelRequests(refreshed);
+      notifications.show({
+        title: action === "approve" ? "Approved" : "Rejected",
+        message: `Model request ${action}d.`,
+        color: "teal",
+      });
+    } catch {
+      notifications.show({
+        title: "Failed",
+        message: `Failed to ${action} model request.`,
+        color: "red",
+      });
+    } finally {
+      setReviewingRequestId(null);
+    }
+  };
 
   return (
     <AdminFrame
-      headerActions={<ProfileMenu />}
-      navigation={navigation}
+      headerActions={
+        <Group gap="xs">
+          <Button variant="light" loading={refreshing} onClick={() => void refreshCurrentPage()}>
+            Refresh
+          </Button>
+          <ProfileMenu />
+        </Group>
+      }
+      navigation={adminNavigation}
       activeNav={activeSection}
-      onNavigate={setActiveSection}
     >
       <Stack pos="relative">
         <LoadingOverlay visible={authChecking} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
@@ -584,6 +714,119 @@ export default function AdminPage() {
           </Paper>
         ) : null}
 
+        {activeSection === "models" ? (
+          <Paper withBorder p="md">
+            <Stack gap="md">
+              <Title order={4}>Model Administration</Title>
+              <Tabs defaultValue="catalog">
+                <Tabs.List>
+                  <Tabs.Tab value="catalog">Catalog</Tabs.Tab>
+                  <Tabs.Tab value="requests">Requests</Tabs.Tab>
+                </Tabs.List>
+
+                <Tabs.Panel value="catalog" pt="md">
+                  <Table withTableBorder highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Model</Table.Th>
+                        <Table.Th>Default</Table.Th>
+                        <Table.Th>Action</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {catalogModels.length ? (
+                        catalogModels.map((model) => (
+                          <Table.Tr key={model.id}>
+                            <Table.Td>{model.modelName}</Table.Td>
+                            <Table.Td>{model.isDefault ? "Yes" : "No"}</Table.Td>
+                            <Table.Td>
+                              <Button
+                                size="xs"
+                                variant="light"
+                                loading={updatingDefaultModelName === model.modelName}
+                                onClick={() => void toggleDefaultModel(model)}
+                              >
+                                {model.isDefault ? "Unset Default" : "Set Default"}
+                              </Button>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))
+                      ) : (
+                        <Table.Tr>
+                          <Table.Td colSpan={3}>
+                            <Text size="sm" c="dimmed">
+                              No LiteLLM models found.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </Tabs.Panel>
+
+                <Tabs.Panel value="requests" pt="md">
+                  <Table withTableBorder highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>User</Table.Th>
+                        <Table.Th>Email</Table.Th>
+                        <Table.Th>Model</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                        <Table.Th>Requested</Table.Th>
+                        <Table.Th>Action</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {modelRequests.length ? (
+                        modelRequests.map((request) => (
+                          <Table.Tr key={request.id}>
+                            <Table.Td>{request.userDisplayName}</Table.Td>
+                            <Table.Td>{request.userEmail}</Table.Td>
+                            <Table.Td>{request.modelName}</Table.Td>
+                            <Table.Td>{request.status}</Table.Td>
+                            <Table.Td>{new Date(request.createdAt).toLocaleString()}</Table.Td>
+                            <Table.Td>
+                              <Group gap="xs">
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  disabled={request.status !== "pending"}
+                                  loading={reviewingRequestId === request.id}
+                                  onClick={() => void reviewModelRequest(request.id, "approve")}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  color="red"
+                                  variant="light"
+                                  disabled={request.status !== "pending"}
+                                  loading={reviewingRequestId === request.id}
+                                  onClick={() => void reviewModelRequest(request.id, "reject")}
+                                >
+                                  Reject
+                                </Button>
+                              </Group>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))
+                      ) : (
+                        <Table.Tr>
+                          <Table.Td colSpan={6}>
+                            <Text size="sm" c="dimmed">
+                              No model access requests yet.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </Tabs.Panel>
+              </Tabs>
+            </Stack>
+          </Paper>
+        ) : null}
+
         {activeSection === "gitlab" ? (
           <Paper withBorder p="md">
             <Title order={4}>GitLab Group Status</Title>
@@ -645,9 +888,6 @@ export default function AdminPage() {
               <Button size="xs" variant="light" onClick={() => setGitlabOpen(true)}>
                 New GitLab Repo
               </Button>
-              <Button size="xs" variant="light" onClick={() => setLlmOpen(true)}>
-                Issue LiteLLM Key
-              </Button>
               <Button size="xs" variant="light" onClick={() => setVectorOpen(true)}>
                 Issue VectorDB Key
               </Button>
@@ -699,24 +939,6 @@ export default function AdminPage() {
               Cancel
             </Button>
             <Button onClick={createGitlabRepo}>Create</Button>
-          </Group>
-        </Stack>
-      </Drawer>
-
-      <Drawer opened={llmOpen} onClose={() => setLlmOpen(false)} title="Issue LiteLLM Key" position="right">
-        <Stack>
-          <TextInput
-            label="Key Alias"
-            value={llmAlias}
-            onChange={(event) => setLlmAlias(event.currentTarget.value)}
-            error={llmError}
-            placeholder="team-key"
-          />
-          <Group justify="end">
-            <Button variant="default" onClick={() => setLlmOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={issueLlmKey}>Issue</Button>
           </Group>
         </Stack>
       </Drawer>

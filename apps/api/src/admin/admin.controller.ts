@@ -1,11 +1,15 @@
-import { Controller, Get, Param, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { JwtPayload } from "../auth/types/jwt-payload.type";
 import { AuthService } from "../auth/auth.service";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { GlobalRole } from "../common/enums/global-role.enum";
 import { Permission } from "../common/enums/permission.enum";
 import { GitlabService } from "../gitlab/gitlab.service";
+import { ReviewModelAccessRequestDto } from "../llm/dto/review-model-access-request.dto";
+import { SetDefaultModelDto } from "../llm/dto/set-default-model.dto";
 import { LlmService } from "../llm/llm.service";
 import { ProjectsService } from "../projects/projects.service";
 import { VectorDbService } from "../vectordb/vectordb.service";
@@ -70,6 +74,44 @@ export class AdminController {
   @Permissions(Permission.READ_LLM)
   models(@Param("projectId") projectId: string) {
     return this.llmService.listAvailableModels(projectId);
+  }
+
+  @Get("llm/models")
+  @Permissions(Permission.READ_LLM)
+  catalogModels() {
+    return this.llmService.listCatalogModels();
+  }
+
+  @Patch("llm/models/:modelName/default")
+  @Permissions(Permission.WRITE_LLM)
+  setDefaultModel(@Param("modelName") modelName: string, @Body() dto: SetDefaultModelDto) {
+    return this.llmService.setDefaultModel(decodeURIComponent(modelName), dto.isDefault);
+  }
+
+  @Get("llm/model-requests")
+  @Permissions(Permission.READ_LLM)
+  modelAccessRequests() {
+    return this.llmService.listModelAccessRequestsForAdmin();
+  }
+
+  @Post("llm/model-requests/:requestId/approve")
+  @Permissions(Permission.WRITE_LLM)
+  approveModelAccessRequest(
+    @Param("requestId") requestId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ReviewModelAccessRequestDto,
+  ) {
+    return this.llmService.approveModelAccessRequest(requestId, user.sub, dto);
+  }
+
+  @Post("llm/model-requests/:requestId/reject")
+  @Permissions(Permission.WRITE_LLM)
+  rejectModelAccessRequest(
+    @Param("requestId") requestId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ReviewModelAccessRequestDto,
+  ) {
+    return this.llmService.rejectModelAccessRequest(requestId, user.sub, dto);
   }
 
   @Get("projects/:projectId/vectordb/keys")

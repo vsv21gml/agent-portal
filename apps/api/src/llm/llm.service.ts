@@ -1,8 +1,16 @@
+import { BadGatewayException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { BadGatewayException, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
+import { UserEntity } from "../auth/entities/user.entity";
+import { CreateModelAccessRequestDto } from "./dto/create-model-access-request.dto";
 import { IssueLlmKeyDto } from "./dto/issue-llm-key.dto";
+import { ReviewModelAccessRequestDto } from "./dto/review-model-access-request.dto";
+import { LiteLlmCatalogModelEntity } from "./entities/litellm-catalog-model.entity";
+import {
+  LiteLlmModelAccessRequestEntity,
+  LiteLlmModelAccessRequestStatus,
+} from "./entities/litellm-model-access-request.entity";
 import { LiteLlmKeyEntity } from "./entities/litellm-key.entity";
 import { LiteLlmModelEntity } from "./entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./entities/litellm-team.entity";
@@ -38,12 +46,34 @@ type LiteLlmSpendLog = {
   completion_tokens?: number | null;
 };
 
+type LiteLlmRemoteModelsResponse = {
+  data?: Array<{
+    id?: string | null;
+    model_name?: string | null;
+  }>;
+};
+
+type ModelAccessRequestView = {
+  id: string;
+  ownerUserId: string;
+  userEmail: string;
+  userDisplayName: string;
+  modelName: string;
+  status: LiteLlmModelAccessRequestStatus;
+  reviewNote: string | null;
+  reviewerUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 @Injectable()
 export class LlmService {
   private static readonly TEAM_MAX_BUDGET_USD = 200;
   private static readonly TEAM_BUDGET_DURATION = "30d";
   private static readonly USER_MAX_BUDGET_USD = 100;
   private static readonly USER_BUDGET_DURATION = "1mo";
+
+  private readonly logger = new Logger(LlmService.name);
 
   constructor(
     private readonly configService: ConfigService,
@@ -55,6 +85,12 @@ export class LlmService {
     private readonly modelRepository: Repository<LiteLlmModelEntity>,
     @InjectRepository(LiteLlmUserKeyEntity)
     private readonly userKeyRepository: Repository<LiteLlmUserKeyEntity>,
+    @InjectRepository(LiteLlmCatalogModelEntity)
+    private readonly catalogModelRepository: Repository<LiteLlmCatalogModelEntity>,
+    @InjectRepository(LiteLlmModelAccessRequestEntity)
+    private readonly modelAccessRequestRepository: Repository<LiteLlmModelAccessRequestEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
   ) {}
 
   async ensureTeam(projectId: string): Promise<LiteLlmTeamEntity> {
@@ -126,8 +162,11 @@ export class LlmService {
       if (existing.userEmail !== userEmail || existing.keyAlias !== userEmail) {
         existing.userEmail = userEmail;
         existing.keyAlias = userEmail;
-        return this.userKeyRepository.save(existing);
+        const saved = await this.userKeyRepository.save(existing);
+        await this.syncUserModelAccess(ownerUserId);
+        return saved;
       }
+      await this.syncUserModelAccess(ownerUserId);
       return existing;
     }
 
@@ -145,7 +184,9 @@ export class LlmService {
     row.apiKey = ensured.keyValue;
     row.maxBudgetUsd = LlmService.USER_MAX_BUDGET_USD;
     row.budgetDuration = LlmService.USER_BUDGET_DURATION;
-    return this.userKeyRepository.save(row);
+    const saved = await this.userKeyRepository.save(row);
+    await this.syncUserModelAccess(ownerUserId);
+    return saved;
   }
 
   getUserVirtualKey(ownerUserId: string): Promise<LiteLlmUserKeyEntity | null> {
@@ -211,6 +252,171 @@ export class LlmService {
     };
   }
 
+  async getCurrentUserAccess(ownerUserId: string, userEmail: string, displayName?: string) {
+    const userKey = await this.ensureUserVirtualKey(ownerUserId, userEmail, displayName);
+    const catalogModels = await this.listCatalogModels();
+    const requests = await this.modelAccessRequestRepository.find({
+      where: { ownerUserId },
+      order: { createdAt: "DESC" },
+    });
+    const allowedModelNames = await this.listAllowedModelNames(ownerUserId);
+    const latestRequestByModel = new Map<string, LiteLlmModelAccessRequestEntity>();
+    for (const request of requests) {
+      if (!latestRequestByModel.has(request.modelName)) {
+        latestRequestByModel.set(request.modelName, request);
+      }
+    }
+
+    return {
+      litellmBaseUrl: this.getBaseUrl(),
+      personalKey: userKey?.apiKey ?? null,
+      availableModels: catalogModels
+        .filter((model) => allowedModelNames.includes(model.modelName))
+        .map((model) => ({
+          modelName: model.modelName,
+          isDefault: model.isDefault,
+          source: model.isDefault ? "default" : "approved",
+        })),
+      requestableModels: catalogModels
+        .filter((model) => !allowedModelNames.includes(model.modelName))
+        .map((model) => ({
+          modelName: model.modelName,
+          isDefault: model.isDefault,
+          requestStatus: latestRequestByModel.get(model.modelName)?.status ?? "none",
+        })),
+      requests: requests.map((request) => ({
+        id: request.id,
+        modelName: request.modelName,
+        status: request.status,
+        reviewNote: request.reviewNote,
+        createdAt: request.createdAt,
+        updatedAt: request.updatedAt,
+      })),
+    };
+  }
+
+  async createModelAccessRequest(ownerUserId: string, dto: CreateModelAccessRequestDto) {
+    const modelName = dto.modelName.trim();
+    if (!modelName) {
+      throw new ConflictException("Model name is required");
+    }
+
+    await this.syncCatalogModelsFromRemote();
+    const catalogModel = await this.catalogModelRepository.findOne({ where: { modelName } });
+    if (!catalogModel) {
+      throw new NotFoundException("Model not found");
+    }
+
+    const allowedModelNames = await this.listAllowedModelNames(ownerUserId);
+    if (allowedModelNames.includes(modelName)) {
+      throw new ConflictException("Model is already available");
+    }
+
+    const existing = await this.modelAccessRequestRepository.findOne({
+      where: { ownerUserId, modelName },
+      order: { updatedAt: "DESC" },
+    });
+    if (existing) {
+      if (existing.status === "pending") {
+        return existing;
+      }
+      existing.status = "pending";
+      existing.reviewerUserId = null;
+      existing.reviewNote = null;
+      return this.modelAccessRequestRepository.save(existing);
+    }
+
+    return this.modelAccessRequestRepository.save(
+      this.modelAccessRequestRepository.create({
+        ownerUserId,
+        modelName,
+        status: "pending",
+      }),
+    );
+  }
+
+  async listCatalogModels(): Promise<LiteLlmCatalogModelEntity[]> {
+    await this.syncCatalogModelsFromRemote();
+    return this.catalogModelRepository.find({
+      order: {
+        isDefault: "DESC",
+        modelName: "ASC",
+      },
+    });
+  }
+
+  async setDefaultModel(modelName: string, isDefault: boolean): Promise<LiteLlmCatalogModelEntity> {
+    const normalizedModelName = modelName.trim();
+    if (!normalizedModelName) {
+      throw new ConflictException("Model name is required");
+    }
+
+    let catalogModel = await this.catalogModelRepository.findOne({ where: { modelName: normalizedModelName } });
+    if (!catalogModel) {
+      catalogModel = this.catalogModelRepository.create({
+        modelName: normalizedModelName,
+        isDefault,
+      });
+    } else {
+      catalogModel.isDefault = isDefault;
+    }
+
+    const saved = await this.catalogModelRepository.save(catalogModel);
+    await this.syncAllUserModelAccess();
+    return saved;
+  }
+
+  async listModelAccessRequestsForAdmin(): Promise<ModelAccessRequestView[]> {
+    const [requests, users] = await Promise.all([
+      this.modelAccessRequestRepository.find({ order: { createdAt: "DESC" } }),
+      this.userRepository.find(),
+    ]);
+
+    const userMap = new Map(users.map((user) => [user.id, user]));
+    return requests.map((request) => {
+      const user = userMap.get(request.ownerUserId);
+      return {
+        id: request.id,
+        ownerUserId: request.ownerUserId,
+        userEmail: user?.email ?? request.ownerUserId,
+        userDisplayName: user?.displayName ?? request.ownerUserId,
+        modelName: request.modelName,
+        status: request.status,
+        reviewNote: request.reviewNote,
+        reviewerUserId: request.reviewerUserId,
+        createdAt: request.createdAt,
+        updatedAt: request.updatedAt,
+      };
+    });
+  }
+
+  async approveModelAccessRequest(requestId: string, reviewerUserId: string, dto?: ReviewModelAccessRequestDto) {
+    return this.reviewModelAccessRequest(requestId, reviewerUserId, "approved", dto?.reviewNote);
+  }
+
+  async rejectModelAccessRequest(requestId: string, reviewerUserId: string, dto?: ReviewModelAccessRequestDto) {
+    return this.reviewModelAccessRequest(requestId, reviewerUserId, "rejected", dto?.reviewNote);
+  }
+
+  private async reviewModelAccessRequest(
+    requestId: string,
+    reviewerUserId: string,
+    status: LiteLlmModelAccessRequestStatus,
+    reviewNote?: string,
+  ) {
+    const request = await this.modelAccessRequestRepository.findOne({ where: { id: requestId } });
+    if (!request) {
+      throw new NotFoundException("Model access request not found");
+    }
+
+    request.status = status;
+    request.reviewerUserId = reviewerUserId;
+    request.reviewNote = reviewNote?.trim() || null;
+    const saved = await this.modelAccessRequestRepository.save(request);
+    await this.syncUserModelAccess(request.ownerUserId);
+    return saved;
+  }
+
   private async createRemoteTeamIfConfigured(teamName: string): Promise<void> {
     const baseUrl = this.getBaseUrl();
     const masterKey = this.getMasterKey();
@@ -262,6 +468,169 @@ export class LlmService {
     }
     const data = (await response.json()) as { models?: string[] };
     return data.models ?? [];
+  }
+
+  private async syncCatalogModelsFromRemote(): Promise<void> {
+    const remoteModels = await this.fetchRemoteCatalogModelsIfConfigured();
+    if (remoteModels.length === 0) {
+      return;
+    }
+
+    const existingModels = await this.catalogModelRepository.find();
+    const existingByName = new Map(existingModels.map((model) => [model.modelName, model]));
+    const rowsToSave = remoteModels
+      .filter((modelName) => !existingByName.has(modelName))
+      .map((modelName) =>
+        this.catalogModelRepository.create({
+          modelName,
+          isDefault: false,
+        }),
+      );
+
+    if (rowsToSave.length > 0) {
+      await this.catalogModelRepository.save(rowsToSave);
+    }
+  }
+
+  private async fetchRemoteCatalogModelsIfConfigured(): Promise<string[]> {
+    const baseUrl = this.getBaseUrl();
+    const masterKey = this.getMasterKey();
+    if (!baseUrl || !masterKey) {
+      return [];
+    }
+
+    try {
+      const endpoints = ["/v1/models", "/models", "/model/info"];
+      for (const endpoint of endpoints) {
+        const response = await fetch(`${baseUrl}${endpoint}`, {
+          headers: {
+            Authorization: `Bearer ${masterKey}`,
+          },
+        });
+        if (!response.ok) {
+          this.logger.warn(`LiteLLM model catalog endpoint failed endpoint=${endpoint} status=${response.status}`);
+          continue;
+        }
+
+        const payload = await response.json();
+        const modelNames = this.parseRemoteCatalogModelsResponse(payload);
+        if (modelNames.length > 0) {
+          this.logger.log(`Fetched ${modelNames.length} LiteLLM catalog models from ${endpoint}`);
+          return modelNames;
+        }
+        this.logger.warn(`LiteLLM model catalog endpoint returned no models endpoint=${endpoint}`);
+      }
+
+      this.logger.warn("LiteLLM model catalog sync finished with no models from all endpoints");
+      return [];
+    } catch (error) {
+      this.logger.warn(`Failed to sync LiteLLM catalog models: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
+  private parseRemoteCatalogModelsResponse(payload: unknown): string[] {
+    if (Array.isArray(payload)) {
+      return this.normalizeModelNames(payload);
+    }
+
+    if (payload && typeof payload === "object") {
+      const record = payload as Record<string, unknown>;
+      if (Array.isArray(record.data)) {
+        return this.normalizeModelNames(record.data);
+      }
+      if (Array.isArray(record.models)) {
+        return this.normalizeModelNames(record.models);
+      }
+      if (record.data && typeof record.data === "object") {
+        const nestedData = record.data as Record<string, unknown>;
+        if (Array.isArray(nestedData.models)) {
+          return this.normalizeModelNames(nestedData.models);
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private normalizeModelNames(rows: unknown[]): string[] {
+    return Array.from(
+      new Set(
+        rows
+          .map((row) => {
+            if (typeof row === "string") {
+              return row;
+            }
+            if (row && typeof row === "object") {
+              const model = row as Record<string, unknown>;
+              return (model.id ?? model.model_name ?? model.model ?? model.name ?? "") as string;
+            }
+            return "";
+          })
+          .map((modelName) => modelName.trim())
+          .filter((modelName) => modelName.length > 0),
+      ),
+    );
+  }
+
+  private async listAllowedModelNames(ownerUserId: string): Promise<string[]> {
+    const [defaultModels, approvedRequests] = await Promise.all([
+      this.catalogModelRepository.find({ where: { isDefault: true }, order: { modelName: "ASC" } }),
+      this.modelAccessRequestRepository.find({
+        where: { ownerUserId, status: "approved" },
+        order: { modelName: "ASC" },
+      }),
+    ]);
+
+    return Array.from(new Set([...defaultModels.map((model) => model.modelName), ...approvedRequests.map((request) => request.modelName)]));
+  }
+
+  private async syncAllUserModelAccess(): Promise<void> {
+    const userKeys = await this.userKeyRepository.find();
+    await Promise.all(userKeys.map((userKey) => this.syncUserModelAccess(userKey.ownerUserId)));
+  }
+
+  private async syncUserModelAccess(ownerUserId: string): Promise<void> {
+    const userKey = await this.userKeyRepository.findOne({ where: { ownerUserId } });
+    if (!userKey?.apiKey) {
+      return;
+    }
+
+    const allowedModels = await this.listAllowedModelNames(ownerUserId);
+    await this.updateRemoteUserModels(userKey, allowedModels);
+  }
+
+  private async updateRemoteUserModels(userKey: LiteLlmUserKeyEntity, allowedModels: string[]): Promise<void> {
+    const payload = { models: allowedModels };
+    try {
+      await this.remoteFetch("/key/update", {
+        method: "POST",
+        body: JSON.stringify({
+          ...payload,
+          key: userKey.apiKey,
+        }),
+      });
+    } catch (error) {
+      this.logger.warn(`Failed to update LiteLLM key models for ${userKey.ownerUserId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (!userKey.remoteUserId) {
+      return;
+    }
+
+    try {
+      await this.remoteFetch("/user/update", {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: userKey.remoteUserId,
+          ...payload,
+        }),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to update LiteLLM user models for ${userKey.ownerUserId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private async fetchUserInfo(userId: string): Promise<LiteLlmUserInfo | null> {

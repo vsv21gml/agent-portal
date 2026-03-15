@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AppShell, Burger, Group, NavLink, ScrollArea, Stack, Text } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { ReactNode } from "react";
@@ -8,6 +9,7 @@ type AdminNavItem = {
   key: string;
   label: string;
   description?: string;
+  href?: string;
 };
 
 type Props = {
@@ -19,7 +21,6 @@ type Props = {
   navbarWidth?: number;
   navigation?: AdminNavItem[];
   activeNav?: string;
-  onNavigate?: (key: string) => void;
 };
 
 export function AdminFrame({
@@ -31,7 +32,6 @@ export function AdminFrame({
   navbarWidth = 260,
   navigation,
   activeNav,
-  onNavigate,
 }: Props) {
   const [opened, { toggle }] = useDisclosure();
   const sanitizedNavigation = navigation?.filter((item) => !item.label.toLowerCase().includes("testkey1"));
@@ -39,14 +39,25 @@ export function AdminFrame({
     <Stack gap="lg">
       <Stack gap="xs">
         {sanitizedNavigation.map((item) => (
-          <NavLink
-            key={item.key}
-            active={activeNav === item.key}
-            label={item.label}
-            description={item.description}
-            onClick={() => onNavigate?.(item.key)}
-            variant="light"
-          />
+          item.href ? (
+            <Link key={item.key} href={item.href} style={{ textDecoration: "none" }}>
+              <NavLink
+                component="div"
+                active={activeNav === item.key}
+                label={item.label}
+                description={item.description}
+                variant="light"
+              />
+            </Link>
+          ) : (
+            <NavLink
+              key={item.key}
+              active={activeNav === item.key}
+              label={item.label}
+              description={item.description}
+              variant="light"
+            />
+          )
         ))}
       </Stack>
     </Stack>

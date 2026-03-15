@@ -80,17 +80,6 @@ type GitRepo = {
   createdAt: string;
 };
 
-type LiteLlmModel = {
-  id: string;
-  modelName: string;
-};
-
-type LiteLlmKey = {
-  id: string;
-  keyAlias: string;
-  createdAt: string;
-};
-
 type WorkspaceSession = {
   id: string;
   repoId: string;
@@ -106,7 +95,7 @@ type WorkspaceModalState = {
   workspace?: WorkspaceSession;
 } | null;
 
-const menuItems = ["Info", "Repo", "LLM"] as const;
+const menuItems = ["Info", "Repo"] as const;
 const runtimeOptions = [
   { value: "NODE22", label: "NODE22" },
   { value: "NODE23", label: "NODE23" },
@@ -142,14 +131,12 @@ export default function ProjectDetailPage() {
   const [loadingProject, setLoadingProject] = useState(true);
   const [activeMenu, setActiveMenu] = useState<(typeof menuItems)[number]>("Info");
   const [loadingRepos, setLoadingRepos] = useState(false);
-  const [loadingLiteLlm, setLoadingLiteLlm] = useState(false);
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [stoppingWorkspaceId, setStoppingWorkspaceId] = useState<string | null>(null);
   const [restartingWorkspaceId, setRestartingWorkspaceId] = useState<string | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<WorkspaceSession | null>(null);
-  const [issuingKey, setIssuingKey] = useState(false);
   const [updatingMembers, setUpdatingMembers] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
   const [project, setProject] = useState<Project | null>(null);
@@ -160,10 +147,7 @@ export default function ProjectDetailPage() {
   const [gitGroup, setGitGroup] = useState<GitGroup | null>(null);
   const [repos, setRepos] = useState<GitRepo[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceSession[]>([]);
-  const [models, setModels] = useState<LiteLlmModel[]>([]);
-  const [keys, setKeys] = useState<LiteLlmKey[]>([]);
   const [newRepoName, setNewRepoName] = useState("");
-  const [newKeyAlias, setNewKeyAlias] = useState("");
   const [workspaceRuntime, setWorkspaceRuntime] = useState<string | null>("NODE22");
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -268,28 +252,6 @@ export default function ProjectDetailPage() {
     setAvailableUsers([]);
   }, [isManager, projectId]);
 
-  const loadLiteLlm = async () => {
-    if (!project) {
-      return;
-    }
-
-    setLoadingLiteLlm(true);
-    try {
-      await apiFetch(`llm/projects/${project.id}/team`, { method: "POST" });
-      const [modelRows, keyRows] = await Promise.all([
-        apiFetch<LiteLlmModel[]>(`llm/projects/${project.id}/models`),
-        apiFetch<LiteLlmKey[]>(`llm/projects/${project.id}/keys`),
-      ]);
-      setModels(modelRows);
-      setKeys(keyRows);
-      toastSuccess("LLM data refreshed.");
-    } catch {
-      toastError("Failed to refresh LLM data.");
-    } finally {
-      setLoadingLiteLlm(false);
-    }
-  };
-
   const refreshWorkspace = async (workspaceId: string) => {
     const latest = await apiFetch<WorkspaceSession>(`workspaces/${workspaceId}`);
     setWorkspaces((prev) => [latest, ...prev.filter((item) => item.id !== latest.id)]);
@@ -309,31 +271,6 @@ export default function ProjectDetailPage() {
     }
 
     toastError("Workspace is still provisioning. Try opening it again shortly.");
-  };
-
-  const issueLiteLlmKey = async () => {
-    if (!project) {
-      return;
-    }
-    if (!newKeyAlias.trim()) {
-      toastError("Enter a key alias.");
-      return;
-    }
-
-    setIssuingKey(true);
-    try {
-      await apiFetch(`llm/projects/${project.id}/keys`, {
-        method: "POST",
-        body: JSON.stringify({ keyAlias: newKeyAlias.trim() }),
-      });
-      setNewKeyAlias("");
-      await loadLiteLlm();
-      toastSuccess("LLM key issued.");
-    } catch {
-      toastError("Failed to issue LLM key.");
-    } finally {
-      setIssuingKey(false);
-    }
   };
 
   const createRepo = async () => {
@@ -850,63 +787,6 @@ export default function ProjectDetailPage() {
           </Stack>
         ) : null}
 
-        {activeMenu === "LLM" ? (
-          <Paper withBorder p="md" radius="md">
-            <Stack>
-              <Group justify="space-between">
-                <Title order={4}>LLM</Title>
-                <Button variant="light" loading={loadingLiteLlm} onClick={() => void loadLiteLlm()}>
-                  Refresh
-                </Button>
-              </Group>
-
-              <Group align="end">
-                <TextInput
-                  style={{ flex: 1 }}
-                  label="Key Alias"
-                  placeholder="team-key"
-                  value={newKeyAlias}
-                  onChange={(event) => setNewKeyAlias(event.currentTarget.value)}
-                />
-                <Button loading={issuingKey} onClick={() => void issueLiteLlmKey()}>
-                  Issue Key
-                </Button>
-              </Group>
-
-              <Divider />
-
-              <Stack gap={4}>
-                <Text fw={600}>Models</Text>
-                {models.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    No model metadata loaded yet.
-                  </Text>
-                ) : (
-                  models.map((model) => (
-                    <Text size="sm" key={model.id}>
-                      {model.modelName}
-                    </Text>
-                  ))
-                )}
-              </Stack>
-
-              <Stack gap={4}>
-                <Text fw={600}>Issued Keys</Text>
-                {keys.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    No keys issued yet.
-                  </Text>
-                ) : (
-                  keys.map((key) => (
-                    <Text size="sm" key={key.id}>
-                      {key.keyAlias} ({new Date(key.createdAt).toLocaleString()})
-                    </Text>
-                  ))
-                )}
-              </Stack>
-            </Stack>
-          </Paper>
-        ) : null}
       </Stack>
 
       <Modal

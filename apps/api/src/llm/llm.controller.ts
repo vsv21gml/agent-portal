@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { JwtPayload } from "../auth/types/jwt-payload.type";
+import { CreateModelAccessRequestDto } from "./dto/create-model-access-request.dto";
 import { IssueLlmKeyDto } from "./dto/issue-llm-key.dto";
 import { LlmService } from "./llm.service";
 
@@ -31,5 +32,15 @@ export class LlmController {
   @Get("me/usage")
   myUsage(@CurrentUser() user: JwtPayload) {
     return this.llmService.getCurrentUserUsage(user.sub);
+  }
+
+  @Get("me/access")
+  myAccess(@CurrentUser() user: JwtPayload) {
+    return this.llmService.getCurrentUserAccess(user.sub, user.email, undefined);
+  }
+
+  @Post("me/model-requests")
+  createMyModelRequest(@CurrentUser() user: JwtPayload, @Body() dto: CreateModelAccessRequestDto) {
+    return this.llmService.createModelAccessRequest(user.sub, dto);
   }
 }
