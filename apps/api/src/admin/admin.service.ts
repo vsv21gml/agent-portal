@@ -187,15 +187,18 @@ export class AdminService {
   }
 
   async getAgentResourceOverview(): Promise<AgentResourceOverview> {
-    const namespace = this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving");
+    const configuredNamespace = this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving");
     const agents = await this.agentRepository.find({
-      where: { namespace },
       order: { createdAt: "DESC" },
     });
-    const podsByDeployment = await this.getPodsByDeployment(namespace, "agent-portal/agent-name");
+    const namespaces = Array.from(new Set(agents.map((agent) => agent.namespace).filter(Boolean)));
+    if (!namespaces.includes(configuredNamespace)) {
+      namespaces.push(configuredNamespace);
+    }
+    const podsByDeployment = await this.getPodsByDeploymentAcrossNamespaces(namespaces, "agent-portal/agent-name");
     const runningAgents = agents.filter((agent) => {
-      const pod = podsByDeployment.get(agent.deploymentName);
-      return this.isPodRunning(pod);
+      const pod = podsByDeployment.get(`${agent.namespace}:${agent.deploymentName}`);
+      return this.isAgentPodRunning(pod);
     });
     const projectIds = [...new Set(runningAgents.map((agent) => agent.projectId))];
     const repoIds = [...new Set(runningAgents.map((agent) => agent.repoId))];
@@ -216,7 +219,7 @@ export class AdminService {
       const project = projectMap.get(agent.projectId);
       const repo = repoMap.get(agent.repoId);
       const user = userMap.get(agent.ownerUserId);
-      const pod = podsByDeployment.get(agent.deploymentName);
+      const pod = podsByDeployment.get(`${agent.namespace}:${agent.deploymentName}`);
       const requested = this.getPodRequestedResources(pod);
 
       return {
@@ -255,6 +258,20 @@ export class AdminService {
 
   private async getWorkspacePodsByDeployment(namespace: string): Promise<Map<string, k8s.V1Pod>> {
     return this.getPodsByDeployment(namespace, "agent-portal/workspace-name");
+  }
+
+  private async getPodsByDeploymentAcrossNamespaces(
+    namespaces: string[],
+    labelKey: string,
+  ): Promise<Map<string, k8s.V1Pod>> {
+    const map = new Map<string, k8s.V1Pod>();
+    for (const namespace of namespaces) {
+      const namespaceMap = await this.getPodsByDeployment(namespace, labelKey);
+      for (const [deploymentName, pod] of namespaceMap.entries()) {
+        map.set(`${namespace}:${deploymentName}`, pod);
+      }
+    }
+    return map;
   }
 
   private async getPodsByDeployment(namespace: string, labelKey: string): Promise<Map<string, k8s.V1Pod>> {
@@ -309,6 +326,14 @@ export class AdminService {
 
   private isWorkspacePodRunning(pod: k8s.V1Pod | undefined): boolean {
     return this.isPodRunning(pod);
+  }
+
+  private isAgentPodRunning(pod: k8s.V1Pod | undefined): boolean {
+    if (!pod) {
+      return false;
+    }
+
+    return (pod.status?.phase ?? "") === "Running";
   }
 
   private isPodRunning(pod: k8s.V1Pod | undefined): boolean {
