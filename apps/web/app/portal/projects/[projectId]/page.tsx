@@ -780,17 +780,12 @@ export default function ProjectDetailPage() {
                       <Group justify="space-between" align="start">
                         <Stack gap={2}>
                           <Text fw={700}>{repo.repoName}</Text>
-                          <Text size="sm" c="dimmed">
-                            {repo.namespacePath}
-                          </Text>
-                          <Text size="sm">{repo.cloneUrl ?? "Remote clone URL pending"}</Text>
                         </Stack>
                       </Group>
 
                       <Divider />
 
                       <Stack gap={6}>
-                        <Text fw={600}>Workspace</Text>
                         {!workspace ? (
                           <Group justify="space-between" align="center">
                             <Text size="sm" c="dimmed">
