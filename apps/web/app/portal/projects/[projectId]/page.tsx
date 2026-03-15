@@ -155,7 +155,6 @@ export default function ProjectDetailPage() {
   const [agentDescription, setAgentDescription] = useState("");
   const [agentRepoId, setAgentRepoId] = useState<string | null>(null);
   const [agentDockerfilePath, setAgentDockerfilePath] = useState("./Dockerfile");
-  const [agentEcrRepository, setAgentEcrRepository] = useState("");
   const [deployingAgent, setDeployingAgent] = useState(false);
   const [logsTarget, setLogsTarget] = useState<AgentDeployment | null>(null);
   const [agentLogs, setAgentLogs] = useState("");
@@ -319,8 +318,8 @@ export default function ProjectDetailPage() {
   };
 
   const deployAgent = async () => {
-    if (!project || !agentName.trim() || !agentRepoId || !agentEcrRepository.trim()) {
-      toastError("Fill in agent name, repo, and ECR repository.");
+    if (!project || !agentName.trim() || !agentRepoId) {
+      toastError("Fill in agent name and repo.");
       return;
     }
 
@@ -334,7 +333,6 @@ export default function ProjectDetailPage() {
           agentName: agentName.trim(),
           description: agentDescription.trim(),
           dockerfilePath: agentDockerfilePath.trim() || "./Dockerfile",
-          ecrRepository: agentEcrRepository.trim(),
         }),
       });
       setAgents((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
@@ -965,12 +963,6 @@ export default function ProjectDetailPage() {
             label="Dockerfile Path"
             value={agentDockerfilePath}
             onChange={(event) => setAgentDockerfilePath(event.currentTarget.value)}
-          />
-          <TextInput
-            label="ECR Repository"
-            placeholder="7550...amazonaws.com/team/agent"
-            value={agentEcrRepository}
-            onChange={(event) => setAgentEcrRepository(event.currentTarget.value)}
           />
           <Button loading={deployingAgent} onClick={() => void deployAgent()}>
             Deploy Agent

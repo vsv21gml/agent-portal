@@ -20,8 +20,4 @@ export class CreateAgentDto {
   @IsString()
   @IsOptional()
   dockerfilePath?: string;
-
-  @IsString()
-  @IsNotEmpty()
-  ecrRepository!: string;
 }

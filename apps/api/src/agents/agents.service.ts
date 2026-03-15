@@ -50,6 +50,10 @@ export class AgentsService {
     const repo = await this.gitlabService.getRepo(dto.projectId, dto.repoId);
     const user = await this.authService.findById(userId);
     const normalizedAgentName = this.sanitizeName(dto.agentName);
+    const ecrRepository = this.configService.get<string>("AGENT_ECR_REPOSITORY")?.trim() ?? "";
+    if (!ecrRepository) {
+      throw new Error("AGENT_ECR_REPOSITORY is not configured");
+    }
     const namespace = this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving");
     const id = crypto.randomUUID();
     const nameSuffix = id.replace(/-/g, "").slice(0, 12);
@@ -58,7 +62,7 @@ export class AgentsService {
     const serviceName = deploymentName;
     const ingressName = `${deploymentName}-ing`;
     const imageTag = id;
-    const imageUrl = `${dto.ecrRepository.replace(/\/+$/, "")}:${imageTag}`;
+    const imageUrl = `${ecrRepository.replace(/\/+$/, "")}:${imageTag}`;
     const endpointUrl = this.buildAgentEndpointUrl(deploymentName);
     const agentKey = await this.llmService.ensureProjectVirtualKey(dto.projectId, userId, `agent-${id}`);
 
@@ -71,7 +75,7 @@ export class AgentsService {
         agentName: normalizedAgentName,
         description: dto.description?.trim() ?? "",
         dockerfilePath: dto.dockerfilePath?.trim() || "./Dockerfile",
-        ecrRepository: dto.ecrRepository.trim(),
+        ecrRepository,
         imageTag,
         imageUrl,
         endpointUrl,

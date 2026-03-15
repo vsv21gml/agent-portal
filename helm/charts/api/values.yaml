@@ -78,3 +78,4 @@ env:
   AGENT_GIT_IMAGE: "alpine/git:2.47.2"
   AGENT_VALIDATOR_IMAGE: "node:24-alpine"
   KANIKO_EXECUTOR_IMAGE: "gcr.io/kaniko-project/executor:latest"
+  AGENT_ECR_REPOSITORY: ""
