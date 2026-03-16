@@ -41,6 +41,11 @@ spec:
   }
 
   parameters {
+      string(
+          name: 'GIT_BRANCH',
+          defaultValue: 'main',
+          description: 'Select the target environment for deployment'
+      )
       choice(
           name: 'BUILD_IMAGE',
           choices: ['api', 'web', 'admin-web'],
@@ -70,6 +75,7 @@ spec:
 				sh '''
 					set -e
 					git clone "https://${GIT_REPO}" .
+          git checkout ${GIT_BRANCH}
 				'''
       }
     }

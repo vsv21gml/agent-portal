@@ -274,7 +274,7 @@ const PAGE_SIZE = 8;
 const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
   users: { title: "Users", description: "Manage portal users, invitations, and roles." },
   projects: { title: "Projects", description: "Review projects and open project-level administration actions." },
-  resources: { title: "Resources", description: "Track workspace and agent resource usage across dedicated node pools." },
+  resources: { title: "Resources", description: "Track workspace and serving resource usage across dedicated node pools." },
   serving: { title: "Serving", description: "Review deployed Agents and MCP servers together with their LiteLLM spend." },
   models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
   gitlab: { title: "GitLab", description: "Review GitLab groups and repositories mapped to portal projects." },
@@ -793,6 +793,143 @@ export default function AdminPage() {
     const start = (mcpPage - 1) * PAGE_SIZE;
     return filteredAdminMcps.slice(start, start + PAGE_SIZE);
   }, [filteredAdminMcps, mcpPage]);
+  const servingStatusOptions = useMemo(
+    () => [
+      { value: "all", label: "All statuses" },
+      ...Array.from(new Set([...adminAgents.map((agent) => agent.status), ...adminMcps.map((mcp) => mcp.status)]))
+        .filter(Boolean)
+        .map((status) => ({ value: status, label: status })),
+    ],
+    [adminAgents, adminMcps],
+  );
+  const servingProjectOptions = useMemo(
+    () => [
+      { value: "all", label: "All projects" },
+      ...Array.from(
+        new Map(
+          [...adminAgents.map((agent) => [agent.projectId, agent.projectName] as const), ...adminMcps.map((mcp) => [mcp.projectId, mcp.projectName] as const)],
+        ).entries(),
+      ).map(([value, label]) => ({ value, label })),
+    ],
+    [adminAgents, adminMcps],
+  );
+  const filteredServingRows = useMemo(() => {
+    const query = agentSearch.trim().toLowerCase();
+    const servingRows = [
+      ...adminAgents.map((agent) => ({
+        id: agent.id,
+        type: "Agent",
+        name: agent.agentName,
+        description: agent.description,
+        projectName: agent.projectName,
+        projectId: agent.projectId,
+        repoName: agent.repoName,
+        owner: agent.ownerUserDisplayName || agent.ownerUserEmail || "-",
+        llmEnabled: agent.litellmModel ? "Enabled" : "Disabled",
+        model: agent.litellmModel || "-",
+        status: agent.status,
+        spendUsd: agent.spendUsd,
+        createdAt: agent.createdAt,
+      })),
+      ...adminMcps.map((mcp) => ({
+        id: mcp.id,
+        type: "MCP",
+        name: mcp.mcpName,
+        description: mcp.description,
+        projectName: mcp.projectName,
+        projectId: mcp.projectId,
+        repoName: mcp.repoName,
+        owner: mcp.ownerUserDisplayName || mcp.ownerUserEmail || "-",
+        llmEnabled: mcp.useLlm === "Y" ? "Enabled" : "Disabled",
+        model: mcp.litellmModel || "-",
+        status: mcp.status,
+        spendUsd: mcp.spendUsd,
+        createdAt: mcp.createdAt,
+      })),
+    ];
+
+    return servingRows.filter((row) => {
+      const matchesQuery =
+        !query ||
+        [row.type, row.name, row.description, row.projectName, row.repoName, row.owner, row.model, row.id].some((value) =>
+          value.toLowerCase().includes(query),
+        );
+      const matchesStatus = agentStatusFilter === "all" || row.status === agentStatusFilter;
+      const matchesProject = agentProjectFilter === "all" || row.projectId === agentProjectFilter;
+      return matchesQuery && matchesStatus && matchesProject;
+    });
+  }, [adminAgents, adminMcps, agentProjectFilter, agentSearch, agentStatusFilter]);
+  const servingPages = Math.max(1, Math.ceil(filteredServingRows.length / PAGE_SIZE));
+  const pagedServingRows = useMemo(() => {
+    const start = (agentPage - 1) * PAGE_SIZE;
+    return filteredServingRows.slice(start, start + PAGE_SIZE);
+  }, [agentPage, filteredServingRows]);
+  const servingResourceOverview = useMemo(() => {
+    const nodeMap = new Map<string, ResourceNodeRow>();
+
+    for (const node of agentResourceOverview?.nodePool.nodes ?? []) {
+      nodeMap.set(node.nodeName, node);
+    }
+
+    for (const node of mcpResourceOverview?.nodePool.nodes ?? []) {
+      nodeMap.set(node.nodeName, node);
+    }
+
+    const nodes = Array.from(nodeMap.values()).sort((left, right) => left.nodeName.localeCompare(right.nodeName));
+    const totalCpu = nodes.reduce((sum, node) => sum + node.cpu, 0);
+    const totalMemoryGi = nodes.reduce((sum, node) => sum + node.memoryGi, 0);
+    const usedCpu = (agentResourceOverview?.running.usedCpu ?? 0) + (mcpResourceOverview?.running.usedCpu ?? 0);
+    const usedMemoryGi = (agentResourceOverview?.running.usedMemoryGi ?? 0) + (mcpResourceOverview?.running.usedMemoryGi ?? 0);
+    const agentCount = agentResourceOverview?.running.agentCount ?? 0;
+    const mcpCount = mcpResourceOverview?.running.mcpCount ?? 0;
+    const rows = [
+      ...(agentResourceOverview?.rows.map((resource) => ({
+        id: resource.agentId,
+        type: "Agent",
+        projectName: resource.projectName,
+        name: resource.agentName,
+        repoName: resource.repoName,
+        userDisplayName: resource.userDisplayName,
+        userEmail: resource.userEmail,
+        cpu: resource.cpu,
+        memoryGi: resource.memoryGi,
+        nodeName: resource.nodeName,
+        createdAt: resource.createdAt,
+      })) ?? []),
+      ...(mcpResourceOverview?.rows.map((resource) => ({
+        id: resource.mcpId,
+        type: "MCP",
+        projectName: resource.projectName,
+        name: resource.mcpName,
+        repoName: resource.repoName,
+        userDisplayName: resource.userDisplayName,
+        userEmail: resource.userEmail,
+        cpu: resource.cpu,
+        memoryGi: resource.memoryGi,
+        nodeName: resource.nodeName,
+        createdAt: resource.createdAt,
+      })) ?? []),
+    ].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+
+    return {
+      nodePool: {
+        nodeCount: nodes.length,
+        totalCpu,
+        totalMemoryGi,
+        nodes,
+      },
+      running: {
+        deploymentCount: agentCount + mcpCount,
+        agentCount,
+        mcpCount,
+        usedCpu,
+        usedMemoryGi,
+        cpuUsagePercent: totalCpu > 0 ? (usedCpu / totalCpu) * 100 : 0,
+        memoryUsagePercent: totalMemoryGi > 0 ? (usedMemoryGi / totalMemoryGi) * 100 : 0,
+      },
+      rows,
+    };
+  }, [agentResourceOverview, mcpResourceOverview]);
   const filteredGitlabGroups = useMemo(() => {
     const query = gitlabSearch.trim().toLowerCase();
     if (!query) {
@@ -1091,8 +1228,7 @@ export default function AdminPage() {
             <Tabs value={resourceTab} onChange={setResourceTab}>
               <Tabs.List>
                 <Tabs.Tab value="workspace">Workspace</Tabs.Tab>
-                <Tabs.Tab value="agent">Agent</Tabs.Tab>
-                <Tabs.Tab value="mcp">MCP</Tabs.Tab>
+                <Tabs.Tab value="serving">Serving</Tabs.Tab>
               </Tabs.List>
 
               <Tabs.Panel value="workspace" pt="md">
@@ -1264,23 +1400,23 @@ export default function AdminPage() {
                 </Stack>
               </Tabs.Panel>
 
-              <Tabs.Panel value="agent" pt="md">
+              <Tabs.Panel value="serving" pt="md">
                 <Stack gap="md">
                   <Paper withBorder p="md">
                     <Stack gap="md">
-                      <Title order={4}>Agent Resource Overview</Title>
+                      <Title order={4}>Serving Resource Overview</Title>
                       <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
                         <Paper withBorder p="md" radius="md">
                           <Group justify="space-between" align="center">
                             <div>
                               <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                                Agent Nodes
+                                Serving Nodes
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {agentResourceOverview?.nodePool.nodeCount ?? 0}
+                                {servingResourceOverview.nodePool.nodeCount}
                               </Text>
                             </div>
-                            <Badge variant="light">{agentResourceOverview?.running.agentCount ?? 0} running</Badge>
+                            <Badge variant="light">{servingResourceOverview.running.deploymentCount} running</Badge>
                           </Group>
                         </Paper>
 
@@ -1291,18 +1427,18 @@ export default function AdminPage() {
                                 Node CPU Capacity
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {Number.isInteger(agentResourceOverview?.nodePool.totalCpu ?? 0)
-                                  ? (agentResourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
-                                  : (agentResourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                                {Number.isInteger(servingResourceOverview.nodePool.totalCpu)
+                                  ? servingResourceOverview.nodePool.totalCpu.toFixed(0)
+                                  : servingResourceOverview.nodePool.totalCpu.toFixed(1)}
                               </Text>
                             </div>
                             <RingProgress
                               size={88}
                               thickness={10}
-                              sections={[{ value: agentResourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
+                              sections={[{ value: servingResourceOverview.running.cpuUsagePercent, color: "blue" }]}
                               label={
                                 <Text ta="center" size="xs" fw={700}>
-                                  {Math.round(agentResourceOverview?.running.cpuUsagePercent ?? 0)}%
+                                  {Math.round(servingResourceOverview.running.cpuUsagePercent)}%
                                 </Text>
                               }
                             />
@@ -1319,16 +1455,16 @@ export default function AdminPage() {
                                 Node MEM Capacity
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {(agentResourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
+                                {servingResourceOverview.nodePool.totalMemoryGi.toFixed(1)} Gi
                               </Text>
                             </div>
                             <RingProgress
                               size={88}
                               thickness={10}
-                              sections={[{ value: agentResourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
+                              sections={[{ value: servingResourceOverview.running.memoryUsagePercent, color: "grape" }]}
                               label={
                                 <Text ta="center" size="xs" fw={700}>
-                                  {Math.round(agentResourceOverview?.running.memoryUsagePercent ?? 0)}%
+                                  {Math.round(servingResourceOverview.running.memoryUsagePercent)}%
                                 </Text>
                               }
                             />
@@ -1340,13 +1476,16 @@ export default function AdminPage() {
 
                         <Paper withBorder p="md" radius="md">
                           <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                            Running Agent
+                            Running Serving
                           </Text>
                           <Text mt="sm" fw={700} size="xl">
-                            {agentResourceOverview?.running.agentCount ?? 0}
+                            {servingResourceOverview.running.deploymentCount}
                           </Text>
                           <Text size="sm" c="dimmed" mt="sm">
-                            CPU {(agentResourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(agentResourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                            Agent {servingResourceOverview.running.agentCount} / MCP {servingResourceOverview.running.mcpCount}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            CPU {servingResourceOverview.running.usedCpu.toFixed(1)} / MEM {servingResourceOverview.running.usedMemoryGi.toFixed(1)} Gi
                           </Text>
                         </Paper>
                       </SimpleGrid>
@@ -1354,13 +1493,14 @@ export default function AdminPage() {
                   </Paper>
 
                   <Paper withBorder p="md">
-                    <Title order={4}>Running Agents</Title>
+                    <Title order={4}>Running Serving Deployments</Title>
                     <ScrollArea mt="sm">
                       <Table withTableBorder highlightOnHover>
                         <Table.Thead>
                           <Table.Tr>
                             <Table.Th>Project</Table.Th>
-                            <Table.Th>Agent</Table.Th>
+                            <Table.Th>Type</Table.Th>
+                            <Table.Th>Name</Table.Th>
                             <Table.Th>Repo</Table.Th>
                             <Table.Th>User</Table.Th>
                             <Table.Th>Email</Table.Th>
@@ -1371,11 +1511,16 @@ export default function AdminPage() {
                           </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
-                          {agentResourceOverview?.rows.length ? (
-                            agentResourceOverview.rows.map((resource) => (
-                              <Table.Tr key={resource.agentId}>
+                          {servingResourceOverview.rows.length ? (
+                            servingResourceOverview.rows.map((resource) => (
+                              <Table.Tr key={`${resource.type}-${resource.id}`}>
                                 <Table.Td>{resource.projectName}</Table.Td>
-                                <Table.Td>{resource.agentName}</Table.Td>
+                                <Table.Td>
+                                  <Badge variant="light" color={resource.type === "Agent" ? "blue" : "grape"}>
+                                    {resource.type}
+                                  </Badge>
+                                </Table.Td>
+                                <Table.Td>{resource.name}</Table.Td>
                                 <Table.Td>{resource.repoName}</Table.Td>
                                 <Table.Td>{resource.userDisplayName}</Table.Td>
                                 <Table.Td>{resource.userEmail || "-"}</Table.Td>
@@ -1389,7 +1534,7 @@ export default function AdminPage() {
                             <Table.Tr>
                               <Table.Td colSpan={9}>
                                 <Text size="sm" c="dimmed">
-                                  No running agents.
+                                  No running serving deployments.
                                 </Text>
                               </Table.Td>
                             </Table.Tr>
@@ -1400,7 +1545,7 @@ export default function AdminPage() {
                   </Paper>
 
                   <Paper withBorder p="md">
-                    <Title order={4}>Agent Node List</Title>
+                    <Title order={4}>Serving Node List</Title>
                     <ScrollArea mt="sm">
                       <Table withTableBorder highlightOnHover>
                         <Table.Thead>
@@ -1411,8 +1556,8 @@ export default function AdminPage() {
                           </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
-                          {agentResourceOverview?.nodePool.nodes.length ? (
-                            agentResourceOverview.nodePool.nodes.map((node) => (
+                          {servingResourceOverview.nodePool.nodes.length ? (
+                            servingResourceOverview.nodePool.nodes.map((node) => (
                               <Table.Tr key={node.nodeName}>
                                 <Table.Td>{node.nodeName}</Table.Td>
                                 <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
@@ -1423,178 +1568,7 @@ export default function AdminPage() {
                             <Table.Tr>
                               <Table.Td colSpan={3}>
                                 <Text size="sm" c="dimmed">
-                                  No agent nodes matched the configured selector.
-                                </Text>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Table.Tbody>
-                      </Table>
-                    </ScrollArea>
-                  </Paper>
-                </Stack>
-              </Tabs.Panel>
-
-              <Tabs.Panel value="mcp" pt="md">
-                <Stack gap="md">
-                  <Paper withBorder p="md">
-                    <Stack gap="md">
-                      <Title order={4}>MCP Resource Overview</Title>
-                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
-                        <Paper withBorder p="md" radius="md">
-                          <Group justify="space-between" align="center">
-                            <div>
-                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                                MCP Nodes
-                              </Text>
-                              <Text mt="sm" fw={700} size="xl">
-                                {mcpResourceOverview?.nodePool.nodeCount ?? 0}
-                              </Text>
-                            </div>
-                            <Badge variant="light">{mcpResourceOverview?.running.mcpCount ?? 0} running</Badge>
-                          </Group>
-                        </Paper>
-
-                        <Paper withBorder p="md" radius="md">
-                          <Group justify="space-between" align="center">
-                            <div>
-                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                                Node CPU Capacity
-                              </Text>
-                              <Text mt="sm" fw={700} size="xl">
-                                {Number.isInteger(mcpResourceOverview?.nodePool.totalCpu ?? 0)
-                                  ? (mcpResourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
-                                  : (mcpResourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
-                              </Text>
-                            </div>
-                            <RingProgress
-                              size={88}
-                              thickness={10}
-                              sections={[{ value: mcpResourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
-                              label={
-                                <Text ta="center" size="xs" fw={700}>
-                                  {Math.round(mcpResourceOverview?.running.cpuUsagePercent ?? 0)}%
-                                </Text>
-                              }
-                            />
-                          </Group>
-                          <Text size="sm" c="dimmed" mt="sm">
-                            Kubernetes reported capacity
-                          </Text>
-                        </Paper>
-
-                        <Paper withBorder p="md" radius="md">
-                          <Group justify="space-between" align="center">
-                            <div>
-                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                                Node MEM Capacity
-                              </Text>
-                              <Text mt="sm" fw={700} size="xl">
-                                {(mcpResourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
-                              </Text>
-                            </div>
-                            <RingProgress
-                              size={88}
-                              thickness={10}
-                              sections={[{ value: mcpResourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
-                              label={
-                                <Text ta="center" size="xs" fw={700}>
-                                  {Math.round(mcpResourceOverview?.running.memoryUsagePercent ?? 0)}%
-                                </Text>
-                              }
-                            />
-                          </Group>
-                          <Text size="sm" c="dimmed" mt="sm">
-                            Kubernetes reported capacity
-                          </Text>
-                        </Paper>
-
-                        <Paper withBorder p="md" radius="md">
-                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
-                            Running MCP
-                          </Text>
-                          <Text mt="sm" fw={700} size="xl">
-                            {mcpResourceOverview?.running.mcpCount ?? 0}
-                          </Text>
-                          <Text size="sm" c="dimmed" mt="sm">
-                            CPU {(mcpResourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(mcpResourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
-                          </Text>
-                        </Paper>
-                      </SimpleGrid>
-                    </Stack>
-                  </Paper>
-
-                  <Paper withBorder p="md">
-                    <Title order={4}>Running MCP Servers</Title>
-                    <ScrollArea mt="sm">
-                      <Table withTableBorder highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Project</Table.Th>
-                            <Table.Th>MCP</Table.Th>
-                            <Table.Th>Repo</Table.Th>
-                            <Table.Th>User</Table.Th>
-                            <Table.Th>Email</Table.Th>
-                            <Table.Th>CPU</Table.Th>
-                            <Table.Th>MEM Gi</Table.Th>
-                            <Table.Th>Node</Table.Th>
-                            <Table.Th>Started</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {mcpResourceOverview?.rows.length ? (
-                            mcpResourceOverview.rows.map((resource) => (
-                              <Table.Tr key={resource.mcpId}>
-                                <Table.Td>{resource.projectName}</Table.Td>
-                                <Table.Td>{resource.mcpName}</Table.Td>
-                                <Table.Td>{resource.repoName}</Table.Td>
-                                <Table.Td>{resource.userDisplayName}</Table.Td>
-                                <Table.Td>{resource.userEmail || "-"}</Table.Td>
-                                <Table.Td>{resource.cpu.toFixed(1)}</Table.Td>
-                                <Table.Td>{resource.memoryGi.toFixed(1)}</Table.Td>
-                                <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
-                                <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
-                              </Table.Tr>
-                            ))
-                          ) : (
-                            <Table.Tr>
-                              <Table.Td colSpan={9}>
-                                <Text size="sm" c="dimmed">
-                                  No running MCP servers.
-                                </Text>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Table.Tbody>
-                      </Table>
-                    </ScrollArea>
-                  </Paper>
-
-                  <Paper withBorder p="md">
-                    <Title order={4}>MCP Node List</Title>
-                    <ScrollArea mt="sm">
-                      <Table withTableBorder highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Node</Table.Th>
-                            <Table.Th>CPU</Table.Th>
-                            <Table.Th>MEM Gi</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {mcpResourceOverview?.nodePool.nodes.length ? (
-                            mcpResourceOverview.nodePool.nodes.map((node) => (
-                              <Table.Tr key={node.nodeName}>
-                                <Table.Td>{node.nodeName}</Table.Td>
-                                <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
-                                <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
-                              </Table.Tr>
-                            ))
-                          ) : (
-                            <Table.Tr>
-                              <Table.Td colSpan={3}>
-                                <Text size="sm" c="dimmed">
-                                  No MCP nodes matched the configured selector.
+                                  No serving nodes matched the configured selector.
                                 </Text>
                               </Table.Td>
                             </Table.Tr>
@@ -1612,85 +1586,27 @@ export default function AdminPage() {
         {activeSection === "serving" ? (
           <Stack gap="md">
             <Paper withBorder p="md">
-              <SimpleGrid cols={{ base: 1, md: 4 }} spacing="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
                 <TextInput
                   label="Search"
                   placeholder="Agent, MCP, repo, project, owner, or model"
                   value={agentSearch}
                   onChange={(event) => setAgentSearch(event.currentTarget.value)}
                 />
-                <Select label="Status" data={agentStatusOptions} value={agentStatusFilter} onChange={setAgentStatusFilter} />
-                <Select label="Project" data={agentProjectOptions} value={agentProjectFilter} onChange={setAgentProjectFilter} />
-                <TextInput label="MCP Search" placeholder="MCP, repo, project, owner, or model" value={mcpSearch} onChange={(event) => setMcpSearch(event.currentTarget.value)} />
+                <Select label="Status" data={servingStatusOptions} value={agentStatusFilter} onChange={setAgentStatusFilter} />
+                <Select label="Project" data={servingProjectOptions} value={agentProjectFilter} onChange={setAgentProjectFilter} />
               </SimpleGrid>
             </Paper>
 
             <Paper withBorder p="md">
-              <Title order={4}>All Agents</Title>
+              <Title order={4}>All Serving Deployments</Title>
               <ScrollArea mt="sm">
                 <Table withTableBorder highlightOnHover>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Created</Table.Th>
-                      <Table.Th>Agent</Table.Th>
-                      <Table.Th>Description</Table.Th>
-                      <Table.Th>Project</Table.Th>
-                      <Table.Th>Repo</Table.Th>
-                      <Table.Th>Owner</Table.Th>
-                      <Table.Th>Model</Table.Th>
-                      <Table.Th>Status</Table.Th>
-                      <Table.Th>Spend USD</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {pagedAdminAgents.length ? (
-                      pagedAdminAgents.map((agent) => (
-                        <Table.Tr key={agent.id}>
-                          <Table.Td>{new Date(agent.createdAt).toLocaleString()}</Table.Td>
-                          <Table.Td>{agent.agentName}</Table.Td>
-                          <Table.Td>{agent.description || "-"}</Table.Td>
-                          <Table.Td>{agent.projectName}</Table.Td>
-                          <Table.Td>{agent.repoName}</Table.Td>
-                          <Table.Td>{agent.ownerUserDisplayName || agent.ownerUserEmail || "-"}</Table.Td>
-                          <Table.Td>{agent.litellmModel || "-"}</Table.Td>
-                          <Table.Td>
-                            <Badge variant="light">{agent.status}</Badge>
-                          </Table.Td>
-                          <Table.Td>${agent.spendUsd.toFixed(4)}</Table.Td>
-                        </Table.Tr>
-                      ))
-                    ) : (
-                      <Table.Tr>
-                        <Table.Td colSpan={9}>
-                          <Text size="sm" c="dimmed">
-                            No agents match the current filters.
-                          </Text>
-                        </Table.Td>
-                      </Table.Tr>
-                    )}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-              <Group justify="end" mt="md">
-                <Pagination total={agentPages} value={agentPage} onChange={setAgentPage} />
-              </Group>
-            </Paper>
-
-            <Paper withBorder p="md">
-              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
-                <Select label="Status" data={mcpStatusOptions} value={mcpStatusFilter} onChange={setMcpStatusFilter} />
-                <Select label="Project" data={mcpProjectOptions} value={mcpProjectFilter} onChange={setMcpProjectFilter} />
-              </SimpleGrid>
-            </Paper>
-
-            <Paper withBorder p="md">
-              <Title order={4}>All MCP Servers</Title>
-              <ScrollArea mt="sm">
-                <Table withTableBorder highlightOnHover>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Created</Table.Th>
-                      <Table.Th>MCP</Table.Th>
+                      <Table.Th>Type</Table.Th>
+                      <Table.Th>Name</Table.Th>
                       <Table.Th>Description</Table.Th>
                       <Table.Th>Project</Table.Th>
                       <Table.Th>Repo</Table.Th>
@@ -1702,28 +1618,33 @@ export default function AdminPage() {
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
-                    {pagedAdminMcps.length ? (
-                      pagedAdminMcps.map((mcp) => (
-                        <Table.Tr key={mcp.id}>
-                          <Table.Td>{new Date(mcp.createdAt).toLocaleString()}</Table.Td>
-                          <Table.Td>{mcp.mcpName}</Table.Td>
-                          <Table.Td>{mcp.description || "-"}</Table.Td>
-                          <Table.Td>{mcp.projectName}</Table.Td>
-                          <Table.Td>{mcp.repoName}</Table.Td>
-                          <Table.Td>{mcp.ownerUserDisplayName || mcp.ownerUserEmail || "-"}</Table.Td>
-                          <Table.Td>{mcp.useLlm === "Y" ? "Enabled" : "Disabled"}</Table.Td>
-                          <Table.Td>{mcp.litellmModel || "-"}</Table.Td>
+                    {pagedServingRows.length ? (
+                      pagedServingRows.map((deployment) => (
+                        <Table.Tr key={`${deployment.type}-${deployment.id}`}>
+                          <Table.Td>{new Date(deployment.createdAt).toLocaleString()}</Table.Td>
                           <Table.Td>
-                            <Badge variant="light">{mcp.status}</Badge>
+                            <Badge variant="light" color={deployment.type === "Agent" ? "blue" : "grape"}>
+                              {deployment.type}
+                            </Badge>
                           </Table.Td>
-                          <Table.Td>${mcp.spendUsd.toFixed(4)}</Table.Td>
+                          <Table.Td>{deployment.name}</Table.Td>
+                          <Table.Td>{deployment.description || "-"}</Table.Td>
+                          <Table.Td>{deployment.projectName}</Table.Td>
+                          <Table.Td>{deployment.repoName}</Table.Td>
+                          <Table.Td>{deployment.owner}</Table.Td>
+                          <Table.Td>{deployment.llmEnabled ? "Enabled" : "Disabled"}</Table.Td>
+                          <Table.Td>{deployment.model || "-"}</Table.Td>
+                          <Table.Td>
+                            <Badge variant="light">{deployment.status}</Badge>
+                          </Table.Td>
+                          <Table.Td>${deployment.spendUsd.toFixed(4)}</Table.Td>
                         </Table.Tr>
                       ))
                     ) : (
                       <Table.Tr>
                         <Table.Td colSpan={10}>
                           <Text size="sm" c="dimmed">
-                            No MCP servers match the current filters.
+                            No serving deployments match the current filters.
                           </Text>
                         </Table.Td>
                       </Table.Tr>
@@ -1732,7 +1653,7 @@ export default function AdminPage() {
                 </Table>
               </ScrollArea>
               <Group justify="end" mt="md">
-                <Pagination total={mcpPages} value={mcpPage} onChange={setMcpPage} />
+                <Pagination total={servingPages} value={agentPage} onChange={setAgentPage} />
               </Group>
             </Paper>
           </Stack>
