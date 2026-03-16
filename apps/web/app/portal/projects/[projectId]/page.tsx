@@ -2380,14 +2380,6 @@ export default function ProjectDetailPage() {
                       </Button>
                     </Group>
 
-                    <Select
-                      label="Model"
-                      data={mcpPlaygroundModelOptions}
-                      value={selectedMcpPlaygroundModel}
-                      onChange={setSelectedMcpPlaygroundModel}
-                      searchable
-                    />
-
                     {devMcpCard ? (
                       <Paper withBorder p="md" radius="md">
                         <Stack gap={6}>
@@ -2438,22 +2430,40 @@ export default function ProjectDetailPage() {
                       </div>
                     </Paper>
 
-                    <Textarea
-                      label="Message"
-                      minRows={4}
-                      autosize
-                      maxRows={10}
-                      value={playgroundInput}
-                      onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
-                      onKeyDown={(event) => {
-                        if (event.ctrlKey && event.key === "Enter") {
-                          event.preventDefault();
-                          void sendPlaygroundMessage();
-                        }
-                      }}
-                      placeholder="Ask this MCP server to use its tools..."
-                      description="Press Ctrl+Enter to send."
-                    />
+                    <Stack gap={4}>
+                      <Group justify="space-between" align="flex-end" wrap="nowrap">
+                        <Stack gap={0}>
+                          <Text size="sm" fw={500}>
+                            Message
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            Press Ctrl+Enter to send.
+                          </Text>
+                        </Stack>
+                        <Select
+                          data={mcpPlaygroundModelOptions}
+                          value={selectedMcpPlaygroundModel}
+                          onChange={setSelectedMcpPlaygroundModel}
+                          searchable
+                          placeholder="Model"
+                          style={{ width: 260 }}
+                        />
+                      </Group>
+                      <Textarea
+                        minRows={4}
+                        autosize
+                        maxRows={10}
+                        value={playgroundInput}
+                        onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.ctrlKey && event.key === "Enter") {
+                            event.preventDefault();
+                            void sendPlaygroundMessage();
+                          }
+                        }}
+                        placeholder="Ask this MCP server to use its tools..."
+                      />
+                    </Stack>
                     <Group justify="end">
                       <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
                         Send
@@ -2543,28 +2553,8 @@ export default function ProjectDetailPage() {
                       <Badge variant="light">MCP</Badge>
                     </Group>
 
-                    <Select
-                      label="Model"
-                      data={mcpPlaygroundModelOptions}
-                      value={selectedMcpPlaygroundModel}
-                      onChange={setSelectedMcpPlaygroundModel}
-                      searchable
-                    />
-
-                    <Paper withBorder p="md" radius="md">
-                      <Stack gap={6}>
-                        <LoadingOverlay visible={loadingSelectedMcpCard} overlayProps={{ radius: "sm", blur: 1 }} />
-                        <Text>{selectedPlaygroundMcpCard?.name ?? selectedPlaygroundMcp.mcpName}</Text>
-                        <Text size="sm" c="dimmed">
-                          {(selectedPlaygroundMcpCard?.description ?? selectedPlaygroundMcp.description) || "No description"}
-                        </Text>
-                        <Text size="sm">
-                          Tools: {selectedPlaygroundMcpCard?.tools.map((tool) => tool.name).join(", ") || "No tools discovered"}
-                        </Text>
-                      </Stack>
-                    </Paper>
-
                     <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <LoadingOverlay visible={loadingSelectedMcpCard} overlayProps={{ radius: "sm", blur: 1 }} />
                       <div ref={deployedPlaygroundViewportRef} style={{ height: "100%", overflowY: "auto", paddingRight: 4 }}>
                         <Stack gap="sm">
                           {currentMcpPlaygroundMessages.length ? (
@@ -2601,22 +2591,40 @@ export default function ProjectDetailPage() {
                       </div>
                     </Paper>
 
-                    <Textarea
-                      label="Message"
-                      minRows={4}
-                      autosize
-                      maxRows={10}
-                      value={playgroundInput}
-                      onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
-                      onKeyDown={(event) => {
-                        if (event.ctrlKey && event.key === "Enter") {
-                          event.preventDefault();
-                          void sendPlaygroundMessage();
-                        }
-                      }}
-                      placeholder="Ask this MCP server to use its tools..."
-                      description="Press Ctrl+Enter to send."
-                    />
+                    <Stack gap={4}>
+                      <Group justify="space-between" align="flex-end" wrap="nowrap">
+                        <Stack gap={0}>
+                          <Text size="sm" fw={500}>
+                            Message
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            Press Ctrl+Enter to send.
+                          </Text>
+                        </Stack>
+                        <Select
+                          data={mcpPlaygroundModelOptions}
+                          value={selectedMcpPlaygroundModel}
+                          onChange={setSelectedMcpPlaygroundModel}
+                          searchable
+                          placeholder="Model"
+                          style={{ width: 260 }}
+                        />
+                      </Group>
+                      <Textarea
+                        minRows={4}
+                        autosize
+                        maxRows={10}
+                        value={playgroundInput}
+                        onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.ctrlKey && event.key === "Enter") {
+                            event.preventDefault();
+                            void sendPlaygroundMessage();
+                          }
+                        }}
+                        placeholder="Ask this MCP server to use its tools..."
+                      />
+                    </Stack>
                     <Group justify="end">
                       <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
                         Send
