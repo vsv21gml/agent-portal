@@ -479,7 +479,7 @@ export default function ProjectDetailPage() {
   );
 
   const runningWorkspaceCpu = runningWorkspaces.length;
-  const runningWorkspaceMemoryGi = runningWorkspaces.length * 4;
+  const runningWorkspaceMemoryGi = runningWorkspaces.length * 2;
   const repoOptions = useMemo(
     () => repos.map((repo) => ({ value: repo.id, label: repo.repoName })),
     [repos],
@@ -496,8 +496,14 @@ export default function ProjectDetailPage() {
     () => agents.filter((agent) => ["running", "deploying"].includes(agent.status)),
     [agents],
   );
+  const activeServingMcps = useMemo(
+    () => mcps.filter((mcp) => ["running", "deploying"].includes(mcp.status)),
+    [mcps],
+  );
   const maxServingAgents = 2;
   const hasServingCapacity = activeServingAgents.length < maxServingAgents;
+  const maxServingMcps = 2;
+  const hasMcpServingCapacity = activeServingMcps.length < maxServingMcps;
   const agentModelOptions = useMemo(
     () =>
       catalogModels.map((model) => ({
@@ -706,6 +712,7 @@ export default function ProjectDetailPage() {
     switch (activeMenu) {
       case "Info": {
         const overview = await loadInfoData(targetProjectId);
+        await loadRepos(overview.project);
         return overview.project;
       }
       case "Repo": {
@@ -929,7 +936,7 @@ export default function ProjectDetailPage() {
       );
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        toastError("Model is not available for MCP deployment.");
+        toastError("Serving capacity limit reached. Stop an active MCP server before deploying another one.");
       } else {
         toastError("Failed to deploy MCP.");
       }
@@ -1028,8 +1035,12 @@ export default function ProjectDetailPage() {
       const updated = await apiFetch<McpDeployment>(`mcps/${mcp.id}/restart`, { method: "POST" });
       setMcps((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
       toastSuccess("MCP restart requested.");
-    } catch {
-      toastError("Failed to restart MCP.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError("Serving capacity limit reached. Stop an active MCP server before restarting another one.");
+      } else {
+        toastError("Failed to restart MCP.");
+      }
     } finally {
       setRestartingMcpId(null);
     }
@@ -1613,6 +1624,22 @@ export default function ProjectDetailPage() {
                       CPU {runningWorkspaceCpu} / MEM {runningWorkspaceMemoryGi} Gi
                     </Text>
                   </Card>
+                  <Card withBorder radius="md" padding="lg">
+                    <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                      Agents
+                    </Text>
+                    <Text mt="sm" fw={600}>
+                      {runningAgents.length} running / {agents.length} deployed
+                    </Text>
+                  </Card>
+                  <Card withBorder radius="md" padding="lg">
+                    <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                      MCP Servers
+                    </Text>
+                    <Text mt="sm" fw={600}>
+                      {runningMcps.length} running / {mcps.length} deployed
+                    </Text>
+                  </Card>
                 </SimpleGrid>
               </Stack>
             </Paper>
@@ -1969,10 +1996,20 @@ export default function ProjectDetailPage() {
                   </Text>
                 </div>
                 <Group gap="sm">
+                  <Badge variant="light">{activeServingMcps.length}/{maxServingMcps} serving</Badge>
                   <Button variant="light" onClick={() => void loadMcps()}>
                     Refresh
                   </Button>
-                  <Button onClick={() => setMcpModalOpen(true)}>Deploy</Button>
+                  <Tooltip
+                    label="Serving capacity limit reached. Stop an active MCP server before deploying another one."
+                    disabled={hasMcpServingCapacity}
+                  >
+                    <div>
+                      <Button onClick={() => setMcpModalOpen(true)} disabled={!hasMcpServingCapacity}>
+                        Deploy
+                      </Button>
+                    </div>
+                  </Tooltip>
                 </Group>
               </Group>
             </Paper>
@@ -2704,7 +2741,7 @@ export default function ProjectDetailPage() {
             value={mcpDockerfilePath}
             onChange={(event) => setMcpDockerfilePath(event.currentTarget.value)}
           />
-          <Button loading={deployingMcp} onClick={() => void deployMcp()}>
+          <Button loading={deployingMcp} disabled={!hasMcpServingCapacity} onClick={() => void deployMcp()}>
             Deploy MCP
           </Button>
         </Stack>

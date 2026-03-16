@@ -107,6 +107,7 @@ export class McpsService {
 
   async createMcp(dto: CreateMcpDto, userId: string): Promise<McpDeploymentEntity> {
     await this.projectsService.getProject(dto.projectId);
+    await this.ensureProjectServingCapacity(dto.projectId);
     const repo = await this.gitlabService.getRepo(dto.projectId, dto.repoId);
     const user = await this.authService.findById(userId);
     const useLlm = dto.useLlm === true;
@@ -266,6 +267,7 @@ export class McpsService {
 
   async restartMcp(mcpId: string, userId: string): Promise<McpDeploymentEntity> {
     const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, ownerUserId: userId, deleteYn: "N" });
+    await this.ensureProjectServingCapacity(mcp.projectId, mcp.id);
     if (mcp.modelAccessRequestId) {
       const request = await this.modelAccessRequestRepository.findOne({ where: { id: mcp.modelAccessRequestId } });
       if (!request || request.status === "pending") {
@@ -1218,6 +1220,22 @@ export class McpsService {
       throw new Error(`${primaryKey} is not configured`);
     }
     return value;
+  }
+
+  private async hasProjectServingCapacity(projectId: string, excludeMcpId?: string): Promise<boolean> {
+    const activeCount = await this.countProjectServingMcps(projectId, excludeMcpId);
+    return activeCount < 2;
+  }
+
+  private async ensureProjectServingCapacity(projectId: string, excludeMcpId?: string): Promise<void> {
+    if (!(await this.hasProjectServingCapacity(projectId, excludeMcpId))) {
+      throw new ConflictException("No serving slot available for this project");
+    }
+  }
+
+  private async countProjectServingMcps(projectId: string, excludeMcpId?: string): Promise<number> {
+    const mcps = await this.mcpRepository.find({ where: { projectId, deleteYn: "N" } });
+    return mcps.filter((mcp) => mcp.id !== excludeMcpId && ["running", "deploying"].includes(mcp.status)).length;
   }
 
   private extractEcrRegion(repository: string): string {
