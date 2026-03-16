@@ -53,12 +53,12 @@ api:
   workspaceScheduling:
     nodeSelector: {}
     tolerations: []
-  agentIngress:
+  servingIngress:
     scheme: "http"
     hostTemplate: ""
     pathTemplate: "/"
     annotations: {}
-  agentScheduling:
+  servingScheduling:
     nodeSelector: {}
     tolerations: []
   service:
@@ -91,9 +91,9 @@ api:
     OPENSEARCH_ADMIN_PASSWORD: ""
     OPENSEARCH_INDEX_PREFIX: "project"
     KUBECONFIG_PATH: ""
-    K8S_AGENT_ENABLED: "true"
-    K8S_AGENT_NAMESPACE: "agent-serving"
-    K8S_AGENT_INGRESS_CLASS: "nginx"
+    K8S_SERVING_ENABLED: "true"
+    K8S_SERVING_NAMESPACE: "agent-serving"
+    K8S_SERVING_INGRESS_CLASS: "nginx"
     AGENT_GIT_IMAGE: "alpine/git:2.47.2"
     AGENT_VALIDATOR_IMAGE: "node:24-alpine"
     AGENT_VALIDATOR_LLM_MODEL: "gpt-4.1-mini"

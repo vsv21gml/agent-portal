@@ -1,7 +1,7 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 
 export type LiteLlmModelAccessRequestStatus = "pending" | "approved" | "rejected";
-export type LiteLlmModelAccessRequestType = "personal" | "agent_deploy";
+export type LiteLlmModelAccessRequestType = "personal" | "agent_deploy" | "mcp_deploy";
 
 @Entity("litellm_model_access_requests")
 export class LiteLlmModelAccessRequestEntity {
@@ -22,6 +22,9 @@ export class LiteLlmModelAccessRequestEntity {
 
   @Column({ type: "uuid", nullable: true })
   agentId!: string | null;
+
+  @Column({ type: "uuid", nullable: true })
+  mcpId!: string | null;
 
   @Column({ default: "pending" })
   status!: LiteLlmModelAccessRequestStatus;

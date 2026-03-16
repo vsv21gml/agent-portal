@@ -25,6 +25,8 @@ import { LiteLlmModelEntity } from "./llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "./llm/entities/litellm-team.entity";
 import { LiteLlmUserKeyEntity } from "./llm/entities/litellm-user-key.entity";
 import { LogsModule } from "./logs/logs.module";
+import { McpDeploymentEntity } from "./mcps/entities/mcp-deployment.entity";
+import { McpsModule } from "./mcps/mcps.module";
 import { AccessLogEntity } from "./logs/entities/access-log.entity";
 import { AuditLogEntity } from "./logs/entities/audit-log.entity";
 import { ProjectMemberEntity } from "./projects/entities/project-member.entity";
@@ -71,6 +73,7 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
           AuditLogEntity,
           AccessLogEntity,
           AgentDeploymentEntity,
+          McpDeploymentEntity,
         ],
       }),
     }),
@@ -83,6 +86,7 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
     AdminModule,
     VectorDbModule,
     AgentsModule,
+    McpsModule,
   ],
   controllers: [AppController],
   providers: [

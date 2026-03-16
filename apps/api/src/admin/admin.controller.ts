@@ -46,6 +46,12 @@ export class AdminController {
     return this.adminService.listAgents();
   }
 
+  @Get("mcps")
+  @Permissions(Permission.READ_PROJECT)
+  mcps() {
+    return this.adminService.listMcps();
+  }
+
   @Get("projects/:projectId/resource-limit")
   @Permissions(Permission.READ_RESOURCE)
   resourceLimit(@Param("projectId") projectId: string) {
@@ -70,6 +76,12 @@ export class AdminController {
   @Permissions(Permission.READ_RESOURCE)
   agentResources() {
     return this.adminService.getAgentResourceOverview();
+  }
+
+  @Get("resources/mcps")
+  @Permissions(Permission.READ_RESOURCE)
+  mcpResources() {
+    return this.adminService.getMcpResourceOverview();
   }
 
   @Get("gitlab/groups")

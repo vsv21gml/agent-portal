@@ -1,6 +1,6 @@
 {{- $saName := include "api.serviceAccountName" . -}}
 {{- $workspaceNs := .Values.env.K8S_WORKSPACE_NAMESPACE | default "agent-workspaces" -}}
-{{- $agentNs := .Values.env.K8S_AGENT_NAMESPACE | default "agent-serving" -}}
+{{- $agentNs := .Values.env.K8S_SERVING_NAMESPACE | default "agent-serving" -}}
 {{- if .Values.rbac.create }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -63,7 +63,7 @@ roleRef:
   kind: Role
   name: {{ include "api.fullname" . }}-workspace-manager
 {{- end }}
-{{- if eq (.Values.env.K8S_AGENT_ENABLED | default "true") "true" }}
+{{- if eq (.Values.env.K8S_SERVING_ENABLED | default "true") "true" }}
 ---
 apiVersion: v1
 kind: Namespace

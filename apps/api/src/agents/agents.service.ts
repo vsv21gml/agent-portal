@@ -67,7 +67,7 @@ export class AgentsService {
     if (!ecrRepository) {
       throw new Error("AGENT_ECR_REPOSITORY is not configured");
     }
-    const namespace = this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving");
+    const namespace = this.getServingConfig("K8S_SERVING_NAMESPACE", "K8S_AGENT_NAMESPACE") || "agent-serving";
     const id = crypto.randomUUID();
     const nameSuffix = id.replace(/-/g, "").slice(0, 12);
     const deploymentName = `agent-${nameSuffix}`;
@@ -436,7 +436,7 @@ export class AgentsService {
             },
             spec: {
               restartPolicy: "Never",
-              serviceAccountName: this.configService.get<string>("K8S_AGENT_BUILD_SERVICE_ACCOUNT", "agent-builder"),
+              serviceAccountName: this.getServingConfig("K8S_SERVING_BUILD_SERVICE_ACCOUNT", "K8S_AGENT_BUILD_SERVICE_ACCOUNT") || "agent-builder",
               nodeSelector: this.getAgentNodeSelector(),
               tolerations: this.getAgentTolerations(),
               initContainers: [
@@ -726,7 +726,7 @@ export class AgentsService {
 
   private async ensureAgentIngress(agent: AgentDeploymentEntity): Promise<void> {
     const { host, ingressPath } = this.parseEndpoint(agent.endpointUrl);
-    const ingressClassName = this.configService.get<string>("K8S_AGENT_INGRESS_CLASS", "nginx");
+    const ingressClassName = this.getServingConfig("K8S_SERVING_INGRESS_CLASS", "K8S_AGENT_INGRESS_CLASS") || "nginx";
     await this.kubeClientNetworking!.createNamespacedIngress({
       namespace: agent.namespace,
       body: {
@@ -811,7 +811,7 @@ export class AgentsService {
   }
 
   private getAgentNodeSelector(): Record<string, string> | undefined {
-    const raw = this.configService.get<string>("K8S_AGENT_NODE_SELECTOR_JSON")?.trim() ?? "";
+    const raw = this.getServingConfig("K8S_SERVING_NODE_SELECTOR_JSON", "K8S_AGENT_NODE_SELECTOR_JSON") ?? "";
     if (!raw) {
       return undefined;
     }
@@ -819,7 +819,7 @@ export class AgentsService {
   }
 
   private getAgentTolerations(): k8s.V1Toleration[] | undefined {
-    const raw = this.configService.get<string>("K8S_AGENT_TOLERATIONS_JSON")?.trim() ?? "";
+    const raw = this.getServingConfig("K8S_SERVING_TOLERATIONS_JSON", "K8S_AGENT_TOLERATIONS_JSON") ?? "";
     if (!raw) {
       return undefined;
     }
@@ -827,7 +827,7 @@ export class AgentsService {
   }
 
   private getAgentIngressAnnotations(): Record<string, string> {
-    const raw = this.configService.get<string>("K8S_AGENT_INGRESS_ANNOTATIONS_JSON")?.trim() ?? "";
+    const raw = this.getServingConfig("K8S_SERVING_INGRESS_ANNOTATIONS_JSON", "K8S_AGENT_INGRESS_ANNOTATIONS_JSON") ?? "";
     if (!raw) {
       return {};
     }
@@ -835,11 +835,11 @@ export class AgentsService {
   }
 
   private buildAgentEndpointUrl(deploymentName: string): string {
-    const hostTemplate = this.configService.get<string>("AGENT_HOST_TEMPLATE")?.trim() ?? "";
+    const hostTemplate = this.getServingConfig("SERVING_HOST_TEMPLATE", "AGENT_HOST_TEMPLATE") ?? "";
     const host = hostTemplate ? hostTemplate.replace(/\{\{\s*name\s*\}\}/g, deploymentName) : `${deploymentName}.127.0.0.1.nip.io`;
-    const pathTemplate = this.configService.get<string>("AGENT_PATH_TEMPLATE", "/").trim() || "/";
+    const pathTemplate = (this.getServingConfig("SERVING_PATH_TEMPLATE", "AGENT_PATH_TEMPLATE") ?? "/").trim() || "/";
     const path = pathTemplate.replace(/\{\{\s*name\s*\}\}/g, deploymentName);
-    const scheme = this.configService.get<string>("AGENT_URL_SCHEME", "http").trim() || "http";
+    const scheme = (this.getServingConfig("SERVING_URL_SCHEME", "AGENT_URL_SCHEME") ?? "http").trim() || "http";
     return `${scheme}://${host}${path === "/" ? "" : path}`;
   }
 
@@ -1170,5 +1170,17 @@ export class AgentsService {
   private extractEcrRegion(repository: string): string {
     const match = repository.match(/ecr\.([a-z0-9-]+)\.amazonaws\.com/i);
     return match?.[1] ?? this.configService.get<string>("AWS_REGION", "us-east-1");
+  }
+
+  private getServingConfig(primaryKey: string, fallbackKey?: string): string | undefined {
+    const primaryValue = this.configService.get<string>(primaryKey)?.trim();
+    if (primaryValue) {
+      return primaryValue;
+    }
+    if (!fallbackKey) {
+      return undefined;
+    }
+    const fallbackValue = this.configService.get<string>(fallbackKey)?.trim();
+    return fallbackValue || undefined;
   }
 }

@@ -8,6 +8,7 @@ import {
   Breadcrumbs,
   Button,
   Card,
+  Checkbox,
   Divider,
   Group,
   LoadingOverlay,
@@ -100,6 +101,46 @@ type AgentDeployment = {
   createdAt: string;
 };
 
+type McpDeployment = {
+  id: string;
+  repoId: string;
+  mcpName: string;
+  description: string;
+  dockerfilePath: string;
+  useLlm: string;
+  litellmModel: string;
+  ecrRepository: string;
+  imageUrl: string;
+  endpointUrl: string;
+  status: string;
+  lastMessage: string | null;
+  createdAt: string;
+};
+
+type LiteLlmAccessModel = {
+  modelName: string;
+  isDefault: boolean;
+  source?: string;
+};
+
+type MyLiteLlmAccess = {
+  litellmBaseUrl: string;
+  personalKey: string | null;
+  availableModels: LiteLlmAccessModel[];
+};
+
+type McpServerCard = {
+  name: string;
+  description: string;
+  endpointUrl: string;
+  protocolVersion: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+  }>;
+};
+
 type CatalogModel = {
   id: string;
   modelName: string;
@@ -120,12 +161,13 @@ type ExternalAgentCard = {
   [key: string]: unknown;
 };
 
-type ProjectSection = "Info" | "Repo" | "Agent" | "Playground";
+type ProjectSection = "Info" | "Repo" | "Agent" | "MCP" | "Playground";
 
-const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "playground" }> = [
+const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "mcp" | "playground" }> = [
   { label: "Info", slug: "info" },
   { label: "Repo", slug: "repo" },
   { label: "Agent", slug: "agent" },
+  { label: "MCP", slug: "mcp" },
   { label: "Playground", slug: "playground" },
 ];
 const runtimeOptions = [
@@ -305,6 +347,9 @@ function getSectionFromPathname(pathname: string): ProjectSection {
   if (pathname.endsWith("/agent")) {
     return "Agent";
   }
+  if (pathname.endsWith("/mcp")) {
+    return "MCP";
+  }
   if (pathname.endsWith("/playground")) {
     return "Playground";
   }
@@ -356,10 +401,32 @@ export default function ProjectDetailPage() {
   const [agentLogs, setAgentLogs] = useState("");
   const [loadingAgentLogs, setLoadingAgentLogs] = useState(false);
   const agentLogsViewportRef = useRef<HTMLDivElement | null>(null);
+  const [mcps, setMcps] = useState<McpDeployment[]>([]);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  const [mcpName, setMcpName] = useState("");
+  const [mcpDescription, setMcpDescription] = useState("");
+  const [mcpRepoId, setMcpRepoId] = useState<string | null>(null);
+  const [mcpDockerfilePath, setMcpDockerfilePath] = useState("./Dockerfile");
+  const [mcpUseLlm, setMcpUseLlm] = useState(false);
+  const [mcpModelName, setMcpModelName] = useState<string | null>(null);
+  const [deployingMcp, setDeployingMcp] = useState(false);
+  const [stoppingMcpId, setStoppingMcpId] = useState<string | null>(null);
+  const [restartingMcpId, setRestartingMcpId] = useState<string | null>(null);
+  const [deletingMcpId, setDeletingMcpId] = useState<string | null>(null);
+  const [mcpSearchQuery, setMcpSearchQuery] = useState("");
+  const [mcpStatusFilter, setMcpStatusFilter] = useState<string | null>("all");
+  const [mcpRepoFilter, setMcpRepoFilter] = useState<string | null>("all");
+  const [mcpLogsTarget, setMcpLogsTarget] = useState<McpDeployment | null>(null);
+  const [mcpLogs, setMcpLogs] = useState("");
+  const [loadingMcpLogs, setLoadingMcpLogs] = useState(false);
+  const mcpLogsViewportRef = useRef<HTMLDivElement | null>(null);
   const [playgroundMode, setPlaygroundMode] = useState<"deployed" | "dev">("deployed");
+  const [playgroundTargetType, setPlaygroundTargetType] = useState<"agent" | "mcp">("agent");
   const [selectedPlaygroundAgentId, setSelectedPlaygroundAgentId] = useState<string | null>(null);
+  const [selectedPlaygroundMcpId, setSelectedPlaygroundMcpId] = useState<string | null>(null);
   const [playgroundInput, setPlaygroundInput] = useState("");
   const [playgroundMessages, setPlaygroundMessages] = useState<Record<string, PlaygroundMessage[]>>({});
+  const [mcpPlaygroundMessages, setMcpPlaygroundMessages] = useState<Record<string, PlaygroundMessage[]>>({});
   const [playgroundContextIds, setPlaygroundContextIds] = useState<Record<string, string | null>>({});
   const [sendingPlaygroundMessage, setSendingPlaygroundMessage] = useState(false);
   const [devA2AUrl, setDevA2AUrl] = useState("");
@@ -368,9 +435,17 @@ export default function ProjectDetailPage() {
   const [devAgentCardUrl, setDevAgentCardUrl] = useState("");
   const [devPlaygroundMessages, setDevPlaygroundMessages] = useState<PlaygroundMessage[]>([]);
   const [devPlaygroundContextId, setDevPlaygroundContextId] = useState<string | null>(null);
+  const [devMcpUrl, setDevMcpUrl] = useState("");
+  const [connectingDevMcp, setConnectingDevMcp] = useState(false);
+  const [devMcpCard, setDevMcpCard] = useState<McpServerCard | null>(null);
+  const [devMcpMessages, setDevMcpMessages] = useState<PlaygroundMessage[]>([]);
+  const [selectedMcpPlaygroundModel, setSelectedMcpPlaygroundModel] = useState<string | null>(null);
+  const [selectedPlaygroundMcpCard, setSelectedPlaygroundMcpCard] = useState<McpServerCard | null>(null);
+  const [loadingSelectedMcpCard, setLoadingSelectedMcpCard] = useState(false);
   const devPlaygroundViewportRef = useRef<HTMLDivElement | null>(null);
   const deployedPlaygroundViewportRef = useRef<HTMLDivElement | null>(null);
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
+  const [llmAccess, setLlmAccess] = useState<MyLiteLlmAccess | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string | null>("member");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -413,6 +488,10 @@ export default function ProjectDetailPage() {
     () => agents.filter((agent) => agent.status === "running"),
     [agents],
   );
+  const runningMcps = useMemo(
+    () => mcps.filter((mcp) => mcp.status === "running"),
+    [mcps],
+  );
   const activeServingAgents = useMemo(
     () => agents.filter((agent) => ["running", "deploying"].includes(agent.status)),
     [agents],
@@ -430,6 +509,10 @@ export default function ProjectDetailPage() {
   const selectedAgentModel = useMemo(
     () => catalogModels.find((model) => model.modelName === agentModelName) ?? null,
     [agentModelName, catalogModels],
+  );
+  const selectedMcpModel = useMemo(
+    () => catalogModels.find((model) => model.modelName === mcpModelName) ?? null,
+    [catalogModels, mcpModelName],
   );
   const agentStatusOptions = useMemo(
     () => [
@@ -460,13 +543,54 @@ export default function ProjectDetailPage() {
       return matchesQuery && matchesStatus && matchesRepo && (normalizedQuery ? repoName.toLowerCase().includes(normalizedQuery) || matchesQuery : true);
     });
   }, [agentRepoFilter, agentSearchQuery, agentStatusFilter, agents, repos]);
+  const mcpStatusOptions = useMemo(
+    () => [
+      { value: "all", label: "All statuses" },
+      ...Array.from(new Set(mcps.map((mcp) => mcp.status))).map((status) => ({
+        value: status,
+        label: status,
+      })),
+    ],
+    [mcps],
+  );
+  const mcpRepoFilterOptions = useMemo(
+    () => [{ value: "all", label: "All repositories" }, ...repoOptions],
+    [repoOptions],
+  );
+  const filteredMcps = useMemo(() => {
+    const normalizedQuery = mcpSearchQuery.trim().toLowerCase();
+
+    return mcps.filter((mcp) => {
+      const repoName = repos.find((repo) => repo.id === mcp.repoId)?.repoName ?? "";
+      const matchesQuery =
+        !normalizedQuery ||
+        mcp.mcpName.toLowerCase().includes(normalizedQuery) ||
+        mcp.description.toLowerCase().includes(normalizedQuery);
+      const matchesStatus = mcpStatusFilter === "all" || mcp.status === mcpStatusFilter;
+      const matchesRepo = mcpRepoFilter === "all" || mcp.repoId === mcpRepoFilter;
+
+      return matchesQuery && matchesStatus && matchesRepo && (normalizedQuery ? repoName.toLowerCase().includes(normalizedQuery) || matchesQuery : true);
+    });
+  }, [mcpRepoFilter, mcpSearchQuery, mcpStatusFilter, mcps, repos]);
   const selectedPlaygroundAgent = useMemo(
     () => runningAgents.find((agent) => agent.id === selectedPlaygroundAgentId) ?? null,
     [runningAgents, selectedPlaygroundAgentId],
   );
+  const selectedPlaygroundMcp = useMemo(
+    () => runningMcps.find((mcp) => mcp.id === selectedPlaygroundMcpId) ?? null,
+    [runningMcps, selectedPlaygroundMcpId],
+  );
   const currentPlaygroundMessages = useMemo(
     () => (selectedPlaygroundAgentId ? playgroundMessages[selectedPlaygroundAgentId] ?? [] : []),
     [playgroundMessages, selectedPlaygroundAgentId],
+  );
+  const currentMcpPlaygroundMessages = useMemo(
+    () => (selectedPlaygroundMcpId ? mcpPlaygroundMessages[selectedPlaygroundMcpId] ?? [] : []),
+    [mcpPlaygroundMessages, selectedPlaygroundMcpId],
+  );
+  const mcpPlaygroundModelOptions = useMemo(
+    () => llmAccess?.availableModels.map((model) => ({ value: model.modelName, label: model.modelName })) ?? [],
+    [llmAccess],
   );
 
   const loadProject = async (targetProjectId: string) => {
@@ -522,6 +646,20 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const loadMcps = async (targetProject?: Project | null) => {
+    const activeProject = targetProject ?? project;
+    if (!activeProject) {
+      return;
+    }
+
+    try {
+      const mcpRows = await apiFetch<McpDeployment[]>(`mcps/project/${activeProject.id}`);
+      setMcps(mcpRows);
+    } catch {
+      toastError("Failed to load MCP deployments.");
+    }
+  };
+
   const loadCatalogModels = async (targetProjectId: string) => {
     try {
       const models = await apiFetch<CatalogModel[]>(`llm/projects/${targetProjectId}/catalog-models`);
@@ -531,8 +669,27 @@ export default function ProjectDetailPage() {
           ? current
           : models.find((model) => model.isDefault)?.modelName ?? models[0]?.modelName ?? null,
       );
+      setMcpModelName((current) =>
+        current && models.some((model) => model.modelName === current)
+          ? current
+          : models.find((model) => model.isDefault)?.modelName ?? models[0]?.modelName ?? null,
+      );
     } catch {
       toastError("Failed to load LiteLLM models.");
+    }
+  };
+
+  const loadCurrentLlmAccess = async () => {
+    try {
+      const access = await apiFetch<MyLiteLlmAccess>("llm/me/access");
+      setLlmAccess(access);
+      setSelectedMcpPlaygroundModel((current) =>
+        current && access.availableModels.some((model) => model.modelName === current)
+          ? current
+          : access.availableModels[0]?.modelName ?? null,
+      );
+    } catch {
+      setLlmAccess(null);
     }
   };
 
@@ -561,9 +718,14 @@ export default function ProjectDetailPage() {
         await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject), loadCatalogModels(targetProjectId)]);
         return loadedProject;
       }
+      case "MCP": {
+        const loadedProject = await loadProject(targetProjectId);
+        await Promise.all([loadRepos(loadedProject), loadMcps(loadedProject), loadCatalogModels(targetProjectId)]);
+        return loadedProject;
+      }
       case "Playground": {
         const loadedProject = await loadProject(targetProjectId);
-        await loadAgents(loadedProject);
+        await Promise.all([loadAgents(loadedProject), loadMcps(loadedProject), loadCurrentLlmAccess()]);
         return loadedProject;
       }
       default:
@@ -605,16 +767,59 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     if (!runningAgents.length) {
-      if (playgroundMode === "deployed") {
+      if (playgroundMode === "deployed" && playgroundTargetType === "agent") {
         setSelectedPlaygroundAgentId(null);
       }
       return;
     }
 
-    if (playgroundMode === "deployed" && (!selectedPlaygroundAgentId || !runningAgents.some((agent) => agent.id === selectedPlaygroundAgentId))) {
+    if (
+      playgroundMode === "deployed" &&
+      playgroundTargetType === "agent" &&
+      (!selectedPlaygroundAgentId || !runningAgents.some((agent) => agent.id === selectedPlaygroundAgentId))
+    ) {
       setSelectedPlaygroundAgentId(runningAgents[0].id);
     }
-  }, [playgroundMode, runningAgents, selectedPlaygroundAgentId]);
+  }, [playgroundMode, playgroundTargetType, runningAgents, selectedPlaygroundAgentId]);
+
+  useEffect(() => {
+    if (!runningMcps.length) {
+      if (playgroundMode === "deployed" && playgroundTargetType === "mcp") {
+        setSelectedPlaygroundMcpId(null);
+      }
+      return;
+    }
+
+    if (
+      playgroundMode === "deployed" &&
+      playgroundTargetType === "mcp" &&
+      (!selectedPlaygroundMcpId || !runningMcps.some((mcp) => mcp.id === selectedPlaygroundMcpId))
+    ) {
+      setSelectedPlaygroundMcpId(runningMcps[0].id);
+    }
+  }, [playgroundMode, playgroundTargetType, runningMcps, selectedPlaygroundMcpId]);
+
+  useEffect(() => {
+    if (playgroundMode !== "deployed" || playgroundTargetType !== "mcp" || !selectedPlaygroundMcpId) {
+      setSelectedPlaygroundMcpCard(null);
+      return;
+    }
+
+    const load = async () => {
+      setLoadingSelectedMcpCard(true);
+      try {
+        const card = await apiFetch<McpServerCard>(`mcps/${selectedPlaygroundMcpId}/card`);
+        setSelectedPlaygroundMcpCard(card);
+      } catch {
+        setSelectedPlaygroundMcpCard(null);
+        toastError("Failed to load MCP card.");
+      } finally {
+        setLoadingSelectedMcpCard(false);
+      }
+    };
+
+    void load();
+  }, [playgroundMode, playgroundTargetType, selectedPlaygroundMcpId]);
 
   const refreshWorkspace = async (workspaceId: string) => {
     const latest = await apiFetch<WorkspaceSession>(`workspaces/${workspaceId}`);
@@ -689,6 +894,50 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const deployMcp = async () => {
+    if (!project || !mcpName.trim() || !mcpRepoId || (mcpUseLlm && !mcpModelName)) {
+      toastError("Fill in MCP name, repo, and model when LLM is enabled.");
+      return;
+    }
+
+    setDeployingMcp(true);
+    try {
+      const created = await apiFetch<McpDeployment>("mcps", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: project.id,
+          repoId: mcpRepoId,
+          mcpName: mcpName.trim(),
+          description: mcpDescription.trim(),
+          dockerfilePath: mcpDockerfilePath.trim() || "./Dockerfile",
+          useLlm: mcpUseLlm,
+          litellmModel: mcpUseLlm ? mcpModelName : undefined,
+        }),
+      });
+      setMcps((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
+      setMcpModalOpen(false);
+      setMcpName("");
+      setMcpDescription("");
+      setMcpRepoId(null);
+      setMcpDockerfilePath("./Dockerfile");
+      setMcpUseLlm(false);
+      setMcpModelName(catalogModels.find((model) => model.isDefault)?.modelName ?? catalogModels[0]?.modelName ?? null);
+      toastSuccess(
+        mcpUseLlm && !selectedMcpModel?.isDefault
+          ? "MCP build requested. Deployment will continue after admin approval."
+          : "MCP build and deployment requested.",
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError("Model is not available for MCP deployment.");
+      } else {
+        toastError("Failed to deploy MCP.");
+      }
+    } finally {
+      setDeployingMcp(false);
+    }
+  };
+
   const loadAgentLogs = async (agent: AgentDeployment) => {
     setLogsTarget(agent);
     setLoadingAgentLogs(true);
@@ -700,6 +949,20 @@ export default function ProjectDetailPage() {
       toastError("Failed to load agent logs.");
     } finally {
       setLoadingAgentLogs(false);
+    }
+  };
+
+  const loadMcpLogs = async (mcp: McpDeployment) => {
+    setMcpLogsTarget(mcp);
+    setLoadingMcpLogs(true);
+    try {
+      const result = await apiFetch<{ logs: string }>(`mcps/${mcp.id}/logs`);
+      setMcpLogs(result.logs);
+    } catch {
+      setMcpLogs("");
+      toastError("Failed to load MCP logs.");
+    } finally {
+      setLoadingMcpLogs(false);
     }
   };
 
@@ -746,6 +1009,45 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const stopMcp = async (mcp: McpDeployment) => {
+    setStoppingMcpId(mcp.id);
+    try {
+      const updated = await apiFetch<McpDeployment>(`mcps/${mcp.id}/stop`, { method: "POST" });
+      setMcps((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
+      toastSuccess("MCP stopped.");
+    } catch {
+      toastError("Failed to stop MCP.");
+    } finally {
+      setStoppingMcpId(null);
+    }
+  };
+
+  const restartMcp = async (mcp: McpDeployment) => {
+    setRestartingMcpId(mcp.id);
+    try {
+      const updated = await apiFetch<McpDeployment>(`mcps/${mcp.id}/restart`, { method: "POST" });
+      setMcps((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
+      toastSuccess("MCP restart requested.");
+    } catch {
+      toastError("Failed to restart MCP.");
+    } finally {
+      setRestartingMcpId(null);
+    }
+  };
+
+  const deleteMcp = async (mcp: McpDeployment) => {
+    setDeletingMcpId(mcp.id);
+    try {
+      await apiFetch(`mcps/${mcp.id}`, { method: "DELETE" });
+      setMcps((prev) => prev.filter((item) => item.id !== mcp.id));
+      toastSuccess("MCP deleted.");
+    } catch {
+      toastError("Failed to delete MCP.");
+    } finally {
+      setDeletingMcpId(null);
+    }
+  };
+
   useEffect(() => {
     if (!logsTarget) {
       return;
@@ -758,6 +1060,19 @@ export default function ProjectDetailPage() {
 
     return () => window.clearInterval(timer);
   }, [logsTarget]);
+
+  useEffect(() => {
+    if (!mcpLogsTarget) {
+      return;
+    }
+
+    void loadMcpLogs(mcpLogsTarget);
+    const timer = window.setInterval(() => {
+      void loadMcpLogs(mcpLogsTarget);
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [mcpLogsTarget]);
 
   useEffect(() => {
     if (!logsTarget || !agentLogsViewportRef.current) {
@@ -779,7 +1094,7 @@ export default function ProjectDetailPage() {
       top: devPlaygroundViewportRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [devPlaygroundMessages]);
+  }, [devMcpMessages, devPlaygroundMessages]);
 
   useEffect(() => {
     if (!deployedPlaygroundViewportRef.current) {
@@ -790,7 +1105,18 @@ export default function ProjectDetailPage() {
       top: deployedPlaygroundViewportRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [currentPlaygroundMessages]);
+  }, [currentMcpPlaygroundMessages, currentPlaygroundMessages]);
+
+  useEffect(() => {
+    if (!mcpLogsTarget || !mcpLogsViewportRef.current) {
+      return;
+    }
+
+    mcpLogsViewportRef.current.scrollTo({
+      top: mcpLogsViewportRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [mcpLogs, mcpLogsTarget]);
 
   const copyText = async (value: string, successMessage: string) => {
     try {
@@ -815,20 +1141,42 @@ export default function ProjectDetailPage() {
       role: "user",
       content: playgroundInput.trim(),
     };
-    if (playgroundMode === "dev") {
+    let nextMessages: PlaygroundMessage[] = [];
+
+    if (playgroundMode === "dev" && playgroundTargetType === "agent") {
       if (!devA2AUrl.trim() || !devAgentCard) {
         toastError("Connect an A2A URL first.");
         return;
       }
-      setDevPlaygroundMessages((prev) => [...prev, userMessage]);
-    } else {
+      nextMessages = [...devPlaygroundMessages, userMessage];
+      setDevPlaygroundMessages(nextMessages);
+    } else if (playgroundMode === "dev" && playgroundTargetType === "mcp") {
+      if (!devMcpUrl.trim() || !devMcpCard || !selectedMcpPlaygroundModel) {
+        toastError("Connect an MCP URL and choose a model first.");
+        return;
+      }
+      nextMessages = [...devMcpMessages, userMessage];
+      setDevMcpMessages(nextMessages);
+    } else if (playgroundTargetType === "agent") {
       if (!selectedPlaygroundAgent) {
         return;
       }
       const agentId = selectedPlaygroundAgent.id;
+      nextMessages = [...(playgroundMessages[agentId] ?? []), userMessage];
       setPlaygroundMessages((prev) => ({
         ...prev,
-        [agentId]: [...(prev[agentId] ?? []), userMessage],
+        [agentId]: nextMessages,
+      }));
+    } else {
+      if (!selectedPlaygroundMcp || !selectedMcpPlaygroundModel) {
+        toastError("Select an MCP server and a model first.");
+        return;
+      }
+      const mcpId = selectedPlaygroundMcp.id;
+      nextMessages = [...(mcpPlaygroundMessages[mcpId] ?? []), userMessage];
+      setMcpPlaygroundMessages((prev) => ({
+        ...prev,
+        [mcpId]: nextMessages,
       }));
     }
     setPlaygroundInput("");
@@ -836,7 +1184,7 @@ export default function ProjectDetailPage() {
 
     try {
       const result =
-        playgroundMode === "dev"
+        playgroundMode === "dev" && playgroundTargetType === "agent"
           ? await apiFetch<{ reply: string; endpoint: string; contextId: string | null }>("agents/playground/chat", {
               method: "POST",
               body: JSON.stringify({
@@ -845,34 +1193,67 @@ export default function ProjectDetailPage() {
                 contextId: devPlaygroundContextId,
               }),
             })
-          : await apiFetch<{ reply: string; endpoint: string; contextId: string | null }>(`agents/${selectedPlaygroundAgent!.id}/chat`, {
-              method: "POST",
-              body: JSON.stringify({
-                message: userMessage.content,
-                contextId: playgroundContextIds[selectedPlaygroundAgent!.id] ?? null,
-              }),
-            });
+          : playgroundMode === "dev" && playgroundTargetType === "mcp"
+            ? await apiFetch<{ reply: string; serverCard: McpServerCard }>("mcps/playground/chat", {
+                method: "POST",
+                body: JSON.stringify({
+                  url: devMcpUrl.trim(),
+                  modelName: selectedMcpPlaygroundModel,
+                  messages: nextMessages.map((message) => ({
+                    role: message.role === "agent" ? "assistant" : "user",
+                    content: message.content,
+                  })),
+                }),
+              })
+            : playgroundTargetType === "agent"
+              ? await apiFetch<{ reply: string; endpoint: string; contextId: string | null }>(`agents/${selectedPlaygroundAgent!.id}/chat`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    message: userMessage.content,
+                    contextId: playgroundContextIds[selectedPlaygroundAgent!.id] ?? null,
+                  }),
+                })
+              : await apiFetch<{ reply: string; serverCard: McpServerCard }>(`mcps/${selectedPlaygroundMcp!.id}/chat`, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    modelName: selectedMcpPlaygroundModel,
+                    messages: nextMessages.map((message) => ({
+                      role: message.role === "agent" ? "assistant" : "user",
+                      content: message.content,
+                    })),
+                  }),
+                });
       const agentMessage: PlaygroundMessage = {
         id: `${Date.now()}-agent`,
         role: "agent",
         content: result.reply,
       };
-      if (playgroundMode === "dev") {
-        setDevPlaygroundContextId(result.contextId ?? null);
+      if (playgroundMode === "dev" && playgroundTargetType === "agent") {
+        setDevPlaygroundContextId((result as { contextId: string | null }).contextId ?? null);
         setDevPlaygroundMessages((prev) => [...prev, agentMessage]);
-      } else {
+      } else if (playgroundMode === "dev" && playgroundTargetType === "mcp") {
+        setDevMcpCard((result as { serverCard: McpServerCard }).serverCard);
+        setDevMcpMessages((prev) => [...prev, agentMessage]);
+      } else if (playgroundTargetType === "agent") {
         const agentId = selectedPlaygroundAgent!.id;
         setPlaygroundContextIds((prev) => ({
           ...prev,
-          [agentId]: result.contextId ?? prev[agentId] ?? null,
+          [agentId]: (result as { contextId: string | null }).contextId ?? prev[agentId] ?? null,
         }));
         setPlaygroundMessages((prev) => ({
           ...prev,
           [agentId]: [...(prev[agentId] ?? []), agentMessage],
         }));
+      } else {
+        const mcpId = selectedPlaygroundMcp!.id;
+        setSelectedPlaygroundMcpCard((result as { serverCard: McpServerCard }).serverCard);
+        setMcpPlaygroundMessages((prev) => ({
+          ...prev,
+          [mcpId]: [...(prev[mcpId] ?? []), agentMessage],
+        }));
       }
     } catch {
-      toastError("Failed to chat with agent.");
+      toastError(playgroundTargetType === "mcp" ? "Failed to test MCP server." : "Failed to chat with agent.");
     } finally {
       setSendingPlaygroundMessage(false);
     }
@@ -891,6 +1272,7 @@ export default function ProjectDetailPage() {
         body: JSON.stringify({ url: devA2AUrl.trim() }),
       });
       setPlaygroundMode("dev");
+      setPlaygroundTargetType("agent");
       setDevA2AUrl(result.normalizedUrl);
       setDevAgentCardUrl(result.agentCardUrl);
       setDevAgentCard(result.agentCard);
@@ -901,6 +1283,31 @@ export default function ProjectDetailPage() {
       toastError("Failed to connect to the A2A URL.");
     } finally {
       setConnectingDevAgent(false);
+    }
+  };
+
+  const connectDevMcp = async () => {
+    if (!devMcpUrl.trim()) {
+      toastError("Enter an MCP URL.");
+      return;
+    }
+
+    setConnectingDevMcp(true);
+    try {
+      const result = await apiFetch<{ normalizedUrl: string; serverCard: McpServerCard }>("mcps/playground/inspect", {
+        method: "POST",
+        body: JSON.stringify({ url: devMcpUrl.trim() }),
+      });
+      setPlaygroundMode("dev");
+      setPlaygroundTargetType("mcp");
+      setDevMcpUrl(result.normalizedUrl);
+      setDevMcpCard(result.serverCard);
+      setDevMcpMessages([]);
+      toastSuccess("MCP server connected.");
+    } catch {
+      toastError("Failed to connect to the MCP URL.");
+    } finally {
+      setConnectingDevMcp(false);
     }
   };
 
@@ -1551,6 +1958,135 @@ export default function ProjectDetailPage() {
           </Stack>
         ) : null}
 
+        {activeMenu === "MCP" ? (
+          <Stack>
+            <Paper withBorder p="md" radius="md">
+              <Group justify="space-between" align="center">
+                <div>
+                  <Title order={4}>MCP Servers</Title>
+                  <Text size="sm" c="dimmed">
+                    Build, deploy, and inspect project MCP servers.
+                  </Text>
+                </div>
+                <Group gap="sm">
+                  <Button variant="light" onClick={() => void loadMcps()}>
+                    Refresh
+                  </Button>
+                  <Button onClick={() => setMcpModalOpen(true)}>Deploy</Button>
+                </Group>
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md" radius="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                <TextInput
+                  label="MCP name / description"
+                  placeholder="Search MCP deployments"
+                  value={mcpSearchQuery}
+                  onChange={(event) => setMcpSearchQuery(event.currentTarget.value)}
+                />
+                <Select
+                  label="MCP status"
+                  data={mcpStatusOptions}
+                  value={mcpStatusFilter}
+                  onChange={setMcpStatusFilter}
+                />
+                <Select label="Repo" data={mcpRepoFilterOptions} value={mcpRepoFilter} onChange={setMcpRepoFilter} searchable />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md" radius="md">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>MCP</Table.Th>
+                    <Table.Th>Description</Table.Th>
+                    <Table.Th>Repo</Table.Th>
+                    <Table.Th>LLM</Table.Th>
+                    <Table.Th>Model</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Created</Table.Th>
+                    <Table.Th>Endpoint</Table.Th>
+                    <Table.Th>Logs</Table.Th>
+                    <Table.Th>Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {filteredMcps.length ? (
+                    filteredMcps.map((mcp) => (
+                      <Table.Tr key={mcp.id}>
+                        <Table.Td>
+                          <Text>{mcp.mcpName}</Text>
+                        </Table.Td>
+                        <Table.Td>{mcp.description || "-"}</Table.Td>
+                        <Table.Td>{repos.find((repo) => repo.id === mcp.repoId)?.repoName ?? mcp.repoId}</Table.Td>
+                        <Table.Td>{mcp.useLlm === "Y" ? "Enabled" : "Disabled"}</Table.Td>
+                        <Table.Td>{mcp.litellmModel || "-"}</Table.Td>
+                        <Table.Td>
+                          <Badge variant="light">{mcp.status}</Badge>
+                        </Table.Td>
+                        <Table.Td>{new Date(mcp.createdAt).toLocaleString()}</Table.Td>
+                        <Table.Td>
+                          <Button size="xs" variant="light" onClick={() => void copyText(mcp.endpointUrl, "Endpoint copied.")}>
+                            Copy
+                          </Button>
+                        </Table.Td>
+                        <Table.Td>
+                          <Button size="xs" variant="light" onClick={() => void loadMcpLogs(mcp)}>
+                            Logs
+                          </Button>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap="xs">
+                            {mcp.status === "stopped" ? (
+                              <Button
+                                size="xs"
+                                variant="default"
+                                loading={restartingMcpId === mcp.id}
+                                onClick={() => void restartMcp(mcp)}
+                              >
+                                Restart
+                              </Button>
+                            ) : null}
+                            {["running", "deploying"].includes(mcp.status) ? (
+                              <Button
+                                size="xs"
+                                color="yellow"
+                                variant="light"
+                                loading={stoppingMcpId === mcp.id}
+                                onClick={() => void stopMcp(mcp)}
+                              >
+                                Stop
+                              </Button>
+                            ) : null}
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="light"
+                              loading={deletingMcpId === mcp.id}
+                              onClick={() => void deleteMcp(mcp)}
+                            >
+                              Delete
+                            </Button>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))
+                  ) : (
+                    <Table.Tr>
+                      <Table.Td colSpan={10}>
+                        <Text size="sm" c="dimmed">
+                          {mcps.length ? "No MCP deployments match the current filters." : "No MCP deployments yet."}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          </Stack>
+        ) : null}
+
         {activeMenu === "Playground" ? (
           <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <Paper withBorder p="md" radius="md">
@@ -1559,11 +2095,16 @@ export default function ProjectDetailPage() {
                   <div>
                     <Title order={4}>Playground</Title>
                     <Text size="sm" c="dimmed">
-                      Chat with deployed agents through A2A.
+                      Test deployed Agents and MCP servers from one place.
                     </Text>
                   </div>
-                  <Button variant="light" onClick={() => void loadAgents()}>
-                    Refresh Agents
+                  <Button
+                    variant="light"
+                    onClick={() => {
+                      void Promise.all([loadAgents(), loadMcps(), loadCurrentLlmAccess()]);
+                    }}
+                  >
+                    Refresh Targets
                   </Button>
                 </Group>
               </Stack>
@@ -1581,17 +2122,46 @@ export default function ProjectDetailPage() {
                   padding="lg"
                   style={{
                     cursor: "pointer",
-                    borderColor: playgroundMode === "dev" ? "var(--mantine-color-blue-6)" : undefined,
+                    borderColor:
+                      playgroundMode === "dev" && playgroundTargetType === "agent" ? "var(--mantine-color-blue-6)" : undefined,
                   }}
-                  onClick={() => setPlaygroundMode("dev")}
+                  onClick={() => {
+                    setPlaygroundMode("dev");
+                    setPlaygroundTargetType("agent");
+                  }}
                 >
                   <Stack gap={6}>
                     <Group justify="space-between" align="center">
-                      <Text>Dev</Text>
+                      <Text>Dev Agent</Text>
                       <Badge variant="light">A2A</Badge>
                     </Group>
                     <Text size="sm" c="dimmed">
                       Connect any external A2A URL and validate the agent card.
+                    </Text>
+                  </Stack>
+                </Card>
+
+                <Card
+                  withBorder
+                  radius="md"
+                  padding="lg"
+                  style={{
+                    cursor: "pointer",
+                    borderColor:
+                      playgroundMode === "dev" && playgroundTargetType === "mcp" ? "var(--mantine-color-blue-6)" : undefined,
+                  }}
+                  onClick={() => {
+                    setPlaygroundMode("dev");
+                    setPlaygroundTargetType("mcp");
+                  }}
+                >
+                  <Stack gap={6}>
+                    <Group justify="space-between" align="center">
+                      <Text>Dev MCP</Text>
+                      <Badge variant="light">MCP</Badge>
+                    </Group>
+                    <Text size="sm" c="dimmed">
+                      Connect any external MCP HTTP endpoint, inspect tools, and test tool-calling.
                     </Text>
                   </Stack>
                 </Card>
@@ -1605,10 +2175,14 @@ export default function ProjectDetailPage() {
                       padding="lg"
                       style={{
                         cursor: "pointer",
-                        borderColor: selectedPlaygroundAgentId === agent.id ? "var(--mantine-color-blue-6)" : undefined,
+                        borderColor:
+                          playgroundMode === "deployed" && playgroundTargetType === "agent" && selectedPlaygroundAgentId === agent.id
+                            ? "var(--mantine-color-blue-6)"
+                            : undefined,
                       }}
                       onClick={() => {
                         setPlaygroundMode("deployed");
+                        setPlaygroundTargetType("agent");
                         setSelectedPlaygroundAgentId(agent.id);
                       }}
                     >
@@ -1631,6 +2205,46 @@ export default function ProjectDetailPage() {
                     </Text>
                   </Paper>
                 )}
+
+                {runningMcps.length ? (
+                  runningMcps.map((mcp) => (
+                    <Card
+                      key={mcp.id}
+                      withBorder
+                      radius="md"
+                      padding="lg"
+                      style={{
+                        cursor: "pointer",
+                        borderColor:
+                          playgroundMode === "deployed" && playgroundTargetType === "mcp" && selectedPlaygroundMcpId === mcp.id
+                            ? "var(--mantine-color-blue-6)"
+                            : undefined,
+                      }}
+                      onClick={() => {
+                        setPlaygroundMode("deployed");
+                        setPlaygroundTargetType("mcp");
+                        setSelectedPlaygroundMcpId(mcp.id);
+                      }}
+                    >
+                      <Stack gap={6}>
+                        <Group justify="space-between" align="center">
+                          <Text>{mcp.mcpName}</Text>
+                          <Badge variant="light">{mcp.status}</Badge>
+                        </Group>
+                        <Text size="sm" c="dimmed">
+                          {mcp.description || "No description"}
+                        </Text>
+                        <Text size="sm">{mcp.id}</Text>
+                      </Stack>
+                    </Card>
+                  ))
+                ) : (
+                  <Paper withBorder p="md" radius="md">
+                    <Text size="sm" c="dimmed">
+                      No running MCP servers available.
+                    </Text>
+                  </Paper>
+                )}
               </Stack>
 
               <Paper
@@ -1639,7 +2253,7 @@ export default function ProjectDetailPage() {
                 radius="md"
                 style={{ gridColumn: "span 2", display: "flex", minHeight: 0, height: "100%", overflow: "hidden" }}
               >
-                {playgroundMode === "dev" ? (
+                {playgroundMode === "dev" && playgroundTargetType === "agent" ? (
                   <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
                     <Group justify="space-between" align="center">
                       <div>
@@ -1741,7 +2355,112 @@ export default function ProjectDetailPage() {
                       </Button>
                     </Group>
                   </Stack>
-                ) : selectedPlaygroundAgent ? (
+                ) : playgroundMode === "dev" && playgroundTargetType === "mcp" ? (
+                  <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Title order={4}>Dev MCP Test</Title>
+                        <Text size="sm" c="dimmed">
+                          Connect to an external MCP server, inspect its tools, choose an allowed model, and test tool-calling.
+                        </Text>
+                      </div>
+                      <Badge variant="light">MCP</Badge>
+                    </Group>
+
+                    <Group align="end">
+                      <TextInput
+                        label="MCP URL"
+                        placeholder="https://example.com/mcp"
+                        value={devMcpUrl}
+                        onChange={(event) => setDevMcpUrl(event.currentTarget.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <Button loading={connectingDevMcp} onClick={() => void connectDevMcp()}>
+                        Connect
+                      </Button>
+                    </Group>
+
+                    <Select
+                      label="Model"
+                      data={mcpPlaygroundModelOptions}
+                      value={selectedMcpPlaygroundModel}
+                      onChange={setSelectedMcpPlaygroundModel}
+                      searchable
+                    />
+
+                    {devMcpCard ? (
+                      <Paper withBorder p="md" radius="md">
+                        <Stack gap={6}>
+                          <Text>{devMcpCard.name}</Text>
+                          <Text size="sm" c="dimmed">
+                            {devMcpCard.description || "No description"}
+                          </Text>
+                          <Text size="sm">Endpoint: {devMcpCard.endpointUrl}</Text>
+                          <Text size="sm">Tools: {devMcpCard.tools.map((tool) => tool.name).join(", ") || "No tools"}</Text>
+                        </Stack>
+                      </Paper>
+                    ) : null}
+
+                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <div ref={devPlaygroundViewportRef} style={{ height: "100%", overflowY: "auto", paddingRight: 4 }}>
+                        <Stack gap="sm">
+                          {devMcpMessages.length ? (
+                            devMcpMessages.map((message) => (
+                              <Paper
+                                key={message.id}
+                                p="sm"
+                                radius="md"
+                                withBorder
+                                style={{
+                                  marginLeft: message.role === "user" ? "auto" : undefined,
+                                  maxWidth: "85%",
+                                  background: message.role === "user" ? "rgba(12, 74, 110, 0.08)" : undefined,
+                                }}
+                              >
+                                <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                                  {message.role === "user" ? "You" : devMcpCard?.name ?? "MCP"}
+                                </Text>
+                                {message.role === "user" ? (
+                                  <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                                    {message.content}
+                                  </Text>
+                                ) : (
+                                  renderMarkdownContent(message.content)
+                                )}
+                              </Paper>
+                            ))
+                          ) : (
+                            <Text size="sm" c="dimmed">
+                              Connect an MCP URL and start a tool-calling test.
+                            </Text>
+                          )}
+                        </Stack>
+                      </div>
+                    </Paper>
+
+                    <Textarea
+                      label="Message"
+                      minRows={4}
+                      autosize
+                      maxRows={10}
+                      value={playgroundInput}
+                      onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.ctrlKey && event.key === "Enter") {
+                          event.preventDefault();
+                          void sendPlaygroundMessage();
+                        }
+                      }}
+                      placeholder="Ask this MCP server to use its tools..."
+                      description="Press Ctrl+Enter to send."
+                    />
+                    <Group justify="end">
+                      <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
+                        Send
+                      </Button>
+                    </Group>
+                  </Stack>
+                ) : playgroundMode === "deployed" && playgroundTargetType === "agent" && selectedPlaygroundAgent ? (
                   <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
                     <Group justify="space-between" align="center">
                       <div>
@@ -1812,10 +2531,102 @@ export default function ProjectDetailPage() {
                       </Button>
                     </Group>
                   </Stack>
+                ) : playgroundMode === "deployed" && playgroundTargetType === "mcp" && selectedPlaygroundMcp ? (
+                  <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                    <Group justify="space-between" align="center">
+                      <div>
+                        <Title order={4}>{selectedPlaygroundMcp.mcpName}</Title>
+                        <Text size="sm" c="dimmed">
+                          {selectedPlaygroundMcp.endpointUrl}
+                        </Text>
+                      </div>
+                      <Badge variant="light">MCP</Badge>
+                    </Group>
+
+                    <Select
+                      label="Model"
+                      data={mcpPlaygroundModelOptions}
+                      value={selectedMcpPlaygroundModel}
+                      onChange={setSelectedMcpPlaygroundModel}
+                      searchable
+                    />
+
+                    <Paper withBorder p="md" radius="md">
+                      <Stack gap={6}>
+                        <LoadingOverlay visible={loadingSelectedMcpCard} overlayProps={{ radius: "sm", blur: 1 }} />
+                        <Text>{selectedPlaygroundMcpCard?.name ?? selectedPlaygroundMcp.mcpName}</Text>
+                        <Text size="sm" c="dimmed">
+                          {(selectedPlaygroundMcpCard?.description ?? selectedPlaygroundMcp.description) || "No description"}
+                        </Text>
+                        <Text size="sm">
+                          Tools: {selectedPlaygroundMcpCard?.tools.map((tool) => tool.name).join(", ") || "No tools discovered"}
+                        </Text>
+                      </Stack>
+                    </Paper>
+
+                    <Paper withBorder p="md" radius="md" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <div ref={deployedPlaygroundViewportRef} style={{ height: "100%", overflowY: "auto", paddingRight: 4 }}>
+                        <Stack gap="sm">
+                          {currentMcpPlaygroundMessages.length ? (
+                            currentMcpPlaygroundMessages.map((message) => (
+                              <Paper
+                                key={message.id}
+                                p="sm"
+                                radius="md"
+                                withBorder
+                                style={{
+                                  marginLeft: message.role === "user" ? "auto" : undefined,
+                                  maxWidth: "85%",
+                                  background: message.role === "user" ? "rgba(12, 74, 110, 0.08)" : undefined,
+                                }}
+                              >
+                                <Text size="xs" c="dimmed" tt="uppercase" fw={700}>
+                                  {message.role === "user" ? "You" : selectedPlaygroundMcp.mcpName}
+                                </Text>
+                                {message.role === "user" ? (
+                                  <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                                    {message.content}
+                                  </Text>
+                                ) : (
+                                  renderMarkdownContent(message.content)
+                                )}
+                              </Paper>
+                            ))
+                          ) : (
+                            <Text size="sm" c="dimmed">
+                              Start a tool-calling test with this MCP server.
+                            </Text>
+                          )}
+                        </Stack>
+                      </div>
+                    </Paper>
+
+                    <Textarea
+                      label="Message"
+                      minRows={4}
+                      autosize
+                      maxRows={10}
+                      value={playgroundInput}
+                      onChange={(event) => setPlaygroundInput(event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.ctrlKey && event.key === "Enter") {
+                          event.preventDefault();
+                          void sendPlaygroundMessage();
+                        }
+                      }}
+                      placeholder="Ask this MCP server to use its tools..."
+                      description="Press Ctrl+Enter to send."
+                    />
+                    <Group justify="end">
+                      <Button loading={sendingPlaygroundMessage} onClick={() => void sendPlaygroundMessage()}>
+                        Send
+                      </Button>
+                    </Group>
+                  </Stack>
                 ) : (
                   <Stack justify="center" align="center" style={{ flex: 1, minHeight: 0 }}>
                     <Text size="sm" c="dimmed">
-                      Select a running agent to start chatting.
+                      Select a target on the left to start testing.
                     </Text>
                   </Stack>
                 )}
@@ -1854,6 +2665,43 @@ export default function ProjectDetailPage() {
         </Stack>
       </Modal>
 
+      <Modal opened={mcpModalOpen} onClose={() => setMcpModalOpen(false)} title="Deploy MCP" centered>
+        <Stack>
+          <TextInput label="MCP Name" value={mcpName} onChange={(event) => setMcpName(event.currentTarget.value)} />
+          <TextInput
+            label="MCP Description"
+            value={mcpDescription}
+            onChange={(event) => setMcpDescription(event.currentTarget.value)}
+          />
+          <Select label="Repository" data={repoOptions} value={mcpRepoId} onChange={setMcpRepoId} searchable />
+          <Checkbox
+            label="Use internal LLM"
+            checked={mcpUseLlm}
+            onChange={(event) => setMcpUseLlm(event.currentTarget.checked)}
+          />
+          {mcpUseLlm ? (
+            <>
+              <Select label="LITELLM_MODEL" data={agentModelOptions} value={mcpModelName} onChange={setMcpModelName} searchable />
+              {selectedMcpModel ? (
+                <Text size="sm" c={selectedMcpModel.isDefault ? "dimmed" : "orange"}>
+                  {selectedMcpModel.isDefault
+                    ? "Default model: build succeeds and deployment starts immediately."
+                    : "Non-default model: build runs first, then admin approval is required before deployment."}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
+          <TextInput
+            label="Dockerfile Path"
+            value={mcpDockerfilePath}
+            onChange={(event) => setMcpDockerfilePath(event.currentTarget.value)}
+          />
+          <Button loading={deployingMcp} onClick={() => void deployMcp()}>
+            Deploy MCP
+          </Button>
+        </Stack>
+      </Modal>
+
       <Modal
         opened={logsTarget !== null}
         onClose={() => setLogsTarget(null)}
@@ -1874,6 +2722,32 @@ export default function ProjectDetailPage() {
             <ScrollArea viewportRef={agentLogsViewportRef} h={680} offsetScrollbars>
               <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>
                 {agentLogs || "No logs yet."}
+              </Text>
+            </ScrollArea>
+          </Paper>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={mcpLogsTarget !== null}
+        onClose={() => setMcpLogsTarget(null)}
+        title={mcpLogsTarget ? `${mcpLogsTarget.mcpName} logs` : "MCP logs"}
+        size="90%"
+        centered
+      >
+        <Stack>
+          <Group justify="space-between" align="center">
+            <Text size="sm" c="dimmed">
+              Logs refresh automatically every 3 seconds.
+            </Text>
+            <Badge variant="light" color={loadingMcpLogs ? "blue" : "gray"}>
+              {loadingMcpLogs ? "Syncing" : "Live"}
+            </Badge>
+          </Group>
+          <Paper withBorder p="md">
+            <ScrollArea viewportRef={mcpLogsViewportRef} h={680} offsetScrollbars>
+              <Text size="sm" ff="monospace" style={{ whiteSpace: "pre-wrap" }}>
+                {mcpLogs || "No logs yet."}
               </Text>
             </ScrollArea>
           </Paper>

@@ -32,13 +32,13 @@ workspaceScheduling:
   nodeSelector: {}
   tolerations: []
 
-agentIngress:
+servingIngress:
   scheme: "http"
   hostTemplate: ""
   pathTemplate: "/"
   annotations: {}
 
-agentScheduling:
+servingScheduling:
   nodeSelector: {}
   tolerations: []
 
@@ -71,9 +71,9 @@ env:
   K8S_WORKSPACE_ENABLED: "false"
   K8S_WORKSPACE_NAMESPACE: "agent-workspaces"
   K8S_WORKSPACE_INGRESS_CLASS: "nginx"
-  K8S_AGENT_ENABLED: "true"
-  K8S_AGENT_NAMESPACE: "agent-serving"
-  K8S_AGENT_INGRESS_CLASS: "nginx"
+  K8S_SERVING_ENABLED: "true"
+  K8S_SERVING_NAMESPACE: "agent-serving"
+  K8S_SERVING_INGRESS_CLASS: "nginx"
   KUBECONFIG_PATH: ""
   WORKSPACE_HOST_SUFFIX: "127.0.0.1.nip.io"
   WORKSPACE_IMAGE_NODE22: "agent-portal-vscode-node22:latest"
