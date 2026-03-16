@@ -3,7 +3,6 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtPayload } from "../auth/types/jwt-payload.type";
-import { AuthService } from "../auth/auth.service";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { GlobalRole } from "../common/enums/global-role.enum";
 import { Permission } from "../common/enums/permission.enum";
@@ -21,7 +20,6 @@ import { AdminService } from "./admin.service";
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly authService: AuthService,
     private readonly projectsService: ProjectsService,
     private readonly gitlabService: GitlabService,
     private readonly llmService: LlmService,
@@ -31,7 +29,7 @@ export class AdminController {
   @Get("users")
   @Permissions(Permission.READ_USER)
   users() {
-    return this.authService.listUsers();
+    return this.adminService.listUsers();
   }
 
   @Get("projects")

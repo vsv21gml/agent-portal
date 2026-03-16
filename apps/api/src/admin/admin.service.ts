@@ -160,6 +160,16 @@ type McpAdminRow = {
   createdAt: string;
 };
 
+type UserAdminRow = {
+  id: string;
+  email: string;
+  displayName: string;
+  globalRole: string;
+  createdAt: string;
+  currentMonthSpendUsd: number;
+  currentMonthBudgetUsd: number | null;
+};
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -545,6 +555,21 @@ export class AdminService {
 
   private async getWorkspaceNodePoolSummary(): Promise<WorkspaceResourceOverview["nodePool"]> {
     return this.getNodePoolSummary(this.getWorkspaceNodeConstraints());
+  }
+
+  async listUsers(): Promise<UserAdminRow[]> {
+    const users = await this.userRepository.find({ order: { createdAt: "DESC" } });
+    const usageRows = await Promise.all(users.map((user) => this.llmService.getCurrentUserUsage(user.id)));
+
+    return users.map((user, index) => ({
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      globalRole: user.globalRole,
+      createdAt: user.createdAt.toISOString(),
+      currentMonthSpendUsd: usageRows[index]?.currentMonthSpendUsd ?? 0,
+      currentMonthBudgetUsd: usageRows[index]?.currentMonthBudgetUsd ?? null,
+    }));
   }
 
   private async getNodePoolSummary(constraints: NodePoolConstraints): Promise<WorkspaceResourceOverview["nodePool"]> {

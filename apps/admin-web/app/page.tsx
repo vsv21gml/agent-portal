@@ -33,6 +33,9 @@ type UserRow = {
   email: string;
   displayName: string;
   globalRole: string;
+  createdAt: string;
+  currentMonthSpendUsd: number;
+  currentMonthBudgetUsd: number | null;
 };
 
 type InvitationRow = {
@@ -350,6 +353,7 @@ export default function AdminPage() {
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [modelRequests, setModelRequests] = useState<ModelAccessRequest[]>([]);
   const [activePage, setActivePage] = useState(1);
+  const [userTab, setUserTab] = useState<string | null>("current");
   const [gitlabGroupPage, setGitlabGroupPage] = useState(1);
   const [gitlabRepoPage, setGitlabRepoPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
@@ -375,6 +379,8 @@ export default function AdminPage() {
   const [inviteRole, setInviteRole] = useState<string | null>("user");
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [deletingInvitationId, setDeletingInvitationId] = useState<string | null>(null);
+  const [pendingRoleChanges, setPendingRoleChanges] = useState<Record<string, "admin" | "user">>({});
+  const [savingRoleChanges, setSavingRoleChanges] = useState(false);
   const [gitlabOpen, setGitlabOpen] = useState(false);
   const [gitlabRepoName, setGitlabRepoName] = useState("");
   const [gitlabError, setGitlabError] = useState<string | null>(null);
@@ -523,6 +529,10 @@ export default function AdminPage() {
     setInviteDisplayName("");
     setInviteRole("user");
   }, [inviteOpen]);
+
+  useEffect(() => {
+    setPendingRoleChanges({});
+  }, [users]);
 
   useEffect(() => {
     setGitlabGroupPage(1);
@@ -675,15 +685,29 @@ export default function AdminPage() {
     }
   };
 
-  const updateRole = async (userId: string, role: "admin" | "user") => {
+  const saveRoleChanges = async () => {
+    const entries = Object.entries(pendingRoleChanges);
+    if (!entries.length) {
+      return;
+    }
+
+    setSavingRoleChanges(true);
     try {
-      await apiFetch(`auth/users/${userId}/role/${role}`, { method: "PATCH" });
-      setUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, globalRole: role } : user)));
-      notifications.show({ title: "Updated", message: "Role updated.", color: "teal" });
+      await Promise.all(entries.map(([userId, role]) => apiFetch(`auth/users/${userId}/role/${role}`, { method: "PATCH" })));
+      setUsers((prev) =>
+        prev.map((user) => (pendingRoleChanges[user.id] ? { ...user, globalRole: pendingRoleChanges[user.id] } : user)),
+      );
+      setPendingRoleChanges({});
+      notifications.show({ title: "Updated", message: "Role changes saved.", color: "teal" });
     } catch {
-      notifications.show({ title: "Failed", message: "Failed to update role.", color: "red" });
+      notifications.show({ title: "Failed", message: "Failed to save role changes.", color: "red" });
+    } finally {
+      setSavingRoleChanges(false);
     }
   };
+
+  const formatBudgetUsage = (spendUsd: number, budgetUsd: number | null) =>
+    `${spendUsd.toFixed(1)}/${budgetUsd !== null ? budgetUsd.toFixed(1) : "-"}`;
 
   const projectPages = Math.max(1, Math.ceil(projects.length / PAGE_SIZE));
   const pagedProjects = useMemo(() => {
@@ -1098,101 +1122,137 @@ export default function AdminPage() {
           <Paper withBorder p="md">
             <Group justify="space-between" align="center">
               <Title order={4}>Users</Title>
-              <Button variant="light" onClick={() => setInviteOpen(true)}>
-                Invite User
-              </Button>
+              <Group>
+                <Button variant="light" onClick={() => setInviteOpen(true)}>
+                  Invite User
+                </Button>
+                {Object.keys(pendingRoleChanges).length ? (
+                  <Button onClick={() => void saveRoleChanges()} loading={savingRoleChanges}>
+                    Save
+                  </Button>
+                ) : null}
+              </Group>
             </Group>
 
-            <ScrollArea mt="sm">
-              <Table withTableBorder highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Email</Table.Th>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Role</Table.Th>
-                    <Table.Th>Action</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {users.map((user) => (
-                    <Table.Tr key={user.id}>
-                      <Table.Td>{user.email}</Table.Td>
-                      <Table.Td>{user.displayName}</Table.Td>
-                      <Table.Td>
-                        <Badge>{user.globalRole}</Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap="xs">
-                          <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(user.id, "admin")}>
-                            ADMIN
-                          </Badge>
-                          <Badge variant="light" style={{ cursor: "pointer" }} onClick={() => void updateRole(user.id, "user")}>
-                            USER
-                          </Badge>
-                        </Group>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
+            <Tabs value={userTab} onChange={setUserTab} mt="md">
+              <Tabs.List>
+                <Tabs.Tab value="current">Current Users</Tabs.Tab>
+                <Tabs.Tab value="pending">Pending Invitations</Tabs.Tab>
+              </Tabs.List>
 
-            <Title order={5} mt="xl">
-              Pending Invitations
-            </Title>
-            <ScrollArea mt="sm">
-              <Table withTableBorder highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Email</Table.Th>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>Role</Table.Th>
-                    <Table.Th>Created</Table.Th>
-                    <Table.Th>Link</Table.Th>
-                    <Table.Th>Delete</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {invitations.length === 0 ? (
-                    <Table.Tr>
-                      <Table.Td colSpan={6}>
-                        <Text size="sm" c="dimmed">
-                          No pending invitations.
-                        </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ) : (
-                    invitations.map((invitation) => (
-                      <Table.Tr key={invitation.id}>
-                        <Table.Td>{invitation.email}</Table.Td>
-                        <Table.Td>{invitation.displayName}</Table.Td>
-                        <Table.Td>{invitation.globalRole}</Table.Td>
-                        <Table.Td>{new Date(invitation.createdAt).toLocaleString()}</Table.Td>
-                        <Table.Td>
-                          <Group gap="xs" wrap="nowrap">
-                            <TextInput value={buildPortalInviteUrl(invitation.token)} readOnly styles={{ input: { minWidth: 320 } }} />
-                            <Button size="xs" variant="light" onClick={() => void copyInvitationLink(invitation.token)}>
-                              Copy
-                            </Button>
-                          </Group>
-                        </Table.Td>
-                        <Table.Td>
-                          <Button
-                            size="xs"
-                            color="red"
-                            variant="subtle"
-                            loading={deletingInvitationId === invitation.id}
-                            onClick={() => void deleteInvitation(invitation.id)}
-                          >
-                            Delete
-                          </Button>
-                        </Table.Td>
+              <Tabs.Panel value="current" pt="md">
+                <ScrollArea>
+                  <Table withTableBorder highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Email</Table.Th>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>Role</Table.Th>
+                        <Table.Th>Created</Table.Th>
+                        <Table.Th>Monthly Usage / Budget</Table.Th>
                       </Table.Tr>
-                    ))
-                  )}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {users.map((user) => (
+                        <Table.Tr
+                          key={user.id}
+                          style={
+                            pendingRoleChanges[user.id]
+                              ? { backgroundColor: "rgba(250, 176, 5, 0.12)" }
+                              : undefined
+                          }
+                        >
+                          <Table.Td>{user.email}</Table.Td>
+                          <Table.Td>{user.displayName}</Table.Td>
+                          <Table.Td>
+                            <Select
+                              data={[
+                                { value: "admin", label: "Admin" },
+                                { value: "user", label: "User" },
+                              ]}
+                              value={pendingRoleChanges[user.id] ?? user.globalRole}
+                              onChange={(value) => {
+                                if (!value) {
+                                  return;
+                                }
+                                setPendingRoleChanges((prev) => {
+                                  if (value === user.globalRole) {
+                                    const next = { ...prev };
+                                    delete next[user.id];
+                                    return next;
+                                  }
+                                  return { ...prev, [user.id]: value as "admin" | "user" };
+                                });
+                              }}
+                              disabled={savingRoleChanges}
+                              style={{ minWidth: 140 }}
+                            />
+                          </Table.Td>
+                          <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>{formatBudgetUsage(user.currentMonthSpendUsd, user.currentMonthBudgetUsd)}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="pending" pt="md">
+                <ScrollArea>
+                  <Table withTableBorder highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Email</Table.Th>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>Role</Table.Th>
+                        <Table.Th>Created</Table.Th>
+                        <Table.Th>Link</Table.Th>
+                        <Table.Th>Delete</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {invitations.length === 0 ? (
+                        <Table.Tr>
+                          <Table.Td colSpan={6}>
+                            <Text size="sm" c="dimmed">
+                              No pending invitations.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      ) : (
+                        invitations.map((invitation) => (
+                          <Table.Tr key={invitation.id}>
+                            <Table.Td>{invitation.email}</Table.Td>
+                            <Table.Td>{invitation.displayName}</Table.Td>
+                            <Table.Td>{invitation.globalRole}</Table.Td>
+                            <Table.Td>{new Date(invitation.createdAt).toLocaleString()}</Table.Td>
+                            <Table.Td>
+                              <Group gap="xs" wrap="nowrap">
+                                <TextInput value={buildPortalInviteUrl(invitation.token)} readOnly styles={{ input: { minWidth: 320 } }} />
+                                <Button size="xs" variant="light" onClick={() => void copyInvitationLink(invitation.token)}>
+                                  Copy
+                                </Button>
+                              </Group>
+                            </Table.Td>
+                            <Table.Td>
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="subtle"
+                                loading={deletingInvitationId === invitation.id}
+                                onClick={() => void deleteInvitation(invitation.id)}
+                              >
+                                Delete
+                              </Button>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Tabs.Panel>
+            </Tabs>
           </Paper>
         ) : null}
 
