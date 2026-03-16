@@ -342,6 +342,8 @@ export default function AdminPage() {
   const [agentResourceOverview, setAgentResourceOverview] = useState<AgentResourceOverview | null>(null);
   const [mcpResourceOverview, setMcpResourceOverview] = useState<McpResourceOverview | null>(null);
   const [resourceTab, setResourceTab] = useState<string | null>("workspace");
+  const [workspaceResourceTab, setWorkspaceResourceTab] = useState<string | null>("deployments");
+  const [servingResourceTab, setServingResourceTab] = useState<string | null>("deployments");
   const [groups, setGroups] = useState<GitlabGroup[]>([]);
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
   const [vectorKeys, setVectorKeys] = useState<VectorKey[]>([]);
@@ -1320,83 +1322,94 @@ export default function AdminPage() {
                     </Stack>
                   </Paper>
 
-                  <Paper withBorder p="md">
-                    <Title order={4}>Running Workspace Sessions</Title>
-                    <ScrollArea mt="sm">
-                      <Table withTableBorder highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Project</Table.Th>
-                            <Table.Th>Repo</Table.Th>
-                            <Table.Th>User</Table.Th>
-                            <Table.Th>Email</Table.Th>
-                            <Table.Th>CPU</Table.Th>
-                            <Table.Th>MEM Gi</Table.Th>
-                            <Table.Th>Node</Table.Th>
-                            <Table.Th>Started</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {workspaceResourceOverview?.rows.length ? (
-                            workspaceResourceOverview.rows.map((resource) => (
-                              <Table.Tr key={resource.sessionId}>
-                                <Table.Td>{resource.projectName}</Table.Td>
-                                <Table.Td>{resource.repoName}</Table.Td>
-                                <Table.Td>{resource.userDisplayName}</Table.Td>
-                                <Table.Td>{resource.userEmail || "-"}</Table.Td>
-                                <Table.Td>{resource.cpu}</Table.Td>
-                                <Table.Td>{resource.memoryGi}</Table.Td>
-                                <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
-                                <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
-                              </Table.Tr>
-                            ))
-                          ) : (
-                            <Table.Tr>
-                              <Table.Td colSpan={8}>
-                                <Text size="sm" c="dimmed">
-                                  No running workspace sessions.
-                                </Text>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Table.Tbody>
-                      </Table>
-                    </ScrollArea>
-                  </Paper>
+                  <Tabs value={workspaceResourceTab} onChange={setWorkspaceResourceTab}>
+                    <Tabs.List>
+                      <Tabs.Tab value="deployments">Deployments</Tabs.Tab>
+                      <Tabs.Tab value="nodes">Nodes</Tabs.Tab>
+                    </Tabs.List>
 
-                  <Paper withBorder p="md">
-                    <Title order={4}>Workspace Node List</Title>
-                    <ScrollArea mt="sm">
-                      <Table withTableBorder highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Node</Table.Th>
-                            <Table.Th>CPU</Table.Th>
-                            <Table.Th>MEM Gi</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {workspaceResourceOverview?.nodePool.nodes.length ? (
-                            workspaceResourceOverview.nodePool.nodes.map((node) => (
-                              <Table.Tr key={node.nodeName}>
-                                <Table.Td>{node.nodeName}</Table.Td>
-                                <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
-                                <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                    <Tabs.Panel value="deployments" pt="md">
+                      <Paper withBorder p="md">
+                        <Title order={4}>Running Workspace Sessions</Title>
+                        <ScrollArea mt="sm">
+                          <Table withTableBorder highlightOnHover>
+                            <Table.Thead>
+                              <Table.Tr>
+                                <Table.Th>Project</Table.Th>
+                                <Table.Th>Repo</Table.Th>
+                                <Table.Th>User</Table.Th>
+                                <Table.Th>Email</Table.Th>
+                                <Table.Th>CPU</Table.Th>
+                                <Table.Th>MEM Gi</Table.Th>
+                                <Table.Th>Node</Table.Th>
+                                <Table.Th>Started</Table.Th>
                               </Table.Tr>
-                            ))
-                          ) : (
-                            <Table.Tr>
-                              <Table.Td colSpan={3}>
-                                <Text size="sm" c="dimmed">
-                                  No workspace nodes matched the configured selector.
-                                </Text>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Table.Tbody>
-                      </Table>
-                    </ScrollArea>
-                  </Paper>
+                            </Table.Thead>
+                            <Table.Tbody>
+                              {workspaceResourceOverview?.rows.length ? (
+                                workspaceResourceOverview.rows.map((resource) => (
+                                  <Table.Tr key={resource.sessionId}>
+                                    <Table.Td>{resource.projectName}</Table.Td>
+                                    <Table.Td>{resource.repoName}</Table.Td>
+                                    <Table.Td>{resource.userDisplayName}</Table.Td>
+                                    <Table.Td>{resource.userEmail || "-"}</Table.Td>
+                                    <Table.Td>{resource.cpu}</Table.Td>
+                                    <Table.Td>{resource.memoryGi}</Table.Td>
+                                    <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
+                                    <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                                  </Table.Tr>
+                                ))
+                              ) : (
+                                <Table.Tr>
+                                  <Table.Td colSpan={8}>
+                                    <Text size="sm" c="dimmed">
+                                      No running workspace sessions.
+                                    </Text>
+                                  </Table.Td>
+                                </Table.Tr>
+                              )}
+                            </Table.Tbody>
+                          </Table>
+                        </ScrollArea>
+                      </Paper>
+                    </Tabs.Panel>
+
+                    <Tabs.Panel value="nodes" pt="md">
+                      <Paper withBorder p="md">
+                        <Title order={4}>Workspace Node List</Title>
+                        <ScrollArea mt="sm">
+                          <Table withTableBorder highlightOnHover>
+                            <Table.Thead>
+                              <Table.Tr>
+                                <Table.Th>Node</Table.Th>
+                                <Table.Th>CPU</Table.Th>
+                                <Table.Th>MEM Gi</Table.Th>
+                              </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                              {workspaceResourceOverview?.nodePool.nodes.length ? (
+                                workspaceResourceOverview.nodePool.nodes.map((node) => (
+                                  <Table.Tr key={node.nodeName}>
+                                    <Table.Td>{node.nodeName}</Table.Td>
+                                    <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
+                                    <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                                  </Table.Tr>
+                                ))
+                              ) : (
+                                <Table.Tr>
+                                  <Table.Td colSpan={3}>
+                                    <Text size="sm" c="dimmed">
+                                      No workspace nodes matched the configured selector.
+                                    </Text>
+                                  </Table.Td>
+                                </Table.Tr>
+                              )}
+                            </Table.Tbody>
+                          </Table>
+                        </ScrollArea>
+                      </Paper>
+                    </Tabs.Panel>
+                  </Tabs>
                 </Stack>
               </Tabs.Panel>
 
@@ -1492,91 +1505,102 @@ export default function AdminPage() {
                     </Stack>
                   </Paper>
 
-                  <Paper withBorder p="md">
-                    <Title order={4}>Running Serving Deployments</Title>
-                    <ScrollArea mt="sm">
-                      <Table withTableBorder highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Project</Table.Th>
-                            <Table.Th>Type</Table.Th>
-                            <Table.Th>Name</Table.Th>
-                            <Table.Th>Repo</Table.Th>
-                            <Table.Th>User</Table.Th>
-                            <Table.Th>Email</Table.Th>
-                            <Table.Th>CPU</Table.Th>
-                            <Table.Th>MEM Gi</Table.Th>
-                            <Table.Th>Node</Table.Th>
-                            <Table.Th>Started</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {servingResourceOverview.rows.length ? (
-                            servingResourceOverview.rows.map((resource) => (
-                              <Table.Tr key={`${resource.type}-${resource.id}`}>
-                                <Table.Td>{resource.projectName}</Table.Td>
-                                <Table.Td>
-                                  <Badge variant="light" color={resource.type === "Agent" ? "blue" : "grape"}>
-                                    {resource.type}
-                                  </Badge>
-                                </Table.Td>
-                                <Table.Td>{resource.name}</Table.Td>
-                                <Table.Td>{resource.repoName}</Table.Td>
-                                <Table.Td>{resource.userDisplayName}</Table.Td>
-                                <Table.Td>{resource.userEmail || "-"}</Table.Td>
-                                <Table.Td>{resource.cpu.toFixed(1)}</Table.Td>
-                                <Table.Td>{resource.memoryGi.toFixed(1)}</Table.Td>
-                                <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
-                                <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
-                              </Table.Tr>
-                            ))
-                          ) : (
-                            <Table.Tr>
-                              <Table.Td colSpan={9}>
-                                <Text size="sm" c="dimmed">
-                                  No running serving deployments.
-                                </Text>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Table.Tbody>
-                      </Table>
-                    </ScrollArea>
-                  </Paper>
+                  <Tabs value={servingResourceTab} onChange={setServingResourceTab}>
+                    <Tabs.List>
+                      <Tabs.Tab value="deployments">Deployments</Tabs.Tab>
+                      <Tabs.Tab value="nodes">Nodes</Tabs.Tab>
+                    </Tabs.List>
 
-                  <Paper withBorder p="md">
-                    <Title order={4}>Serving Node List</Title>
-                    <ScrollArea mt="sm">
-                      <Table withTableBorder highlightOnHover>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>Node</Table.Th>
-                            <Table.Th>CPU</Table.Th>
-                            <Table.Th>MEM Gi</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {servingResourceOverview.nodePool.nodes.length ? (
-                            servingResourceOverview.nodePool.nodes.map((node) => (
-                              <Table.Tr key={node.nodeName}>
-                                <Table.Td>{node.nodeName}</Table.Td>
-                                <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
-                                <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                    <Tabs.Panel value="deployments" pt="md">
+                      <Paper withBorder p="md">
+                        <Title order={4}>Running Serving Deployments</Title>
+                        <ScrollArea mt="sm">
+                          <Table withTableBorder highlightOnHover>
+                            <Table.Thead>
+                              <Table.Tr>
+                                <Table.Th>Project</Table.Th>
+                                <Table.Th>Type</Table.Th>
+                                <Table.Th>Name</Table.Th>
+                                <Table.Th>Repo</Table.Th>
+                                <Table.Th>User</Table.Th>
+                                <Table.Th>Email</Table.Th>
+                                <Table.Th>CPU</Table.Th>
+                                <Table.Th>MEM Gi</Table.Th>
+                                <Table.Th>Node</Table.Th>
+                                <Table.Th>Started</Table.Th>
                               </Table.Tr>
-                            ))
-                          ) : (
-                            <Table.Tr>
-                              <Table.Td colSpan={3}>
-                                <Text size="sm" c="dimmed">
-                                  No serving nodes matched the configured selector.
-                                </Text>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Table.Tbody>
-                      </Table>
-                    </ScrollArea>
-                  </Paper>
+                            </Table.Thead>
+                            <Table.Tbody>
+                              {servingResourceOverview.rows.length ? (
+                                servingResourceOverview.rows.map((resource) => (
+                                  <Table.Tr key={`${resource.type}-${resource.id}`}>
+                                    <Table.Td>{resource.projectName}</Table.Td>
+                                    <Table.Td>
+                                      <Badge variant="light" color={resource.type === "Agent" ? "blue" : "grape"}>
+                                        {resource.type}
+                                      </Badge>
+                                    </Table.Td>
+                                    <Table.Td>{resource.name}</Table.Td>
+                                    <Table.Td>{resource.repoName}</Table.Td>
+                                    <Table.Td>{resource.userDisplayName}</Table.Td>
+                                    <Table.Td>{resource.userEmail || "-"}</Table.Td>
+                                    <Table.Td>{resource.cpu.toFixed(1)}</Table.Td>
+                                    <Table.Td>{resource.memoryGi.toFixed(1)}</Table.Td>
+                                    <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
+                                    <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                                  </Table.Tr>
+                                ))
+                              ) : (
+                                <Table.Tr>
+                                  <Table.Td colSpan={10}>
+                                    <Text size="sm" c="dimmed">
+                                      No running serving deployments.
+                                    </Text>
+                                  </Table.Td>
+                                </Table.Tr>
+                              )}
+                            </Table.Tbody>
+                          </Table>
+                        </ScrollArea>
+                      </Paper>
+                    </Tabs.Panel>
+
+                    <Tabs.Panel value="nodes" pt="md">
+                      <Paper withBorder p="md">
+                        <Title order={4}>Serving Node List</Title>
+                        <ScrollArea mt="sm">
+                          <Table withTableBorder highlightOnHover>
+                            <Table.Thead>
+                              <Table.Tr>
+                                <Table.Th>Node</Table.Th>
+                                <Table.Th>CPU</Table.Th>
+                                <Table.Th>MEM Gi</Table.Th>
+                              </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                              {servingResourceOverview.nodePool.nodes.length ? (
+                                servingResourceOverview.nodePool.nodes.map((node) => (
+                                  <Table.Tr key={node.nodeName}>
+                                    <Table.Td>{node.nodeName}</Table.Td>
+                                    <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
+                                    <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                                  </Table.Tr>
+                                ))
+                              ) : (
+                                <Table.Tr>
+                                  <Table.Td colSpan={3}>
+                                    <Text size="sm" c="dimmed">
+                                      No serving nodes matched the configured selector.
+                                    </Text>
+                                  </Table.Td>
+                                </Table.Tr>
+                              )}
+                            </Table.Tbody>
+                          </Table>
+                        </ScrollArea>
+                      </Paper>
+                    </Tabs.Panel>
+                  </Tabs>
                 </Stack>
               </Tabs.Panel>
             </Tabs>

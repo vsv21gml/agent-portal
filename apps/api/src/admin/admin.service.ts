@@ -67,6 +67,11 @@ type ResourceNodeRow = {
   memoryGi: number;
 };
 
+type NodePoolConstraints = {
+  selector: Record<string, string>;
+  tolerations: k8s.V1Toleration[];
+};
+
 type AgentResourceOverview = {
   nodePool: {
     nodeCount: number;
@@ -216,7 +221,7 @@ export class AdminService {
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getNodePoolSummary(this.getWorkspaceNodeSelector()),
+      this.getNodePoolSummary(this.getWorkspaceNodeConstraints()),
     ]);
 
     const projectMap = new Map(projects.map((project) => [project.id, project]));
@@ -285,7 +290,7 @@ export class AdminService {
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getNodePoolSummary(this.getAgentNodeSelector()),
+      this.getNodePoolSummary(this.getServingNodeConstraints()),
     ]);
 
     const projectMap = new Map(projects.map((project) => [project.id, project]));
@@ -356,7 +361,7 @@ export class AdminService {
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getNodePoolSummary(this.getMcpNodeSelector()),
+      this.getNodePoolSummary(this.getServingNodeConstraints()),
     ]);
 
     const projectMap = new Map(projects.map((project) => [project.id, project]));
@@ -538,17 +543,17 @@ export class AdminService {
   }
 
   private async getWorkspaceNodePoolSummary(): Promise<WorkspaceResourceOverview["nodePool"]> {
-    return this.getNodePoolSummary(this.getWorkspaceNodeSelector());
+    return this.getNodePoolSummary(this.getWorkspaceNodeConstraints());
   }
 
-  private async getNodePoolSummary(selector: Record<string, string>): Promise<WorkspaceResourceOverview["nodePool"]> {
+  private async getNodePoolSummary(constraints: NodePoolConstraints): Promise<WorkspaceResourceOverview["nodePool"]> {
     if (!this.kubeClientCore) {
       return { nodeCount: 0, totalCpu: 0, totalMemoryGi: 0, nodes: [] };
     }
 
     try {
       const result = await this.kubeClientCore.listNode();
-      const matchingNodes = result.items.filter((node) => this.matchesNodeSelector(node, selector));
+      const matchingNodes = result.items.filter((node) => this.matchesNodePoolConstraints(node, constraints));
 
       return {
         nodeCount: matchingNodes.length,
@@ -614,16 +619,18 @@ export class AdminService {
     return score;
   }
 
-  private getWorkspaceNodeSelector(): Record<string, string> {
-    return this.parseNodeSelectorConfig("K8S_WORKSPACE_NODE_SELECTOR_JSON", "workspace");
+  private getWorkspaceNodeConstraints(): NodePoolConstraints {
+    return {
+      selector: this.parseNodeSelectorConfig("K8S_WORKSPACE_NODE_SELECTOR_JSON", "workspace"),
+      tolerations: this.parseTolerationsConfig("K8S_WORKSPACE_TOLERATIONS_JSON", "workspace"),
+    };
   }
 
-  private getAgentNodeSelector(): Record<string, string> {
-    return this.parseNodeSelectorConfig("K8S_SERVING_NODE_SELECTOR_JSON", "serving");
-  }
-
-  private getMcpNodeSelector(): Record<string, string> {
-    return this.parseNodeSelectorConfig("K8S_SERVING_NODE_SELECTOR_JSON", "serving");
+  private getServingNodeConstraints(): NodePoolConstraints {
+    return {
+      selector: this.parseNodeSelectorConfig("K8S_SERVING_NODE_SELECTOR_JSON", "serving"),
+      tolerations: this.parseTolerationsConfig("K8S_SERVING_TOLERATIONS_JSON", "serving"),
+    };
   }
 
   private parseNodeSelectorConfig(configKey: string, resourceName: string): Record<string, string> {
@@ -643,6 +650,31 @@ export class AdminService {
     }
   }
 
+  private parseTolerationsConfig(configKey: string, resourceName: string): k8s.V1Toleration[] {
+    const raw = this.configService.get<string>(configKey)?.trim() ?? "";
+    if (!raw) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed.map((item) => ({
+        key: typeof item.key === "string" ? item.key : undefined,
+        operator: typeof item.operator === "string" ? item.operator : undefined,
+        value: typeof item.value === "string" ? item.value : undefined,
+        effect: typeof item.effect === "string" ? item.effect : undefined,
+        tolerationSeconds: typeof item.tolerationSeconds === "number" ? item.tolerationSeconds : undefined,
+      }));
+    } catch (error) {
+      this.logger.warn(`Failed to parse ${resourceName} tolerations JSON in admin service: ${this.describeError(error)}`);
+      return [];
+    }
+  }
+
   private getPodRequestedResources(pod: k8s.V1Pod | undefined): { cpu: number; memoryGi: number } {
     const container = pod?.spec?.containers?.[0];
     const requests = container?.resources?.requests;
@@ -656,6 +688,41 @@ export class AdminService {
   private matchesNodeSelector(node: k8s.V1Node, selector: Record<string, string>): boolean {
     const labels = node.metadata?.labels ?? {};
     return Object.entries(selector).every(([key, value]) => labels[key] === value);
+  }
+
+  private matchesNodePoolConstraints(node: k8s.V1Node, constraints: NodePoolConstraints): boolean {
+    if (!this.matchesNodeSelector(node, constraints.selector)) {
+      return false;
+    }
+
+    return this.matchesNodeTolerations(node, constraints.tolerations);
+  }
+
+  private matchesNodeTolerations(node: k8s.V1Node, tolerations: k8s.V1Toleration[]): boolean {
+    if (!tolerations.length) {
+      return true;
+    }
+
+    const taints = (node.spec?.taints ?? []).filter((taint) => taint.effect === "NoSchedule" || taint.effect === "NoExecute");
+    if (!taints.length) {
+      return false;
+    }
+
+    const toleratedTaints = taints.filter((taint) => tolerations.some((toleration) => this.matchesTaint(toleration, taint)));
+    return toleratedTaints.length > 0 && toleratedTaints.length === taints.length;
+  }
+
+  private matchesTaint(toleration: k8s.V1Toleration, taint: k8s.V1Taint): boolean {
+    const operator = toleration.operator ?? "Equal";
+    if ((toleration.effect ?? taint.effect) !== taint.effect) {
+      return false;
+    }
+
+    if (operator === "Exists") {
+      return !toleration.key || toleration.key === taint.key;
+    }
+
+    return toleration.key === taint.key && (toleration.value ?? "") === (taint.value ?? "");
   }
 
   private parseCpu(rawValue?: string): number {
