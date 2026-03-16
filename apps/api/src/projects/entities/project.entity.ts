@@ -17,13 +17,13 @@ export class ProjectEntity {
   @Column({ type: "varchar", default: "approved" })
   approvalStatus!: "pending" | "approved" | "rejected";
 
-  @Column({ nullable: true })
+  @Column({ type: "varchar", nullable: true })
   requestedByUserId!: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: "varchar", nullable: true })
   approvedByUserId!: string | null;
 
-  @Column({ type: "datetime", nullable: true })
+  @Column({ type: "timestamp", nullable: true })
   approvedAt!: Date | null;
 
   @CreateDateColumn()

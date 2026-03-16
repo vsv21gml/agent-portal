@@ -21,7 +21,7 @@ export class UserEntity {
   @Column({ type: "varchar", default: "approved" })
   approvalStatus!: "pending" | "approved" | "rejected";
 
-  @Column({ type: "datetime", nullable: true })
+  @Column({ type: "timestamp", nullable: true })
   approvedAt!: Date | null;
 
   @CreateDateColumn()
