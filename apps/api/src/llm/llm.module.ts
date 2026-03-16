@@ -11,6 +11,7 @@ import { LiteLlmUserKeyEntity } from "./entities/litellm-user-key.entity";
 import { UserEntity } from "../auth/entities/user.entity";
 import { ProjectEntity } from "../projects/entities/project.entity";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
+import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entit
       UserEntity,
       ProjectEntity,
       AgentDeploymentEntity,
+      McpDeploymentEntity,
     ]),
   ],
   controllers: [LlmController],

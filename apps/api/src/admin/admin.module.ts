@@ -5,6 +5,7 @@ import { UserEntity } from "../auth/entities/user.entity";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
+import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
 import { GitlabModule } from "../gitlab/gitlab.module";
 import { LlmModule } from "../llm/llm.module";
 import { ProjectEntity } from "../projects/entities/project.entity";
@@ -16,7 +17,7 @@ import { AdminService } from "./admin.service";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([WorkspaceSessionEntity, AgentDeploymentEntity, ProjectEntity, GitlabRepoEntity, UserEntity]),
+    TypeOrmModule.forFeature([WorkspaceSessionEntity, AgentDeploymentEntity, McpDeploymentEntity, ProjectEntity, GitlabRepoEntity, UserEntity]),
     AuthModule,
     ProjectsModule,
     GitlabModule,

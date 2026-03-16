@@ -7,6 +7,7 @@ import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entit
 import { UserEntity } from "../auth/entities/user.entity";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
 import { LlmService } from "../llm/llm.service";
+import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
 import { ProjectEntity } from "../projects/entities/project.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 
@@ -83,6 +84,40 @@ type AgentResourceOverview = {
   rows: AgentResourceRow[];
 };
 
+type McpResourceRow = {
+  mcpId: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  mcpName: string;
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+  status: string;
+  cpu: number;
+  memoryGi: number;
+  nodeName: string | null;
+  createdAt: string;
+};
+
+type McpResourceOverview = {
+  nodePool: {
+    nodeCount: number;
+    totalCpu: number;
+    totalMemoryGi: number;
+    nodes: ResourceNodeRow[];
+  };
+  running: {
+    mcpCount: number;
+    usedCpu: number;
+    usedMemoryGi: number;
+    cpuUsagePercent: number;
+    memoryUsagePercent: number;
+  };
+  rows: McpResourceRow[];
+};
+
 type AgentAdminRow = {
   id: string;
   projectId: string;
@@ -94,6 +129,25 @@ type AgentAdminRow = {
   ownerUserDisplayName: string;
   agentName: string;
   description: string;
+  litellmModel: string;
+  status: string;
+  endpointUrl: string;
+  spendUsd: number;
+  createdAt: string;
+};
+
+type McpAdminRow = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  ownerUserId: string;
+  ownerUserEmail: string;
+  ownerUserDisplayName: string;
+  mcpName: string;
+  description: string;
+  useLlm: string;
   litellmModel: string;
   status: string;
   endpointUrl: string;
@@ -113,6 +167,8 @@ export class AdminService {
     private readonly workspaceRepository: Repository<WorkspaceSessionEntity>,
     @InjectRepository(AgentDeploymentEntity)
     private readonly agentRepository: Repository<AgentDeploymentEntity>,
+    @InjectRepository(McpDeploymentEntity)
+    private readonly mcpRepository: Repository<McpDeploymentEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepository: Repository<ProjectEntity>,
     @InjectRepository(GitlabRepoEntity)
@@ -122,7 +178,7 @@ export class AdminService {
   ) {
     if (
       this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") === "true" ||
-      this.configService.get<string>("K8S_AGENT_ENABLED", "false") === "true"
+      this.configService.get<string>("K8S_SERVING_ENABLED", this.configService.get<string>("K8S_AGENT_ENABLED", "false")) === "true"
     ) {
       const kc = new k8s.KubeConfig();
       const kubeConfigPath = this.configService.get<string>("KUBECONFIG_PATH");
@@ -207,7 +263,7 @@ export class AdminService {
   }
 
   async getAgentResourceOverview(): Promise<AgentResourceOverview> {
-    const configuredNamespace = this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving");
+    const configuredNamespace = this.configService.get<string>("K8S_SERVING_NAMESPACE", this.configService.get<string>("K8S_AGENT_NAMESPACE", "agent-serving"));
     const agents = await this.agentRepository.find({
       where: { deleteYn: "N" },
       order: { createdAt: "DESC" },
@@ -277,6 +333,77 @@ export class AdminService {
     };
   }
 
+  async getMcpResourceOverview(): Promise<McpResourceOverview> {
+    const configuredNamespace = this.configService.get<string>("K8S_MCP_NAMESPACE", "mcp-serving");
+    const mcps = await this.mcpRepository.find({
+      where: { deleteYn: "N" },
+      order: { createdAt: "DESC" },
+    });
+    const namespaces = Array.from(new Set(mcps.map((mcp) => mcp.namespace).filter(Boolean)));
+    if (!namespaces.includes(configuredNamespace)) {
+      namespaces.push(configuredNamespace);
+    }
+    const podsByDeployment = await this.getPodsByDeploymentAcrossNamespaces(namespaces, "agent-portal/mcp-name");
+    const runningMcps = mcps.filter((mcp) => {
+      const pod = podsByDeployment.get(`${mcp.namespace}:${mcp.deploymentName}`);
+      return this.isAgentPodRunning(pod);
+    });
+    const projectIds = [...new Set(runningMcps.map((mcp) => mcp.projectId))];
+    const repoIds = [...new Set(runningMcps.map((mcp) => mcp.repoId))];
+    const userIds = [...new Set(runningMcps.map((mcp) => mcp.ownerUserId))];
+
+    const [projects, repos, users, nodePool] = await Promise.all([
+      projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
+      repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
+      userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
+      this.getNodePoolSummary(this.getMcpNodeSelector()),
+    ]);
+
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const repoMap = new Map(repos.map((repo) => [repo.id, repo]));
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    const rows: McpResourceRow[] = runningMcps.map((mcp) => {
+      const project = projectMap.get(mcp.projectId);
+      const repo = repoMap.get(mcp.repoId);
+      const user = userMap.get(mcp.ownerUserId);
+      const pod = podsByDeployment.get(`${mcp.namespace}:${mcp.deploymentName}`);
+      const requested = this.getPodRequestedResources(pod);
+
+      return {
+        mcpId: mcp.id,
+        projectId: mcp.projectId,
+        projectName: project?.name ?? mcp.projectId,
+        repoId: mcp.repoId,
+        repoName: repo?.repoName ?? mcp.repoId,
+        mcpName: mcp.mcpName,
+        userId: mcp.ownerUserId,
+        userEmail: user?.email ?? "",
+        userDisplayName: user?.displayName ?? user?.email ?? mcp.ownerUserId,
+        status: "running",
+        cpu: requested.cpu,
+        memoryGi: requested.memoryGi,
+        nodeName: pod?.spec?.nodeName ?? null,
+        createdAt: mcp.createdAt.toISOString(),
+      };
+    });
+
+    const usedCpu = rows.reduce((sum, row) => sum + row.cpu, 0);
+    const usedMemoryGi = rows.reduce((sum, row) => sum + row.memoryGi, 0);
+
+    return {
+      nodePool,
+      running: {
+        mcpCount: rows.length,
+        usedCpu,
+        usedMemoryGi,
+        cpuUsagePercent: nodePool.totalCpu > 0 ? Math.min(100, (usedCpu / nodePool.totalCpu) * 100) : 0,
+        memoryUsagePercent: nodePool.totalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.totalMemoryGi) * 100) : 0,
+      },
+      rows,
+    };
+  }
+
   async listAgents(): Promise<AgentAdminRow[]> {
     const agents = await this.agentRepository.find({
       where: { deleteYn: "N" },
@@ -318,6 +445,52 @@ export class AdminService {
         endpointUrl: agent.endpointUrl,
         spendUsd: spendRows[index] ?? 0,
         createdAt: agent.createdAt.toISOString(),
+      };
+    });
+  }
+
+  async listMcps(): Promise<McpAdminRow[]> {
+    const mcps = await this.mcpRepository.find({
+      where: { deleteYn: "N" },
+      order: { createdAt: "DESC" },
+    });
+    const projectIds = [...new Set(mcps.map((mcp) => mcp.projectId))];
+    const repoIds = [...new Set(mcps.map((mcp) => mcp.repoId))];
+    const userIds = [...new Set(mcps.map((mcp) => mcp.ownerUserId))];
+
+    const [projects, repos, users, spendRows] = await Promise.all([
+      projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
+      repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
+      userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
+      Promise.all(mcps.map((mcp) => this.llmService.getApiKeySpend(mcp.litellmApiKey))),
+    ]);
+
+    const projectMap = new Map(projects.map((project) => [project.id, project]));
+    const repoMap = new Map(repos.map((repo) => [repo.id, repo]));
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    return mcps.map((mcp, index) => {
+      const project = projectMap.get(mcp.projectId);
+      const repo = repoMap.get(mcp.repoId);
+      const user = userMap.get(mcp.ownerUserId);
+
+      return {
+        id: mcp.id,
+        projectId: mcp.projectId,
+        projectName: project?.name ?? mcp.projectId,
+        repoId: mcp.repoId,
+        repoName: repo?.repoName ?? mcp.repoId,
+        ownerUserId: mcp.ownerUserId,
+        ownerUserEmail: user?.email ?? "",
+        ownerUserDisplayName: user?.displayName ?? user?.email ?? mcp.ownerUserId,
+        mcpName: mcp.mcpName,
+        description: mcp.description,
+        useLlm: mcp.useLlm,
+        litellmModel: mcp.litellmModel,
+        status: mcp.status,
+        endpointUrl: mcp.endpointUrl,
+        spendUsd: spendRows[index] ?? 0,
+        createdAt: mcp.createdAt.toISOString(),
       };
     });
   }
@@ -446,7 +619,11 @@ export class AdminService {
   }
 
   private getAgentNodeSelector(): Record<string, string> {
-    return this.parseNodeSelectorConfig("K8S_AGENT_NODE_SELECTOR_JSON", "agent");
+    return this.parseNodeSelectorConfig("K8S_SERVING_NODE_SELECTOR_JSON", "serving");
+  }
+
+  private getMcpNodeSelector(): Record<string, string> {
+    return this.parseNodeSelectorConfig("K8S_SERVING_NODE_SELECTOR_JSON", "serving");
   }
 
   private parseNodeSelectorConfig(configKey: string, resourceName: string): Record<string, string> {

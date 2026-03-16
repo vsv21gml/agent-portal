@@ -6,8 +6,8 @@ export class CreateModelAccessRequestDto {
   modelName!: string;
 
   @IsOptional()
-  @IsIn(["personal", "agent_deploy"])
-  requestType?: "personal" | "agent_deploy";
+  @IsIn(["personal", "agent_deploy", "mcp_deploy"])
+  requestType?: "personal" | "agent_deploy" | "mcp_deploy";
 
   @IsOptional()
   @IsUUID()
@@ -16,4 +16,8 @@ export class CreateModelAccessRequestDto {
   @IsOptional()
   @IsUUID()
   agentId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  mcpId?: string;
 }

@@ -4,6 +4,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { IsNull, Repository } from "typeorm";
 import { UserEntity } from "../auth/entities/user.entity";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
+import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
 import { ProjectEntity } from "../projects/entities/project.entity";
 import { CreateModelAccessRequestDto } from "./dto/create-model-access-request.dto";
 import { IssueLlmKeyDto } from "./dto/issue-llm-key.dto";
@@ -66,6 +67,8 @@ type ModelAccessRequestView = {
   projectName: string | null;
   agentId: string | null;
   agentName: string | null;
+  mcpId: string | null;
+  mcpName: string | null;
   modelName: string;
   status: LiteLlmModelAccessRequestStatus;
   reviewNote: string | null;
@@ -103,6 +106,8 @@ export class LlmService {
     private readonly projectRepository: Repository<ProjectEntity>,
     @InjectRepository(AgentDeploymentEntity)
     private readonly agentRepository: Repository<AgentDeploymentEntity>,
+    @InjectRepository(McpDeploymentEntity)
+    private readonly mcpRepository: Repository<McpDeploymentEntity>,
   ) {}
 
   async ensureTeam(projectId: string): Promise<LiteLlmTeamEntity> {
@@ -368,6 +373,7 @@ export class LlmService {
         requestType,
         projectId: dto.projectId ?? IsNull(),
         agentId: dto.agentId ?? IsNull(),
+        mcpId: dto.mcpId ?? IsNull(),
       },
       order: { updatedAt: "DESC" },
     });
@@ -388,6 +394,7 @@ export class LlmService {
         requestType,
         projectId: dto.projectId ?? null,
         agentId: dto.agentId ?? null,
+        mcpId: dto.mcpId ?? null,
         status: "pending",
       }),
     );
@@ -456,20 +463,23 @@ export class LlmService {
   }
 
   async listModelAccessRequestsForAdmin(): Promise<ModelAccessRequestView[]> {
-    const [requests, users, projects, agents] = await Promise.all([
+    const [requests, users, projects, agents, mcps] = await Promise.all([
       this.modelAccessRequestRepository.find({ order: { createdAt: "DESC" } }),
       this.userRepository.find(),
       this.projectRepository.find(),
-        this.agentRepository.find({ where: { deleteYn: "N" } }),
+      this.agentRepository.find({ where: { deleteYn: "N" } }),
+      this.mcpRepository.find({ where: { deleteYn: "N" } }),
     ]);
 
     const userMap = new Map(users.map((user) => [user.id, user]));
     const projectMap = new Map(projects.map((project) => [project.id, project]));
     const agentMap = new Map(agents.map((agent) => [agent.id, agent]));
+    const mcpMap = new Map(mcps.map((mcp) => [mcp.id, mcp]));
     return requests.map((request) => {
       const user = userMap.get(request.ownerUserId);
       const project = request.projectId ? projectMap.get(request.projectId) : null;
       const agent = request.agentId ? agentMap.get(request.agentId) : null;
+      const mcp = request.mcpId ? mcpMap.get(request.mcpId) : null;
       return {
         id: request.id,
         ownerUserId: request.ownerUserId,
@@ -480,6 +490,8 @@ export class LlmService {
         projectName: project?.name ?? null,
         agentId: request.agentId,
         agentName: agent?.agentName ?? null,
+        mcpId: request.mcpId,
+        mcpName: mcp?.mcpName ?? null,
         modelName: request.modelName,
         status: request.status,
         reviewNote: request.reviewNote,

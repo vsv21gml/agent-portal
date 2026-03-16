@@ -148,6 +148,40 @@ type AgentResourceOverview = {
   rows: AgentResourceRow[];
 };
 
+type McpResourceRow = {
+  mcpId: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  mcpName: string;
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
+  status: string;
+  cpu: number;
+  memoryGi: number;
+  nodeName: string | null;
+  createdAt: string;
+};
+
+type McpResourceOverview = {
+  nodePool: {
+    nodeCount: number;
+    totalCpu: number;
+    totalMemoryGi: number;
+    nodes: ResourceNodeRow[];
+  };
+  running: {
+    mcpCount: number;
+    usedCpu: number;
+    usedMemoryGi: number;
+    cpuUsagePercent: number;
+    memoryUsagePercent: number;
+  };
+  rows: McpResourceRow[];
+};
+
 type AgentAdminRow = {
   id: string;
   projectId: string;
@@ -159,6 +193,25 @@ type AgentAdminRow = {
   ownerUserDisplayName: string;
   agentName: string;
   description: string;
+  litellmModel: string;
+  status: string;
+  endpointUrl: string;
+  spendUsd: number;
+  createdAt: string;
+};
+
+type McpAdminRow = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  repoId: string;
+  repoName: string;
+  ownerUserId: string;
+  ownerUserEmail: string;
+  ownerUserDisplayName: string;
+  mcpName: string;
+  description: string;
+  useLlm: string;
   litellmModel: string;
   status: string;
   endpointUrl: string;
@@ -201,11 +254,13 @@ type ModelAccessRequest = {
   ownerUserId: string;
   userEmail: string;
   userDisplayName: string;
-  requestType: "personal" | "agent_deploy";
+  requestType: "personal" | "agent_deploy" | "mcp_deploy";
   projectId: string | null;
   projectName: string | null;
   agentId: string | null;
   agentName: string | null;
+  mcpId: string | null;
+  mcpName: string | null;
   modelName: string;
   status: string;
   reviewNote: string | null;
@@ -220,7 +275,7 @@ const sectionMeta: Record<AdminSection, { title: string; description: string }> 
   users: { title: "Users", description: "Manage portal users, invitations, and roles." },
   projects: { title: "Projects", description: "Review projects and open project-level administration actions." },
   resources: { title: "Resources", description: "Track workspace and agent resource usage across dedicated node pools." },
-  agents: { title: "Agents", description: "Review all deployed agents and their LiteLLM spend." },
+  serving: { title: "Serving", description: "Review deployed Agents and MCP servers together with their LiteLLM spend." },
   models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
   gitlab: { title: "GitLab", description: "Review GitLab groups and repositories mapped to portal projects." },
   audit: { title: "Audit", description: "Inspect keyed user actions performed through the portal." },
@@ -254,8 +309,8 @@ function getSectionFromPathname(pathname: string): AdminSection {
   if (pathname === "/resources") {
     return "resources";
   }
-  if (pathname === "/agents") {
-    return "agents";
+  if (pathname === "/serving" || pathname === "/agents" || pathname === "/mcps") {
+    return "serving";
   }
   if (pathname === "/models") {
     return "models";
@@ -280,10 +335,12 @@ export default function AdminPage() {
   const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [adminAgents, setAdminAgents] = useState<AgentAdminRow[]>([]);
+  const [adminMcps, setAdminMcps] = useState<McpAdminRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [accessLogs, setAccessLogs] = useState<AccessLogRow[]>([]);
   const [workspaceResourceOverview, setWorkspaceResourceOverview] = useState<WorkspaceResourceOverview | null>(null);
   const [agentResourceOverview, setAgentResourceOverview] = useState<AgentResourceOverview | null>(null);
+  const [mcpResourceOverview, setMcpResourceOverview] = useState<McpResourceOverview | null>(null);
   const [resourceTab, setResourceTab] = useState<string | null>("workspace");
   const [groups, setGroups] = useState<GitlabGroup[]>([]);
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
@@ -299,9 +356,13 @@ export default function AdminPage() {
   const [agentSearch, setAgentSearch] = useState("");
   const [agentStatusFilter, setAgentStatusFilter] = useState<string | null>("all");
   const [agentProjectFilter, setAgentProjectFilter] = useState<string | null>("all");
+  const [mcpSearch, setMcpSearch] = useState("");
+  const [mcpStatusFilter, setMcpStatusFilter] = useState<string | null>("all");
+  const [mcpProjectFilter, setMcpProjectFilter] = useState<string | null>("all");
   const [auditSearch, setAuditSearch] = useState("");
   const [accessSearch, setAccessSearch] = useState("");
   const [agentPage, setAgentPage] = useState(1);
+  const [mcpPage, setMcpPage] = useState(1);
   const [auditActionFilter, setAuditActionFilter] = useState<string | null>("all");
   const [accessEventFilter, setAccessEventFilter] = useState<string | null>("all");
   const [accessStatusFilter, setAccessStatusFilter] = useState<string | null>("all");
@@ -352,13 +413,20 @@ export default function AdminPage() {
     setAdminAgents(loadedAgents);
   };
 
+  const loadMcpsData = async () => {
+    const loadedMcps = await apiFetch<McpAdminRow[]>("admin/mcps");
+    setAdminMcps(loadedMcps);
+  };
+
   const loadResourceData = async () => {
-    const [workspaceResult, agentResult] = await Promise.all([
+    const [workspaceResult, agentResult, mcpResult] = await Promise.all([
       apiFetch<WorkspaceResourceOverview>("admin/resources/workspaces"),
       apiFetch<AgentResourceOverview>("admin/resources/agents"),
+      apiFetch<McpResourceOverview>("admin/resources/mcps"),
     ]);
     setWorkspaceResourceOverview(workspaceResult);
     setAgentResourceOverview(agentResult);
+    setMcpResourceOverview(mcpResult);
   };
 
   const loadGitlabData = async () => {
@@ -399,8 +467,8 @@ export default function AdminPage() {
       case "resources":
         await loadResourceData();
         break;
-      case "agents":
-        await loadAgentsData();
+      case "serving":
+        await Promise.all([loadAgentsData(), loadMcpsData()]);
         break;
       case "models":
         await loadModelData();
@@ -462,6 +530,10 @@ export default function AdminPage() {
   useEffect(() => {
     setAgentPage(1);
   }, [agentProjectFilter, agentSearch, agentStatusFilter]);
+
+  useEffect(() => {
+    setMcpPage(1);
+  }, [mcpProjectFilter, mcpSearch, mcpStatusFilter]);
 
   useEffect(() => {
     setAuditPage(1);
@@ -652,6 +724,25 @@ export default function AdminPage() {
     ],
     [adminAgents],
   );
+  const mcpStatusOptions = useMemo(
+    () => [
+      { value: "all", label: "All statuses" },
+      ...Array.from(new Set(adminMcps.map((mcp) => mcp.status)))
+        .filter(Boolean)
+        .map((status) => ({ value: status, label: status })),
+    ],
+    [adminMcps],
+  );
+  const mcpProjectOptions = useMemo(
+    () => [
+      { value: "all", label: "All projects" },
+      ...Array.from(new Map(adminMcps.map((mcp) => [mcp.projectId, mcp.projectName])).entries()).map(([value, label]) => ({
+        value,
+        label,
+      })),
+    ],
+    [adminMcps],
+  );
   const filteredAdminAgents = useMemo(() => {
     const query = agentSearch.trim().toLowerCase();
     return adminAgents.filter((agent) => {
@@ -677,6 +768,31 @@ export default function AdminPage() {
     const start = (agentPage - 1) * PAGE_SIZE;
     return filteredAdminAgents.slice(start, start + PAGE_SIZE);
   }, [agentPage, filteredAdminAgents]);
+  const filteredAdminMcps = useMemo(() => {
+    const query = mcpSearch.trim().toLowerCase();
+    return adminMcps.filter((mcp) => {
+      const matchesQuery =
+        !query ||
+        [
+          mcp.mcpName,
+          mcp.description,
+          mcp.repoName,
+          mcp.projectName,
+          mcp.ownerUserDisplayName,
+          mcp.ownerUserEmail,
+          mcp.id,
+          mcp.litellmModel,
+        ].some((value) => value.toLowerCase().includes(query));
+      const matchesStatus = mcpStatusFilter === "all" || mcp.status === mcpStatusFilter;
+      const matchesProject = mcpProjectFilter === "all" || mcp.projectId === mcpProjectFilter;
+      return matchesQuery && matchesStatus && matchesProject;
+    });
+  }, [adminMcps, mcpProjectFilter, mcpSearch, mcpStatusFilter]);
+  const mcpPages = Math.max(1, Math.ceil(filteredAdminMcps.length / PAGE_SIZE));
+  const pagedAdminMcps = useMemo(() => {
+    const start = (mcpPage - 1) * PAGE_SIZE;
+    return filteredAdminMcps.slice(start, start + PAGE_SIZE);
+  }, [filteredAdminMcps, mcpPage]);
   const filteredGitlabGroups = useMemo(() => {
     const query = gitlabSearch.trim().toLowerCase();
     if (!query) {
@@ -976,6 +1092,7 @@ export default function AdminPage() {
               <Tabs.List>
                 <Tabs.Tab value="workspace">Workspace</Tabs.Tab>
                 <Tabs.Tab value="agent">Agent</Tabs.Tab>
+                <Tabs.Tab value="mcp">MCP</Tabs.Tab>
               </Tabs.List>
 
               <Tabs.Panel value="workspace" pt="md">
@@ -1317,22 +1434,194 @@ export default function AdminPage() {
                   </Paper>
                 </Stack>
               </Tabs.Panel>
+
+              <Tabs.Panel value="mcp" pt="md">
+                <Stack gap="md">
+                  <Paper withBorder p="md">
+                    <Stack gap="md">
+                      <Title order={4}>MCP Resource Overview</Title>
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                MCP Nodes
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {mcpResourceOverview?.nodePool.nodeCount ?? 0}
+                              </Text>
+                            </div>
+                            <Badge variant="light">{mcpResourceOverview?.running.mcpCount ?? 0} running</Badge>
+                          </Group>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Node CPU Capacity
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {Number.isInteger(mcpResourceOverview?.nodePool.totalCpu ?? 0)
+                                  ? (mcpResourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
+                                  : (mcpResourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                              </Text>
+                            </div>
+                            <RingProgress
+                              size={88}
+                              thickness={10}
+                              sections={[{ value: mcpResourceOverview?.running.cpuUsagePercent ?? 0, color: "blue" }]}
+                              label={
+                                <Text ta="center" size="xs" fw={700}>
+                                  {Math.round(mcpResourceOverview?.running.cpuUsagePercent ?? 0)}%
+                                </Text>
+                              }
+                            />
+                          </Group>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            Kubernetes reported capacity
+                          </Text>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Group justify="space-between" align="center">
+                            <div>
+                              <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                                Node MEM Capacity
+                              </Text>
+                              <Text mt="sm" fw={700} size="xl">
+                                {(mcpResourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
+                              </Text>
+                            </div>
+                            <RingProgress
+                              size={88}
+                              thickness={10}
+                              sections={[{ value: mcpResourceOverview?.running.memoryUsagePercent ?? 0, color: "grape" }]}
+                              label={
+                                <Text ta="center" size="xs" fw={700}>
+                                  {Math.round(mcpResourceOverview?.running.memoryUsagePercent ?? 0)}%
+                                </Text>
+                              }
+                            />
+                          </Group>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            Kubernetes reported capacity
+                          </Text>
+                        </Paper>
+
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Running MCP
+                          </Text>
+                          <Text mt="sm" fw={700} size="xl">
+                            {mcpResourceOverview?.running.mcpCount ?? 0}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="sm">
+                            CPU {(mcpResourceOverview?.running.usedCpu ?? 0).toFixed(1)} / MEM {(mcpResourceOverview?.running.usedMemoryGi ?? 0).toFixed(1)} Gi
+                          </Text>
+                        </Paper>
+                      </SimpleGrid>
+                    </Stack>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Title order={4}>Running MCP Servers</Title>
+                    <ScrollArea mt="sm">
+                      <Table withTableBorder highlightOnHover>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Project</Table.Th>
+                            <Table.Th>MCP</Table.Th>
+                            <Table.Th>Repo</Table.Th>
+                            <Table.Th>User</Table.Th>
+                            <Table.Th>Email</Table.Th>
+                            <Table.Th>CPU</Table.Th>
+                            <Table.Th>MEM Gi</Table.Th>
+                            <Table.Th>Node</Table.Th>
+                            <Table.Th>Started</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {mcpResourceOverview?.rows.length ? (
+                            mcpResourceOverview.rows.map((resource) => (
+                              <Table.Tr key={resource.mcpId}>
+                                <Table.Td>{resource.projectName}</Table.Td>
+                                <Table.Td>{resource.mcpName}</Table.Td>
+                                <Table.Td>{resource.repoName}</Table.Td>
+                                <Table.Td>{resource.userDisplayName}</Table.Td>
+                                <Table.Td>{resource.userEmail || "-"}</Table.Td>
+                                <Table.Td>{resource.cpu.toFixed(1)}</Table.Td>
+                                <Table.Td>{resource.memoryGi.toFixed(1)}</Table.Td>
+                                <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
+                                <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                              </Table.Tr>
+                            ))
+                          ) : (
+                            <Table.Tr>
+                              <Table.Td colSpan={9}>
+                                <Text size="sm" c="dimmed">
+                                  No running MCP servers.
+                                </Text>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Title order={4}>MCP Node List</Title>
+                    <ScrollArea mt="sm">
+                      <Table withTableBorder highlightOnHover>
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Node</Table.Th>
+                            <Table.Th>CPU</Table.Th>
+                            <Table.Th>MEM Gi</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {mcpResourceOverview?.nodePool.nodes.length ? (
+                            mcpResourceOverview.nodePool.nodes.map((node) => (
+                              <Table.Tr key={node.nodeName}>
+                                <Table.Td>{node.nodeName}</Table.Td>
+                                <Table.Td>{Number.isInteger(node.cpu) ? node.cpu.toFixed(0) : node.cpu.toFixed(1)}</Table.Td>
+                                <Table.Td>{node.memoryGi.toFixed(1)}</Table.Td>
+                              </Table.Tr>
+                            ))
+                          ) : (
+                            <Table.Tr>
+                              <Table.Td colSpan={3}>
+                                <Text size="sm" c="dimmed">
+                                  No MCP nodes matched the configured selector.
+                                </Text>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Table.Tbody>
+                      </Table>
+                    </ScrollArea>
+                  </Paper>
+                </Stack>
+              </Tabs.Panel>
             </Tabs>
           </Stack>
         ) : null}
 
-        {activeSection === "agents" ? (
+        {activeSection === "serving" ? (
           <Stack gap="md">
             <Paper withBorder p="md">
-              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+              <SimpleGrid cols={{ base: 1, md: 4 }} spacing="md">
                 <TextInput
                   label="Search"
-                  placeholder="Agent, repo, project, owner, or model"
+                  placeholder="Agent, MCP, repo, project, owner, or model"
                   value={agentSearch}
                   onChange={(event) => setAgentSearch(event.currentTarget.value)}
                 />
                 <Select label="Status" data={agentStatusOptions} value={agentStatusFilter} onChange={setAgentStatusFilter} />
                 <Select label="Project" data={agentProjectOptions} value={agentProjectFilter} onChange={setAgentProjectFilter} />
+                <TextInput label="MCP Search" placeholder="MCP, repo, project, owner, or model" value={mcpSearch} onChange={(event) => setMcpSearch(event.currentTarget.value)} />
               </SimpleGrid>
             </Paper>
 
@@ -1384,6 +1673,66 @@ export default function AdminPage() {
               </ScrollArea>
               <Group justify="end" mt="md">
                 <Pagination total={agentPages} value={agentPage} onChange={setAgentPage} />
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+                <Select label="Status" data={mcpStatusOptions} value={mcpStatusFilter} onChange={setMcpStatusFilter} />
+                <Select label="Project" data={mcpProjectOptions} value={mcpProjectFilter} onChange={setMcpProjectFilter} />
+              </SimpleGrid>
+            </Paper>
+
+            <Paper withBorder p="md">
+              <Title order={4}>All MCP Servers</Title>
+              <ScrollArea mt="sm">
+                <Table withTableBorder highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Created</Table.Th>
+                      <Table.Th>MCP</Table.Th>
+                      <Table.Th>Description</Table.Th>
+                      <Table.Th>Project</Table.Th>
+                      <Table.Th>Repo</Table.Th>
+                      <Table.Th>Owner</Table.Th>
+                      <Table.Th>LLM</Table.Th>
+                      <Table.Th>Model</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Spend USD</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedAdminMcps.length ? (
+                      pagedAdminMcps.map((mcp) => (
+                        <Table.Tr key={mcp.id}>
+                          <Table.Td>{new Date(mcp.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>{mcp.mcpName}</Table.Td>
+                          <Table.Td>{mcp.description || "-"}</Table.Td>
+                          <Table.Td>{mcp.projectName}</Table.Td>
+                          <Table.Td>{mcp.repoName}</Table.Td>
+                          <Table.Td>{mcp.ownerUserDisplayName || mcp.ownerUserEmail || "-"}</Table.Td>
+                          <Table.Td>{mcp.useLlm === "Y" ? "Enabled" : "Disabled"}</Table.Td>
+                          <Table.Td>{mcp.litellmModel || "-"}</Table.Td>
+                          <Table.Td>
+                            <Badge variant="light">{mcp.status}</Badge>
+                          </Table.Td>
+                          <Table.Td>${mcp.spendUsd.toFixed(4)}</Table.Td>
+                        </Table.Tr>
+                      ))
+                    ) : (
+                      <Table.Tr>
+                        <Table.Td colSpan={10}>
+                          <Text size="sm" c="dimmed">
+                            No MCP servers match the current filters.
+                          </Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    )}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={mcpPages} value={mcpPage} onChange={setMcpPage} />
               </Group>
             </Paper>
           </Stack>
@@ -1447,7 +1796,7 @@ export default function AdminPage() {
                         <Table.Th>User</Table.Th>
                         <Table.Th>Email</Table.Th>
                         <Table.Th>Project</Table.Th>
-                        <Table.Th>Agent</Table.Th>
+                        <Table.Th>Target</Table.Th>
                         <Table.Th>Model</Table.Th>
                         <Table.Th>Status</Table.Th>
                         <Table.Th>Requested</Table.Th>
@@ -1458,11 +1807,17 @@ export default function AdminPage() {
                       {modelRequests.length ? (
                         modelRequests.map((request) => (
                           <Table.Tr key={request.id}>
-                            <Table.Td>{request.requestType === "agent_deploy" ? "Agent Deploy" : "Personal"}</Table.Td>
+                            <Table.Td>
+                              {request.requestType === "agent_deploy"
+                                ? "Agent Deploy"
+                                : request.requestType === "mcp_deploy"
+                                  ? "MCP Deploy"
+                                  : "Personal"}
+                            </Table.Td>
                             <Table.Td>{request.userDisplayName}</Table.Td>
                             <Table.Td>{request.userEmail}</Table.Td>
                             <Table.Td>{request.projectName ?? "-"}</Table.Td>
-                            <Table.Td>{request.agentName ?? "-"}</Table.Td>
+                            <Table.Td>{request.agentName ?? request.mcpName ?? "-"}</Table.Td>
                             <Table.Td>{request.modelName}</Table.Td>
                             <Table.Td>{request.status}</Table.Td>
                             <Table.Td>{new Date(request.createdAt).toLocaleString()}</Table.Td>
