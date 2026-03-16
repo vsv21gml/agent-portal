@@ -18,6 +18,12 @@ export class UserEntity {
   @Column({ type: "varchar", default: GlobalRole.USER })
   globalRole!: GlobalRole;
 
+  @Column({ type: "varchar", default: "approved" })
+  approvalStatus!: "pending" | "approved" | "rejected";
+
+  @Column({ type: "datetime", nullable: true })
+  approvedAt!: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }

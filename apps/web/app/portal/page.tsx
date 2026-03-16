@@ -1,6 +1,6 @@
 "use client";
 
-import { ActionIcon, Affix, Button, Drawer, Group, LoadingOverlay, Stack, TextInput, Textarea } from "@mantine/core";
+import { ActionIcon, Affix, Button, Drawer, Group, LoadingOverlay, Stack, Tabs, TextInput, Textarea } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "../../src/components/app-frame";
@@ -17,6 +17,7 @@ export default function UserPortalPage() {
   const [description, setDescription] = useState("");
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [projectTab, setProjectTab] = useState<string | null>("current");
   const [errors, setErrors] = useState<{ name?: string; description?: string }>({});
   const [authChecking, setAuthChecking] = useState(true);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -60,6 +61,15 @@ export default function UserPortalPage() {
     });
   }, [projects, search]);
 
+  const currentProjects = useMemo(
+    () => filteredProjects.filter((project) => project.approvalStatus === "approved"),
+    [filteredProjects],
+  );
+  const requestedProjects = useMemo(
+    () => filteredProjects.filter((project) => project.approvalStatus !== "approved"),
+    [filteredProjects],
+  );
+
   const createProject = async () => {
     const nextErrors: { name?: string; description?: string } = {};
     if (!name.trim()) {
@@ -83,7 +93,7 @@ export default function UserPortalPage() {
       setDescription("");
       setErrors({});
       setDrawerOpen(false);
-      toastSuccess("프로젝트를 생성했습니다.");
+      toastSuccess("프로젝트 생성 요청을 등록했습니다. 관리자 승인 후 활성화됩니다.");
       await loadProjects();
     } catch {
       toastError("프로젝트 생성에 실패했습니다.");
@@ -110,7 +120,20 @@ export default function UserPortalPage() {
           w="100%"
           disabled={creatingProject}
         />
-        <ProjectTable projects={filteredProjects} />
+        <Tabs value={projectTab} onChange={setProjectTab}>
+          <Tabs.List>
+            <Tabs.Tab value="current">Current Projects</Tabs.Tab>
+            <Tabs.Tab value="requests">Project Requests</Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="current" pt="md">
+            <ProjectTable projects={currentProjects} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="requests" pt="md">
+            <ProjectTable projects={requestedProjects} />
+          </Tabs.Panel>
+        </Tabs>
       </Stack>
 
       <Affix position={{ bottom: 24, right: 24 }}>

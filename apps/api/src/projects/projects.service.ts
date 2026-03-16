@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { In, Repository } from "typeorm";
 import { UserEntity } from "../auth/entities/user.entity";
@@ -56,28 +56,16 @@ export class ProjectsService {
         name: dto.name,
         description: dto.description,
         deletedYn: "N",
-      }),
-    );
-
-    await this.projectMemberRepository.save(
-      this.projectMemberRepository.create({
-        projectId: project.id,
-        userId: creatorUserId,
-        role: ProjectRole.MANAGER,
-      }),
-    );
-
-    await this.resourceLimitRepository.save(
-      this.resourceLimitRepository.create({
-        projectId: project.id,
-        cpu: 2,
-        memoryGi: 8,
+        approvalStatus: "pending",
+        requestedByUserId: creatorUserId,
+        approvedByUserId: null,
+        approvedAt: null,
       }),
     );
 
     await this.logsService.writeAuditLog({
       userId: creatorUserId,
-      actionKey: "PROJECT_CREATED",
+      actionKey: "PROJECT_CREATE_REQUESTED",
       targetType: "project",
       targetId: project.id,
       projectId: project.id,
@@ -89,18 +77,27 @@ export class ProjectsService {
 
   async listProjects(userId: string): Promise<ProjectEntity[]> {
     const memberships = await this.projectMemberRepository.find({ where: { userId } });
+    const approvedIds = memberships.map((membership) => membership.projectId);
+    const [approvedProjects, requestedProjects] = await Promise.all([
+      approvedIds.length
+        ? this.projectRepository.find({
+            where: {
+              id: In(approvedIds),
+              deletedYn: "N",
+              approvalStatus: "approved",
+            },
+            order: { createdAt: "DESC" },
+          })
+        : Promise.resolve([]),
+      this.projectRepository.find({
+        where: { requestedByUserId: userId, deletedYn: "N" },
+        order: { createdAt: "DESC" },
+      }),
+    ]);
 
-    if (memberships.length === 0) {
-      return [];
-    }
-
-    return this.projectRepository.find({
-      where: {
-        id: In(memberships.map((membership) => membership.projectId)),
-        deletedYn: "N",
-      },
-      order: { createdAt: "DESC" },
-    });
+    return Array.from(new Map([...approvedProjects, ...requestedProjects].map((project) => [project.id, project])).values()).sort(
+      (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+    );
   }
 
   listAllProjects(): Promise<ProjectEntity[]> {
@@ -219,7 +216,7 @@ export class ProjectsService {
     const [project, members, resourceLimit] = await Promise.all([
       this.getProject(projectId),
       this.listMembers(projectId),
-      this.getResourceLimit(projectId),
+      this.resourceLimitRepository.findOne({ where: { projectId } }),
     ]);
 
     return {
@@ -259,5 +256,72 @@ export class ProjectsService {
       projectId,
       metadata: { name: project.name },
     });
+  }
+
+  async approveProject(projectId: string, reviewerUserId: string): Promise<ProjectEntity> {
+    const project = await this.projectRepository.findOneByOrFail({ id: projectId });
+    if (project.approvalStatus === "approved") {
+      return project;
+    }
+
+    project.approvalStatus = "approved";
+    project.approvedByUserId = reviewerUserId;
+    project.approvedAt = new Date();
+    const saved = await this.projectRepository.save(project);
+
+    const existingMember = await this.projectMemberRepository.findOne({
+      where: { projectId: saved.id, userId: saved.requestedByUserId ?? "" },
+    });
+    if (!existingMember && saved.requestedByUserId) {
+      await this.projectMemberRepository.save(
+        this.projectMemberRepository.create({
+          projectId: saved.id,
+          userId: saved.requestedByUserId,
+          role: ProjectRole.MANAGER,
+        }),
+      );
+    }
+
+    const resourceLimit = await this.resourceLimitRepository.findOne({ where: { projectId: saved.id } });
+    if (!resourceLimit) {
+      await this.resourceLimitRepository.save(
+        this.resourceLimitRepository.create({
+          projectId: saved.id,
+          cpu: 2,
+          memoryGi: 8,
+        }),
+      );
+    }
+
+    await this.logsService.writeAuditLog({
+      userId: reviewerUserId,
+      actionKey: "PROJECT_APPROVED",
+      targetType: "project",
+      targetId: saved.id,
+      projectId: saved.id,
+      metadata: { name: saved.name },
+    });
+    return saved;
+  }
+
+  async rejectProject(projectId: string, reviewerUserId: string): Promise<ProjectEntity> {
+    const project = await this.projectRepository.findOneByOrFail({ id: projectId });
+    if (project.approvalStatus === "approved") {
+      throw new ConflictException("Approved project cannot be rejected");
+    }
+
+    project.approvalStatus = "rejected";
+    project.approvedByUserId = reviewerUserId;
+    project.approvedAt = null;
+    const saved = await this.projectRepository.save(project);
+    await this.logsService.writeAuditLog({
+      userId: reviewerUserId,
+      actionKey: "PROJECT_REJECTED",
+      targetType: "project",
+      targetId: saved.id,
+      projectId: saved.id,
+      metadata: { name: saved.name },
+    });
+    return saved;
   }
 }

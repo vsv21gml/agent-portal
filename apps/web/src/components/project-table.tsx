@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Badge, Card, Group, Pagination, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Badge, Card, Group, Pagination, Progress, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { useMemo, useState } from "react";
 import { Project } from "../types/project";
 
@@ -30,15 +30,8 @@ export function ProjectTable({ projects, title }: Props) {
         </Card>
       ) : (
         <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="lg">
-          {rows.map((project) => (
-            <Card
-              key={project.id}
-              component={Link}
-              href={`/portal/projects/${project.id}`}
-              withBorder
-              radius="lg"
-              padding="lg"
-            >
+          {rows.map((project) => {
+            const content = (
               <Stack gap="md">
                 <Group justify="space-between" align="start">
                   <Stack gap={4}>
@@ -46,19 +39,50 @@ export function ProjectTable({ projects, title }: Props) {
                       {project.name}
                     </Text>
                   </Stack>
-                  <Badge color="cyan" variant="light">
-                    Active
+                  <Badge
+                    color={
+                      project.approvalStatus === "pending" ? "orange" : project.approvalStatus === "rejected" ? "red" : "cyan"
+                    }
+                    variant="light"
+                  >
+                    {project.approvalStatus === "pending"
+                      ? "Approval Pending"
+                      : project.approvalStatus === "rejected"
+                        ? "Rejected"
+                        : "Active"}
                   </Badge>
                 </Group>
                 <Text size="sm" lineClamp={3}>
                   {project.description || "No description"}
                 </Text>
+                {project.approvalStatus === "pending" ? (
+                  <Stack gap={6}>
+                    <Text size="sm" c="dimmed">
+                      Admin approval in progress.
+                    </Text>
+                    <Progress value={100} animated striped color="orange" size="sm" />
+                  </Stack>
+                ) : null}
                 <Text size="xs" c="dimmed">
                   {new Date(project.createdAt).toLocaleString()}
                 </Text>
               </Stack>
-            </Card>
-          ))}
+            );
+
+            if (project.approvalStatus === "approved") {
+              return (
+                <Card key={project.id} component={Link} href={`/portal/projects/${project.id}`} withBorder radius="lg" padding="lg">
+                  {content}
+                </Card>
+              );
+            }
+
+            return (
+              <Card key={project.id} component="div" withBorder radius="lg" padding="lg" style={{ opacity: 0.7 }}>
+                {content}
+              </Card>
+            );
+          })}
         </SimpleGrid>
       )}
 

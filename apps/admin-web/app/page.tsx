@@ -33,6 +33,7 @@ type UserRow = {
   email: string;
   displayName: string;
   globalRole: string;
+  approvalStatus: string;
   createdAt: string;
   currentMonthSpendUsd: number;
   currentMonthBudgetUsd: number | null;
@@ -52,6 +53,10 @@ type ProjectRow = {
   name: string;
   description: string;
   createdAt: string;
+  approvalStatus: string;
+  requestedByUserId: string | null;
+  requestedByUserEmail: string | null;
+  requestedByDisplayName: string | null;
 };
 
 type AuditLogRow = {
@@ -275,8 +280,8 @@ type ModelAccessRequest = {
 const PAGE_SIZE = 8;
 
 const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
-  users: { title: "Users", description: "Manage portal users, invitations, and roles." },
-  projects: { title: "Projects", description: "Review projects and open project-level administration actions." },
+  users: { title: "Users", description: "Manage approved users and review sign-up requests." },
+  projects: { title: "Projects", description: "Review active projects and approve creation requests." },
   resources: { title: "Resources", description: "Track workspace and serving resource usage across dedicated node pools." },
   serving: { title: "Serving", description: "Review deployed Agents and MCP servers together with their LiteLLM spend." },
   models: { title: "Models", description: "Manage LiteLLM catalog defaults and review model access requests." },
@@ -335,8 +340,8 @@ export default function AdminPage() {
   const pathname = usePathname();
   const activeSection = getSectionFromPathname(pathname);
   const [users, setUsers] = useState<UserRow[]>([]);
-  const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [invitations, setInvitations] = useState<InvitationRow[]>([]);
   const [adminAgents, setAdminAgents] = useState<AgentAdminRow[]>([]);
   const [adminMcps, setAdminMcps] = useState<McpAdminRow[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
@@ -354,6 +359,7 @@ export default function AdminPage() {
   const [modelRequests, setModelRequests] = useState<ModelAccessRequest[]>([]);
   const [activePage, setActivePage] = useState(1);
   const [userTab, setUserTab] = useState<string | null>("current");
+  const [projectTab, setProjectTab] = useState<string | null>("current");
   const [gitlabGroupPage, setGitlabGroupPage] = useState(1);
   const [gitlabRepoPage, setGitlabRepoPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
@@ -373,14 +379,16 @@ export default function AdminPage() {
   const [accessEventFilter, setAccessEventFilter] = useState<string | null>("all");
   const [accessStatusFilter, setAccessStatusFilter] = useState<string | null>("all");
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
+  const [pendingRoleChanges, setPendingRoleChanges] = useState<Record<string, "admin" | "user">>({});
+  const [savingRoleChanges, setSavingRoleChanges] = useState(false);
+  const [reviewingUserId, setReviewingUserId] = useState<string | null>(null);
+  const [reviewingProjectId, setReviewingProjectId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDisplayName, setInviteDisplayName] = useState("");
   const [inviteRole, setInviteRole] = useState<string | null>("user");
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [deletingInvitationId, setDeletingInvitationId] = useState<string | null>(null);
-  const [pendingRoleChanges, setPendingRoleChanges] = useState<Record<string, "admin" | "user">>({});
-  const [savingRoleChanges, setSavingRoleChanges] = useState(false);
   const [gitlabOpen, setGitlabOpen] = useState(false);
   const [gitlabRepoName, setGitlabRepoName] = useState("");
   const [gitlabError, setGitlabError] = useState<string | null>(null);
@@ -402,12 +410,7 @@ export default function AdminPage() {
   };
 
   const loadUsersData = async () => {
-    const [usersResult, invitationsResult] = await Promise.all([
-      apiFetch<UserRow[]>("admin/users"),
-      apiFetch<InvitationRow[]>("auth/invitations"),
-    ]);
-    setUsers(usersResult);
-    setInvitations(invitationsResult);
+    setUsers(await apiFetch<UserRow[]>("admin/users"));
   };
 
   const loadProjectsData = async () => {
@@ -521,16 +524,6 @@ export default function AdminPage() {
   }, [pathname, router]);
 
   useEffect(() => {
-    if (!inviteOpen) {
-      return;
-    }
-
-    setInviteEmail("");
-    setInviteDisplayName("");
-    setInviteRole("user");
-  }, [inviteOpen]);
-
-  useEffect(() => {
     setPendingRoleChanges({});
   }, [users]);
 
@@ -555,15 +548,6 @@ export default function AdminPage() {
     setAccessPage(1);
   }, [accessEventFilter, accessSearch, accessStatusFilter]);
 
-  const buildPortalInviteUrl = (token: string) => {
-    if (typeof window === "undefined") {
-      return `/invite/${token}`;
-    }
-
-    const portalOrigin = window.location.origin.replace("://admin.", "://");
-    return `${portalOrigin}/invite/${token}`;
-  };
-
   const tryCopyLink = async (link: string): Promise<boolean> => {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       try {
@@ -575,6 +559,44 @@ export default function AdminPage() {
     }
 
     return fallbackCopyText(link);
+  };
+
+  const buildPortalInviteUrl = (token: string) => {
+    if (typeof window === "undefined") {
+      return `/invite/${token}`;
+    }
+    const portalOrigin = window.location.origin.replace("://admin.", "://");
+    return `${portalOrigin}/invite/${token}`;
+  };
+
+  const reviewUser = async (userId: string, action: "approve" | "reject") => {
+    setReviewingUserId(userId);
+    try {
+      await apiFetch(`auth/users/${userId}/${action}`, { method: "POST" });
+      await loadUsersData();
+      notifications.show({ title: action === "approve" ? "Approved" : "Rejected", message: `User ${action}d.`, color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: `Failed to ${action} user.`, color: "red" });
+    } finally {
+      setReviewingUserId(null);
+    }
+  };
+
+  const reviewProject = async (projectId: string, action: "approve" | "reject") => {
+    setReviewingProjectId(projectId);
+    try {
+      await apiFetch(`projects/${projectId}/${action}`, { method: "POST" });
+      await loadProjectsData();
+      notifications.show({
+        title: action === "approve" ? "Approved" : "Rejected",
+        message: `Project request ${action}d.`,
+        color: "teal",
+      });
+    } catch {
+      notifications.show({ title: "Failed", message: `Failed to ${action} project request.`, color: "red" });
+    } finally {
+      setReviewingProjectId(null);
+    }
   };
 
   const createGitlabRepo = async () => {
@@ -714,6 +736,13 @@ export default function AdminPage() {
     const start = (activePage - 1) * PAGE_SIZE;
     return projects.slice(start, start + PAGE_SIZE);
   }, [activePage, projects]);
+  const approvedProjects = useMemo(() => projects.filter((project) => project.approvalStatus === "approved"), [projects]);
+  const projectRequestRows = useMemo(() => projects.filter((project) => project.approvalStatus !== "approved"), [projects]);
+  const approvedProjectPages = Math.max(1, Math.ceil(approvedProjects.length / PAGE_SIZE));
+  const pagedApprovedProjects = useMemo(() => {
+    const start = (activePage - 1) * PAGE_SIZE;
+    return approvedProjects.slice(start, start + PAGE_SIZE);
+  }, [activePage, approvedProjects]);
   const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
   const auditActionOptions = useMemo(
     () => [{ value: "all", label: "All actions" }, ...Array.from(new Set(auditLogs.map((log) => log.actionKey))).map((action) => ({ value: action, label: action }))],
@@ -1123,9 +1152,6 @@ export default function AdminPage() {
             <Group justify="space-between" align="center">
               <Title order={4}>Users</Title>
               <Group>
-                <Button variant="light" onClick={() => setInviteOpen(true)}>
-                  Invite User
-                </Button>
                 {Object.keys(pendingRoleChanges).length ? (
                   <Button onClick={() => void saveRoleChanges()} loading={savingRoleChanges}>
                     Save
@@ -1137,7 +1163,7 @@ export default function AdminPage() {
             <Tabs value={userTab} onChange={setUserTab} mt="md">
               <Tabs.List>
                 <Tabs.Tab value="current">Current Users</Tabs.Tab>
-                <Tabs.Tab value="pending">Pending Invitations</Tabs.Tab>
+                <Tabs.Tab value="pending">Signup Requests</Tabs.Tab>
               </Tabs.List>
 
               <Tabs.Panel value="current" pt="md">
@@ -1153,7 +1179,7 @@ export default function AdminPage() {
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                      {users.map((user) => (
+                      {users.filter((user) => user.approvalStatus === "approved").map((user) => (
                         <Table.Tr
                           key={user.id}
                           style={
@@ -1204,46 +1230,50 @@ export default function AdminPage() {
                       <Table.Tr>
                         <Table.Th>Email</Table.Th>
                         <Table.Th>Name</Table.Th>
+                        <Table.Th>Status</Table.Th>
                         <Table.Th>Role</Table.Th>
                         <Table.Th>Created</Table.Th>
-                        <Table.Th>Link</Table.Th>
-                        <Table.Th>Delete</Table.Th>
+                        <Table.Th>Actions</Table.Th>
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                      {invitations.length === 0 ? (
+                      {users.filter((user) => user.approvalStatus !== "approved").length === 0 ? (
                         <Table.Tr>
                           <Table.Td colSpan={6}>
                             <Text size="sm" c="dimmed">
-                              No pending invitations.
+                              No signup requests.
                             </Text>
                           </Table.Td>
                         </Table.Tr>
                       ) : (
-                        invitations.map((invitation) => (
-                          <Table.Tr key={invitation.id}>
-                            <Table.Td>{invitation.email}</Table.Td>
-                            <Table.Td>{invitation.displayName}</Table.Td>
-                            <Table.Td>{invitation.globalRole}</Table.Td>
-                            <Table.Td>{new Date(invitation.createdAt).toLocaleString()}</Table.Td>
+                        users
+                          .filter((user) => user.approvalStatus !== "approved")
+                          .map((user) => (
+                          <Table.Tr key={user.id}>
+                            <Table.Td>{user.email}</Table.Td>
+                            <Table.Td>{user.displayName}</Table.Td>
                             <Table.Td>
-                              <Group gap="xs" wrap="nowrap">
-                                <TextInput value={buildPortalInviteUrl(invitation.token)} readOnly styles={{ input: { minWidth: 320 } }} />
-                                <Button size="xs" variant="light" onClick={() => void copyInvitationLink(invitation.token)}>
-                                  Copy
+                              <Badge variant="light" color={user.approvalStatus === "pending" ? "orange" : "red"}>
+                                {user.approvalStatus}
+                              </Badge>
+                            </Table.Td>
+                            <Table.Td>{user.globalRole}</Table.Td>
+                            <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
+                            <Table.Td>
+                              <Group gap="xs">
+                                <Button size="xs" loading={reviewingUserId === user.id} onClick={() => void reviewUser(user.id, "approve")}>
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  color="red"
+                                  variant="light"
+                                  loading={reviewingUserId === user.id}
+                                  onClick={() => void reviewUser(user.id, "reject")}
+                                >
+                                  Reject
                                 </Button>
                               </Group>
-                            </Table.Td>
-                            <Table.Td>
-                              <Button
-                                size="xs"
-                                color="red"
-                                variant="subtle"
-                                loading={deletingInvitationId === invitation.id}
-                                onClick={() => void deleteInvitation(invitation.id)}
-                              >
-                                Delete
-                              </Button>
                             </Table.Td>
                           </Table.Tr>
                         ))
@@ -1258,30 +1288,100 @@ export default function AdminPage() {
 
         {activeSection === "projects" ? (
           <Paper withBorder p="md">
-            <Title order={4}>Projects</Title>
-            <ScrollArea mt="sm">
-              <Table withTableBorder highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Name</Table.Th>
-                    <Table.Th>ID</Table.Th>
-                    <Table.Th>Created</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {pagedProjects.map((project) => (
-                    <Table.Tr key={project.id} onClick={() => setDetailProject(project)} style={{ cursor: "pointer" }}>
-                      <Table.Td>{project.name}</Table.Td>
-                      <Table.Td>{project.id}</Table.Td>
-                      <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-            <Group justify="end" mt="md">
-              <Pagination total={projectPages} value={activePage} onChange={setActivePage} />
-            </Group>
+            <Tabs value={projectTab} onChange={setProjectTab}>
+              <Tabs.List>
+                <Tabs.Tab value="current">Current Projects</Tabs.Tab>
+                <Tabs.Tab value="requests">Project Requests</Tabs.Tab>
+              </Tabs.List>
+
+              <Tabs.Panel value="current" pt="md">
+                <ScrollArea>
+                  <Table withTableBorder highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>ID</Table.Th>
+                        <Table.Th>Created</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {pagedApprovedProjects.map((project) => (
+                        <Table.Tr key={project.id} onClick={() => setDetailProject(project)} style={{ cursor: "pointer" }}>
+                          <Table.Td>{project.name}</Table.Td>
+                          <Table.Td>{project.id}</Table.Td>
+                          <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+                <Group justify="end" mt="md">
+                  <Pagination total={approvedProjectPages} value={activePage} onChange={setActivePage} />
+                </Group>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="requests" pt="md">
+                <ScrollArea>
+                  <Table withTableBorder highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>Description</Table.Th>
+                        <Table.Th>Requester</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                        <Table.Th>Created</Table.Th>
+                        <Table.Th>Actions</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {projectRequestRows.length ? (
+                        projectRequestRows.map((project) => (
+                            <Table.Tr key={project.id}>
+                              <Table.Td>{project.name}</Table.Td>
+                              <Table.Td>{project.description || "-"}</Table.Td>
+                              <Table.Td>{project.requestedByDisplayName || project.requestedByUserEmail || "-"}</Table.Td>
+                              <Table.Td>
+                                <Badge variant="light" color={project.approvalStatus === "pending" ? "orange" : "red"}>
+                                  {project.approvalStatus}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
+                              <Table.Td>
+                                <Group gap="xs">
+                                  <Button
+                                    size="xs"
+                                    loading={reviewingProjectId === project.id}
+                                    onClick={() => void reviewProject(project.id, "approve")}
+                                  >
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    color="red"
+                                    variant="light"
+                                    loading={reviewingProjectId === project.id}
+                                    onClick={() => void reviewProject(project.id, "reject")}
+                                  >
+                                    Reject
+                                  </Button>
+                                </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))
+                      ) : (
+                        <Table.Tr>
+                          <Table.Td colSpan={6}>
+                            <Text size="sm" c="dimmed">
+                              No project creation requests.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Tabs.Panel>
+            </Tabs>
           </Paper>
         ) : null}
 
@@ -2093,35 +2193,6 @@ export default function AdminPage() {
             </Group>
           </Stack>
         ) : null}
-      </Drawer>
-
-      <Drawer opened={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite User" position="right">
-        <Stack>
-          <TextInput label="Email" value={inviteEmail} onChange={(event) => setInviteEmail(event.currentTarget.value)} />
-          <TextInput
-            label="Display Name"
-            value={inviteDisplayName}
-            onChange={(event) => setInviteDisplayName(event.currentTarget.value)}
-          />
-          <Select
-            label="Role"
-            data={[
-              { value: "user", label: "user" },
-              { value: "admin", label: "admin" },
-            ]}
-            value={inviteRole}
-            onChange={setInviteRole}
-            allowDeselect={false}
-          />
-          <Group justify="end">
-            <Button variant="default" onClick={() => setInviteOpen(false)}>
-              Close
-            </Button>
-            <Button loading={creatingInvite} onClick={createInvitation}>
-              Create Invite
-            </Button>
-          </Group>
-        </Stack>
       </Drawer>
 
       <Drawer opened={gitlabOpen} onClose={() => setGitlabOpen(false)} title="Create GitLab Repo" position="right">

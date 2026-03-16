@@ -1,7 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { Permissions } from "../auth/decorators/permissions.decorator";
+import { Roles } from "../auth/decorators/roles.decorator";
 import { AuthService } from "../auth/auth.service";
 import { JwtPayload } from "../auth/types/jwt-payload.type";
+import { GlobalRole } from "../common/enums/global-role.enum";
+import { Permission } from "../common/enums/permission.enum";
 import { GitlabService } from "../gitlab/gitlab.service";
 import { LlmService } from "../llm/llm.service";
 import { AddProjectMemberDto } from "./dto/add-project-member.dto";
@@ -22,10 +26,7 @@ export class ProjectsController {
 
   @Post()
   async createProject(@Body() dto: CreateProjectDto, @CurrentUser() user: JwtPayload) {
-    const project = await this.projectsService.createProject(dto, user.sub);
-    await this.gitlabService.ensureProjectGroup(project.id);
-    await this.llmService.ensureTeam(project.id);
-    return project;
+    return this.projectsService.createProject(dto, user.sub);
   }
 
   @Get()
@@ -94,5 +95,22 @@ export class ProjectsController {
   async deleteProject(@Param("projectId") projectId: string, @CurrentUser() user: JwtPayload) {
     await this.projectsService.deleteProject(projectId, user.sub);
     return { success: true };
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_PROJECT)
+  @Post(":projectId/approve")
+  async approveProject(@Param("projectId") projectId: string, @CurrentUser() user: JwtPayload) {
+    const project = await this.projectsService.approveProject(projectId, user.sub);
+    await this.gitlabService.ensureProjectGroup(project.id);
+    await this.llmService.ensureTeam(project.id);
+    return project;
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_PROJECT)
+  @Post(":projectId/reject")
+  rejectProject(@Param("projectId") projectId: string, @CurrentUser() user: JwtPayload) {
+    return this.projectsService.rejectProject(projectId, user.sub);
   }
 }

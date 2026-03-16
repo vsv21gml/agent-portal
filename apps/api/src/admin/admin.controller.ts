@@ -35,7 +35,7 @@ export class AdminController {
   @Get("projects")
   @Permissions(Permission.READ_PROJECT)
   projects() {
-    return this.projectsService.listAllProjects();
+    return this.adminService.listProjects();
   }
 
   @Get("agents")

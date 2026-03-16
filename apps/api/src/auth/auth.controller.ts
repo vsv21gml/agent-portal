@@ -100,6 +100,20 @@ export class AuthController {
 
   @Roles(GlobalRole.ADMIN)
   @Permissions(Permission.WRITE_USER_ROLE)
+  @Post("users/:userId/approve")
+  approveUser(@Param("userId") userId: string) {
+    return this.authService.approveUser(userId);
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_USER_ROLE)
+  @Post("users/:userId/reject")
+  rejectUser(@Param("userId") userId: string) {
+    return this.authService.rejectUser(userId);
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_USER_ROLE)
   @Patch("users/:userId/role/:role")
   setRole(@Param("userId") userId: string, @Param("role") role: GlobalRole) {
     return this.authService.setGlobalRole(userId, role);

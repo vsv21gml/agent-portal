@@ -165,9 +165,21 @@ type UserAdminRow = {
   email: string;
   displayName: string;
   globalRole: string;
+  approvalStatus: string;
   createdAt: string;
   currentMonthSpendUsd: number;
   currentMonthBudgetUsd: number | null;
+};
+
+type ProjectAdminRow = {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  approvalStatus: string;
+  requestedByUserId: string | null;
+  requestedByUserEmail: string | null;
+  requestedByDisplayName: string | null;
 };
 
 @Injectable()
@@ -566,10 +578,32 @@ export class AdminService {
       email: user.email,
       displayName: user.displayName,
       globalRole: user.globalRole,
+      approvalStatus: user.approvalStatus,
       createdAt: user.createdAt.toISOString(),
       currentMonthSpendUsd: usageRows[index]?.currentMonthSpendUsd ?? 0,
       currentMonthBudgetUsd: usageRows[index]?.currentMonthBudgetUsd ?? null,
     }));
+  }
+
+  async listProjects(): Promise<ProjectAdminRow[]> {
+    const projects = await this.projectRepository.find({ where: { deletedYn: "N" }, order: { createdAt: "DESC" } });
+    const requesterIds = [...new Set(projects.map((project) => project.requestedByUserId).filter(Boolean))] as string[];
+    const users = requesterIds.length ? await this.userRepository.findBy(requesterIds.map((id) => ({ id }))) : [];
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    return projects.map((project) => {
+      const requester = project.requestedByUserId ? userMap.get(project.requestedByUserId) : null;
+      return {
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        createdAt: project.createdAt.toISOString(),
+        approvalStatus: project.approvalStatus,
+        requestedByUserId: project.requestedByUserId,
+        requestedByUserEmail: requester?.email ?? null,
+        requestedByDisplayName: requester?.displayName ?? null,
+      };
+    });
   }
 
   private async getNodePoolSummary(constraints: NodePoolConstraints): Promise<WorkspaceResourceOverview["nodePool"]> {

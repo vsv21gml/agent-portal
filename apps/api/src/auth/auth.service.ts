@@ -45,8 +45,31 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<{ accessToken: string }> {
-    void dto;
-    throw new ForbiddenException("Registration is disabled");
+    const email = dto.email.trim().toLowerCase();
+    const displayName = dto.displayName?.trim() || email.split("@")[0];
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const existing = await this.userRepository.findOne({ where: { email } });
+
+    if (existing?.approvalStatus === "approved") {
+      throw new ConflictException("Email already exists");
+    }
+
+    const user =
+      existing ??
+      this.userRepository.create({
+        email,
+        displayName,
+        globalRole: GlobalRole.USER,
+      });
+
+    user.passwordHash = passwordHash;
+    user.displayName = displayName;
+    user.globalRole = GlobalRole.USER;
+    user.approvalStatus = "pending";
+    user.approvedAt = null;
+    await this.userRepository.save(user);
+
+    return { accessToken: "" };
   }
 
   async login(dto: LoginDto, clientIp: string | null): Promise<{ accessToken: string }> {
@@ -76,6 +99,32 @@ export class AuthService {
         detail: "Invalid credentials",
       });
       throw new UnauthorizedException("Invalid credentials");
+    }
+
+    if (user.approvalStatus === "pending") {
+      await this.logsService.writeAccessLog({
+        userId: user.id,
+        userEmail: user.email,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "password",
+        status: "failure",
+        detail: "Account approval pending",
+      });
+      throw new ForbiddenException("Account approval pending");
+    }
+
+    if (user.approvalStatus === "rejected") {
+      await this.logsService.writeAccessLog({
+        userId: user.id,
+        userEmail: user.email,
+        clientIp,
+        eventType: "LOGIN",
+        authProvider: "password",
+        status: "failure",
+        detail: "Account approval rejected",
+      });
+      throw new ForbiddenException("Account approval rejected");
     }
 
     await this.logsService.writeAccessLog({
@@ -127,6 +176,23 @@ export class AuthService {
     return this.userRepository.save(user);
   }
 
+  async approveUser(userId: string): Promise<UserEntity> {
+    const user = await this.userRepository.findOneByOrFail({ id: userId });
+    user.approvalStatus = "approved";
+    user.approvedAt = new Date();
+    const saved = await this.userRepository.save(user);
+    await this.gitlabService.ensureUser(saved.email, saved.displayName);
+    await this.llmService.ensureUserVirtualKey(saved.id, saved.email, saved.displayName);
+    return saved;
+  }
+
+  async rejectUser(userId: string): Promise<UserEntity> {
+    const user = await this.userRepository.findOneByOrFail({ id: userId });
+    user.approvalStatus = "rejected";
+    user.approvedAt = null;
+    return this.userRepository.save(user);
+  }
+
   async updateUser(userId: string, dto: UpdateUserDto): Promise<UserEntity> {
     const user = await this.userRepository.findOneByOrFail({ id: userId });
     user.displayName = dto.displayName.trim();
@@ -153,82 +219,29 @@ export class AuthService {
   }
 
   async listInvitations(): Promise<UserInvitationEntity[]> {
-    return this.invitationRepository.find({
-      where: { acceptedAt: IsNull() },
-      order: { createdAt: "DESC" },
-    });
+    throw new ForbiddenException("Invitation flow has been removed");
   }
 
   async createInvitation(dto: CreateInvitationDto, invitedByUserId: string): Promise<UserInvitationEntity> {
-    const email = dto.email.trim().toLowerCase();
-    const displayName = dto.displayName.trim() || email.split("@")[0];
-    const existingUser = await this.userRepository.findOne({ where: { email } });
-    if (existingUser) {
-      throw new ConflictException("Email already exists");
-    }
-
-    const existingInvite = await this.invitationRepository.findOne({ where: { email, acceptedAt: IsNull() } });
-    if (existingInvite) {
-      existingInvite.displayName = displayName;
-      existingInvite.globalRole = dto.globalRole;
-      existingInvite.token = randomUUID();
-      existingInvite.invitedByUserId = invitedByUserId;
-      return this.invitationRepository.save(existingInvite);
-    }
-
-    return this.invitationRepository.save(
-      this.invitationRepository.create({
-        email,
-        displayName,
-        globalRole: dto.globalRole,
-        token: randomUUID(),
-        invitedByUserId,
-        acceptedAt: null,
-      }),
-    );
+    void dto;
+    void invitedByUserId;
+    throw new ForbiddenException("Invitation flow has been removed");
   }
 
   async deleteInvitation(invitationId: string): Promise<void> {
-    const invitation = await this.invitationRepository.findOne({ where: { id: invitationId, acceptedAt: IsNull() } });
-    if (!invitation) {
-      throw new NotFoundException("Invitation not found");
-    }
-
-    await this.invitationRepository.delete({ id: invitationId });
+    void invitationId;
+    throw new ForbiddenException("Invitation flow has been removed");
   }
 
   async getInvitationByToken(token: string): Promise<UserInvitationEntity> {
-    const invitation = await this.invitationRepository.findOne({ where: { token } });
-    if (!invitation || invitation.acceptedAt) {
-      throw new NotFoundException("Invitation not found");
-    }
-    return invitation;
+    void token;
+    throw new ForbiddenException("Invitation flow has been removed");
   }
 
   async acceptInvitation(token: string, dto: AcceptInvitationDto): Promise<{ accessToken: string; role: GlobalRole }> {
-    const invitation = await this.getInvitationByToken(token);
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-    let user = await this.userRepository.findOne({ where: { email: invitation.email } });
-
-    if (user) {
-      user.passwordHash = passwordHash;
-      user.displayName = invitation.displayName;
-      user.globalRole = invitation.globalRole;
-    } else {
-      user = this.userRepository.create({
-        email: invitation.email,
-        passwordHash,
-        displayName: invitation.displayName,
-        globalRole: invitation.globalRole,
-      });
-    }
-
-    const saved = await this.userRepository.save(user);
-    invitation.acceptedAt = new Date();
-    await this.invitationRepository.save(invitation);
-    await this.gitlabService.ensureUser(saved.email, saved.displayName, dto.password);
-    await this.llmService.ensureUserVirtualKey(saved.id, saved.email, saved.displayName);
-    return { accessToken: await this.signToken(saved), role: saved.globalRole };
+    void token;
+    void dto;
+    throw new ForbiddenException("Invitation flow has been removed");
   }
 
   async issueTokenForUser(user: UserEntity): Promise<{ accessToken: string }> {
@@ -245,6 +258,8 @@ export class AuthService {
           passwordHash: await bcrypt.hash(tempPassword, 10),
           displayName: displayName?.trim() || email.split("@")[0],
           globalRole: GlobalRole.USER,
+          approvalStatus: "approved",
+          approvedAt: new Date(),
         }),
       );
       await this.gitlabService.ensureUser(user.email, user.displayName, tempPassword);
@@ -266,8 +281,10 @@ export class AuthService {
     if (existing) {
       if (existing.globalRole !== GlobalRole.ADMIN) {
         existing.globalRole = GlobalRole.ADMIN;
-        await this.userRepository.save(existing);
       }
+      existing.approvalStatus = "approved";
+      existing.approvedAt = existing.approvedAt ?? new Date();
+      await this.userRepository.save(existing);
       await this.gitlabService.ensureUser(existing.email, existing.displayName, password);
       await this.llmService.ensureUserVirtualKey(existing.id, existing.email, existing.displayName);
       return { created: false };
@@ -279,6 +296,8 @@ export class AuthService {
       passwordHash: await bcrypt.hash(finalPassword, 10),
       displayName: email.split("@")[0],
       globalRole: GlobalRole.ADMIN,
+      approvalStatus: "approved",
+      approvedAt: new Date(),
     });
     await this.userRepository.save(user);
     await this.gitlabService.ensureUser(user.email, user.displayName, finalPassword);
