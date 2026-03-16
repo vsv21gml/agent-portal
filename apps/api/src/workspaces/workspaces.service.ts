@@ -473,7 +473,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
                     resources: {
                       requests: {
                         cpu: "1",
-                        memory: "4Gi",
+                        memory: "2Gi",
                       },
                       limits: {
                         cpu: "1",
@@ -500,7 +500,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
                     resources: {
                       requests: {
                         cpu: "1",
-                        memory: "4Gi",
+                        memory: "2Gi",
                       },
                       limits: {
                         cpu: "1",

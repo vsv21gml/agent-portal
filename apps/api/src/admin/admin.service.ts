@@ -233,6 +233,7 @@ export class AdminService {
       const repo = repoMap.get(session.repoId);
       const user = userMap.get(session.userId);
       const pod = podsByDeployment.get(session.deploymentName);
+      const requested = this.getPodRequestedResources(pod);
 
       return {
         sessionId: session.id,
@@ -244,8 +245,8 @@ export class AdminService {
         userEmail: user?.email ?? "",
         userDisplayName: user?.displayName ?? user?.email ?? session.userId,
         status: "running",
-        cpu: 1,
-        memoryGi: 4,
+        cpu: requested.cpu,
+        memoryGi: requested.memoryGi,
         nodeName: pod?.spec?.nodeName ?? null,
         createdAt: session.createdAt.toISOString(),
       };
