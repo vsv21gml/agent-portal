@@ -1747,16 +1747,19 @@ export class McpsService {
     if (!trimmed) {
       return {};
     }
-    if (!trimmed.startsWith("data:")) {
+    if (!/(^|\n)\s*(event|data):/i.test(trimmed)) {
       return JSON.parse(trimmed);
     }
-    const dataLines = trimmed
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.replace(/^data:\s*/, ""))
-      .filter(Boolean);
-    return JSON.parse(dataLines[dataLines.length - 1] ?? "{}");
+
+    const events = trimmed
+      .split(/\r?\n\r?\n/)
+      .map((chunk) => this.parseSseEvent(chunk.trim()))
+      .filter((event): event is { event: string | null; data: string } => Boolean(event?.data));
+    const lastPayload = events[events.length - 1]?.data ?? "";
+    if (!lastPayload) {
+      return {};
+    }
+    return JSON.parse(lastPayload);
   }
 
   private fetchWithOptionalInsecureTls(
