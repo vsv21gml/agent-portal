@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   ActionIcon,
   Badge,
-  Box,
   Breadcrumbs,
   Button,
   Card,
@@ -843,6 +842,20 @@ export default function ProjectDetailPage() {
     return latest;
   };
 
+  const stopOtherWorkspacesInState = (activeWorkspaceId?: string) => {
+    setWorkspaces((prev) =>
+      prev.map((item) =>
+        item.id !== activeWorkspaceId && item.status !== "stopped"
+          ? { ...item, status: "stopped" }
+          : item,
+      ),
+    );
+  };
+
+  const upsertWorkspaceInState = (workspace: WorkspaceSession) => {
+    setWorkspaces((prev) => [workspace, ...prev.filter((item) => item.id !== workspace.id)]);
+  };
+
   const openWorkspaceWhenReady = async (workspace: WorkspaceSession) => {
     setOpeningWorkspaceId(workspace.id);
     try {
@@ -1371,15 +1384,18 @@ export default function ProjectDetailPage() {
     setCreatingWorkspace(true);
     try {
       if (workspaceModal.workspace) {
+        stopOtherWorkspacesInState(workspaceModal.workspace.id);
+        upsertWorkspaceInState({ ...workspaceModal.workspace, runtime: workspaceRuntime, status: "provisioning" });
         const updated = await apiFetch<WorkspaceSession>(`workspaces/${workspaceModal.workspace.id}`, {
           method: "PATCH",
           body: JSON.stringify({ runtime: workspaceRuntime }),
         });
-        setWorkspaces((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
+        upsertWorkspaceInState(updated);
         setWorkspaceModal(null);
         toastSuccess("Workspace restart requested.");
         await openWorkspaceWhenReady(updated);
       } else {
+        stopOtherWorkspacesInState();
         const created = await apiFetch<WorkspaceSession>("workspaces", {
           method: "POST",
           body: JSON.stringify({
@@ -1388,12 +1404,13 @@ export default function ProjectDetailPage() {
             runtime: workspaceRuntime,
           }),
         });
-        setWorkspaces((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
+        upsertWorkspaceInState(created);
         setWorkspaceModal(null);
         toastSuccess("Workspace provisioning started.");
         await openWorkspaceWhenReady(created);
       }
     } catch {
+      await loadRepos();
       toastError("Failed to provision VS Code workspace.");
     } finally {
       setCreatingWorkspace(false);
@@ -1430,11 +1447,14 @@ export default function ProjectDetailPage() {
   const restartWorkspace = async (workspace: WorkspaceSession) => {
     setRestartingWorkspaceId(workspace.id);
     try {
+      stopOtherWorkspacesInState(workspace.id);
+      upsertWorkspaceInState({ ...workspace, status: "provisioning" });
       const restarted = await apiFetch<WorkspaceSession>(`workspaces/${workspace.id}/restart`, { method: "POST" });
-      setWorkspaces((prev) => [restarted, ...prev.filter((item) => item.id !== restarted.id)]);
+      upsertWorkspaceInState(restarted);
       toastSuccess("Workspace restart requested.");
       await openWorkspaceWhenReady(restarted);
     } catch {
+      await loadRepos();
       toastError("Failed to restart workspace.");
     } finally {
       setRestartingWorkspaceId(null);
@@ -1828,50 +1848,43 @@ export default function ProjectDetailPage() {
                               </Badge>
                               <Badge variant="light">{workspace.status}</Badge>
                             </Group>
-                            <Box pos="relative">
-                              <LoadingOverlay
-                                visible={workspace.status === "provisioning"}
-                                zIndex={10}
-                                overlayProps={{ radius: "sm", blur: 1 }}
-                              />
-                              <Group gap="xs">
-                                <Button
-                                  size="xs"
-                                  variant="default"
-                                  disabled={!["running", "stopped"].includes(workspace.status)}
-                                  loading={restartingWorkspaceId === workspace.id || openingWorkspaceId === workspace.id}
-                                  onClick={() =>
-                                    workspace.status === "stopped"
-                                      ? void restartWorkspace(workspace)
-                                      : void openWorkspaceWhenReady(workspace)
-                                  }
-                                >
-                                  {workspace.status === "stopped" ? "Restart" : "Open"}
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="light"
-                                  color="yellow"
-                                  loading={stoppingWorkspaceId === workspace.id}
-                                  disabled={workspace.status !== "running"}
-                                  onClick={() => void stopWorkspace(workspace)}
-                                >
-                                  Stop
-                                </Button>
-                                <Button size="xs" variant="light" onClick={() => openWorkspaceModal(repo, workspace)}>
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  color="red"
-                                  variant="light"
-                                  loading={deletingWorkspaceId === workspace.id}
-                                  onClick={() => setWorkspaceDeleteTarget(workspace)}
-                                >
-                                  Delete
-                                </Button>
-                              </Group>
-                            </Box>
+                            <Group gap="xs">
+                              <Button
+                                size="xs"
+                                variant="default"
+                                disabled={!["running", "stopped"].includes(workspace.status)}
+                                loading={restartingWorkspaceId === workspace.id || openingWorkspaceId === workspace.id}
+                                onClick={() =>
+                                  workspace.status === "stopped"
+                                    ? void restartWorkspace(workspace)
+                                    : void openWorkspaceWhenReady(workspace)
+                                }
+                              >
+                                {workspace.status === "stopped" ? "Restart" : "Open"}
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="yellow"
+                                loading={stoppingWorkspaceId === workspace.id}
+                                disabled={workspace.status !== "running"}
+                                onClick={() => void stopWorkspace(workspace)}
+                              >
+                                Stop
+                              </Button>
+                              <Button size="xs" variant="light" onClick={() => openWorkspaceModal(repo, workspace)}>
+                                Edit
+                              </Button>
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="light"
+                                loading={deletingWorkspaceId === workspace.id}
+                                onClick={() => setWorkspaceDeleteTarget(workspace)}
+                              >
+                                Delete
+                              </Button>
+                            </Group>
                           </Group>
                         )}
                       </Stack>

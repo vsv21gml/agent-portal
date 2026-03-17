@@ -180,8 +180,9 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
         redirect: "manual",
         signal: controller.signal,
       });
+      const isReady = response.status >= 200 && response.status < 400;
       return {
-        ready: response.status === 200,
+        ready: isReady,
         statusCode: response.status,
         checkedUrl: target.url,
       };
