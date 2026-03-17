@@ -300,6 +300,7 @@ type ModelAccessRequest = {
 const PAGE_SIZE = 8;
 
 const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
+  approvals: { title: "Approvals", description: "Review sign-up, project, and model access requests in one place." },
   users: { title: "Users", description: "Manage approved users and review sign-up requests." },
   projects: { title: "Projects", description: "Review active projects and approve creation requests." },
   resources: { title: "Resources", description: "Track workspace and serving resource usage across dedicated node pools." },
@@ -331,6 +332,9 @@ function fallbackCopyText(text: string): boolean {
 }
 
 function getSectionFromPathname(pathname: string): AdminSection {
+  if (pathname === "/approvals") {
+    return "approvals";
+  }
   if (pathname === "/projects") {
     return "projects";
   }
@@ -513,6 +517,9 @@ export default function AdminPage() {
 
   const loadSectionData = async () => {
     switch (activeSection) {
+      case "approvals":
+        await Promise.all([loadUsersData(), loadProjectsData(), loadModelData()]);
+        break;
       case "users":
         await loadUsersData();
         break;
@@ -901,6 +908,12 @@ export default function AdminPage() {
     const start = (activePage - 1) * PAGE_SIZE;
     return filteredProjects.slice(start, start + PAGE_SIZE);
   }, [activePage, filteredProjects]);
+  const pendingUsers = useMemo(() => users.filter((user) => user.approvalStatus !== "approved"), [users]);
+  const pendingProjects = useMemo(
+    () => projects.filter((project) => project.deletedYn !== "Y" && project.approvalStatus !== "approved"),
+    [projects],
+  );
+  const pendingModelRequests = useMemo(() => modelRequests.filter((request) => request.status === "pending"), [modelRequests]);
   const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
   const auditActionOptions = useMemo(
     () => [{ value: "all", label: "All actions" }, ...Array.from(new Set(auditLogs.map((log) => log.actionKey))).map((action) => ({ value: action, label: action }))],
@@ -1313,6 +1326,231 @@ export default function AdminPage() {
             </Button>
           </Group>
         </Paper>
+        {activeSection === "approvals" ? (
+          <Stack gap="md">
+            <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+              <Paper withBorder p="md" radius="md">
+                <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                  Signup Requests
+                </Text>
+                <Text mt="sm" fw={700} size="xl">
+                  {pendingUsers.length}
+                </Text>
+              </Paper>
+              <Paper withBorder p="md" radius="md">
+                <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                  Project Requests
+                </Text>
+                <Text mt="sm" fw={700} size="xl">
+                  {pendingProjects.length}
+                </Text>
+              </Paper>
+              <Paper withBorder p="md" radius="md">
+                <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                  Model Requests
+                </Text>
+                <Text mt="sm" fw={700} size="xl">
+                  {pendingModelRequests.length}
+                </Text>
+              </Paper>
+            </SimpleGrid>
+
+            <Tabs defaultValue="signup">
+              <Tabs.List>
+                <Tabs.Tab value="signup">Signup</Tabs.Tab>
+                <Tabs.Tab value="projects">Projects</Tabs.Tab>
+                <Tabs.Tab value="models">Models</Tabs.Tab>
+              </Tabs.List>
+
+              <Tabs.Panel value="signup" pt="md">
+                <Paper withBorder p="md">
+                  <Title order={4}>Pending Signup Requests</Title>
+                  <ScrollArea mt="sm">
+                    <Table withTableBorder highlightOnHover>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Email</Table.Th>
+                          <Table.Th>Name</Table.Th>
+                          <Table.Th>Status</Table.Th>
+                          <Table.Th>Role</Table.Th>
+                          <Table.Th>Created</Table.Th>
+                          <Table.Th>Actions</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {pendingUsers.length ? (
+                          pendingUsers.map((user) => (
+                            <Table.Tr key={user.id}>
+                              <Table.Td>{user.email}</Table.Td>
+                              <Table.Td>{user.displayName}</Table.Td>
+                              <Table.Td>
+                                <Badge variant="light" color={user.approvalStatus === "pending" ? "orange" : "red"}>
+                                  {user.approvalStatus}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td>{user.globalRole}</Table.Td>
+                              <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
+                              <Table.Td>
+                                <Group gap="xs">
+                                  <Button size="xs" loading={reviewingUserId === user.id} onClick={() => void reviewUser(user.id, "approve")}>
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    color="red"
+                                    variant="light"
+                                    loading={reviewingUserId === user.id}
+                                    onClick={() => void reviewUser(user.id, "reject")}
+                                  >
+                                    Reject
+                                  </Button>
+                                </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))
+                        ) : (
+                          <Table.Tr>
+                            <Table.Td colSpan={6}>
+                              <Text size="sm" c="dimmed">
+                                No signup requests.
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
+                      </Table.Tbody>
+                    </Table>
+                  </ScrollArea>
+                </Paper>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="projects" pt="md">
+                <Paper withBorder p="md">
+                  <Title order={4}>Pending Project Requests</Title>
+                  <ScrollArea mt="sm">
+                    <Table withTableBorder highlightOnHover>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Name</Table.Th>
+                          <Table.Th>Description</Table.Th>
+                          <Table.Th>Requester</Table.Th>
+                          <Table.Th>Created</Table.Th>
+                          <Table.Th>Actions</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {pendingProjects.length ? (
+                          pendingProjects.map((project) => (
+                            <Table.Tr key={project.id}>
+                              <Table.Td>{project.name}</Table.Td>
+                              <Table.Td>{project.description || "-"}</Table.Td>
+                              <Table.Td>{project.requestedByDisplayName ?? project.requestedByUserEmail ?? "-"}</Table.Td>
+                              <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
+                              <Table.Td>
+                                <Group gap="xs">
+                                  <Button size="xs" loading={reviewingProjectId === project.id} onClick={() => void reviewProject(project.id, "approve")}>
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    color="red"
+                                    variant="light"
+                                    loading={reviewingProjectId === project.id}
+                                    onClick={() => void reviewProject(project.id, "reject")}
+                                  >
+                                    Reject
+                                  </Button>
+                                </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))
+                        ) : (
+                          <Table.Tr>
+                            <Table.Td colSpan={5}>
+                              <Text size="sm" c="dimmed">
+                                No project requests.
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
+                      </Table.Tbody>
+                    </Table>
+                  </ScrollArea>
+                </Paper>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="models" pt="md">
+                <Paper withBorder p="md">
+                  <Title order={4}>Pending Model Requests</Title>
+                  <ScrollArea mt="sm">
+                    <Table withTableBorder highlightOnHover>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Type</Table.Th>
+                          <Table.Th>User</Table.Th>
+                          <Table.Th>Project</Table.Th>
+                          <Table.Th>Target</Table.Th>
+                          <Table.Th>Model</Table.Th>
+                          <Table.Th>Requested</Table.Th>
+                          <Table.Th>Actions</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {pendingModelRequests.length ? (
+                          pendingModelRequests.map((request) => (
+                            <Table.Tr key={request.id}>
+                              <Table.Td>
+                                {request.requestType === "agent_deploy"
+                                  ? "Agent Deploy"
+                                  : request.requestType === "mcp_deploy"
+                                    ? "MCP Deploy"
+                                    : "Personal"}
+                              </Table.Td>
+                              <Table.Td>{request.userDisplayName}</Table.Td>
+                              <Table.Td>{request.projectName ?? "-"}</Table.Td>
+                              <Table.Td>{request.agentName ?? request.mcpName ?? "-"}</Table.Td>
+                              <Table.Td>{request.modelName}</Table.Td>
+                              <Table.Td>{new Date(request.createdAt).toLocaleString()}</Table.Td>
+                              <Table.Td>
+                                <Group gap="xs">
+                                  <Button
+                                    size="xs"
+                                    variant="light"
+                                    loading={reviewingRequestId === request.id}
+                                    onClick={() => void reviewModelRequest(request.id, "approve")}
+                                  >
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="xs"
+                                    color="red"
+                                    variant="light"
+                                    loading={reviewingRequestId === request.id}
+                                    onClick={() => void reviewModelRequest(request.id, "reject")}
+                                  >
+                                    Reject
+                                  </Button>
+                                </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))
+                        ) : (
+                          <Table.Tr>
+                            <Table.Td colSpan={7}>
+                              <Text size="sm" c="dimmed">
+                                No model requests.
+                              </Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
+                      </Table.Tbody>
+                    </Table>
+                  </ScrollArea>
+                </Paper>
+              </Tabs.Panel>
+            </Tabs>
+          </Stack>
+        ) : null}
+
         {activeSection === "users" ? (
           <Paper withBorder p="md">
             <Group justify="space-between" align="center">
