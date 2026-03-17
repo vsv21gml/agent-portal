@@ -207,6 +207,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       ? await this.llmService.ensureUserVirtualKey(userId, user.email, user.displayName)
       : null;
 
+    await this.stopOtherUserWorkspaces(userId, session.id);
     session.runtime = runtime;
     session.status = "provisioning";
     await this.workspaceRepository.save(session);
