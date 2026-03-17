@@ -81,6 +81,12 @@ type WorkspaceSession = {
   createdAt: string;
 };
 
+type WorkspaceEndpointHealth = {
+  ready: boolean;
+  statusCode: number | null;
+  checkedUrl: string;
+};
+
 type WorkspaceModalState = {
   repo: GitRepo;
   workspace?: WorkspaceSession;
@@ -176,6 +182,8 @@ const runtimeOptions = [
   { value: "NODE24", label: "NODE24" },
   { value: "PYTHON3.8", label: "PYTHON3.8" },
 ];
+const workspaceHealthcheckIntervalMs = 2000;
+const workspaceHealthcheckMaxAttempts = 30;
 
 type SectionMenuButtonProps = ComponentPropsWithoutRef<typeof ActionIcon> & {
   label: string;
@@ -371,6 +379,7 @@ export default function ProjectDetailPage() {
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [stoppingWorkspaceId, setStoppingWorkspaceId] = useState<string | null>(null);
   const [restartingWorkspaceId, setRestartingWorkspaceId] = useState<string | null>(null);
+  const [openingWorkspaceId, setOpeningWorkspaceId] = useState<string | null>(null);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState<WorkspaceSession | null>(null);
   const [updatingMembers, setUpdatingMembers] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
@@ -832,6 +841,33 @@ export default function ProjectDetailPage() {
     const latest = await apiFetch<WorkspaceSession>(`workspaces/${workspaceId}`);
     setWorkspaces((prev) => [latest, ...prev.filter((item) => item.id !== latest.id)]);
     return latest;
+  };
+
+  const openWorkspaceWhenReady = async (workspace: WorkspaceSession) => {
+    setOpeningWorkspaceId(workspace.id);
+    try {
+      for (let attempt = 0; attempt < workspaceHealthcheckMaxAttempts; attempt += 1) {
+        const [latest, health] = await Promise.all([
+          refreshWorkspace(workspace.id),
+          apiFetch<WorkspaceEndpointHealth>(`workspaces/${workspace.id}/endpoint-health`),
+        ]);
+
+        if (health.ready) {
+          window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
+          return;
+        }
+
+        if (attempt < workspaceHealthcheckMaxAttempts - 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, workspaceHealthcheckIntervalMs));
+        }
+      }
+
+      toastError("Workspace is still starting. Try opening it again in a moment.");
+    } catch {
+      toastError("Failed to verify workspace readiness.");
+    } finally {
+      setOpeningWorkspaceId((current) => (current === workspace.id ? null : current));
+    }
   };
 
   const createRepo = async () => {
@@ -1342,8 +1378,7 @@ export default function ProjectDetailPage() {
         setWorkspaces((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
         setWorkspaceModal(null);
         toastSuccess("Workspace restart requested.");
-        const latest = await refreshWorkspace(updated.id);
-        window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
+        await openWorkspaceWhenReady(updated);
       } else {
         const created = await apiFetch<WorkspaceSession>("workspaces", {
           method: "POST",
@@ -1356,8 +1391,7 @@ export default function ProjectDetailPage() {
         setWorkspaces((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
         setWorkspaceModal(null);
         toastSuccess("Workspace provisioning started.");
-        const latest = await refreshWorkspace(created.id);
-        window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
+        await openWorkspaceWhenReady(created);
       }
     } catch {
       toastError("Failed to provision VS Code workspace.");
@@ -1399,8 +1433,7 @@ export default function ProjectDetailPage() {
       const restarted = await apiFetch<WorkspaceSession>(`workspaces/${workspace.id}/restart`, { method: "POST" });
       setWorkspaces((prev) => [restarted, ...prev.filter((item) => item.id !== restarted.id)]);
       toastSuccess("Workspace restart requested.");
-      const latest = await refreshWorkspace(restarted.id);
-      window.open(latest.endpointUrl, "_blank", "noopener,noreferrer");
+      await openWorkspaceWhenReady(restarted);
     } catch {
       toastError("Failed to restart workspace.");
     } finally {
@@ -1806,11 +1839,11 @@ export default function ProjectDetailPage() {
                                   size="xs"
                                   variant="default"
                                   disabled={!["running", "stopped"].includes(workspace.status)}
-                                  loading={restartingWorkspaceId === workspace.id}
+                                  loading={restartingWorkspaceId === workspace.id || openingWorkspaceId === workspace.id}
                                   onClick={() =>
                                     workspace.status === "stopped"
                                       ? void restartWorkspace(workspace)
-                                      : window.open(workspace.endpointUrl, "_blank", "noopener,noreferrer")
+                                      : void openWorkspaceWhenReady(workspace)
                                   }
                                 >
                                   {workspace.status === "stopped" ? "Restart" : "Open"}

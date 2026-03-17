@@ -19,6 +19,11 @@ export class WorkspacesController {
     return this.workspacesService.listByProject(projectId, user.sub);
   }
 
+  @Get(":workspaceId/endpoint-health")
+  getWorkspaceEndpointHealth(@Param("workspaceId") workspaceId: string, @CurrentUser() user: JwtPayload) {
+    return this.workspacesService.getWorkspaceEndpointHealth(workspaceId, user.sub);
+  }
+
   @Get(":workspaceId")
   getWorkspace(@Param("workspaceId") workspaceId: string, @CurrentUser() user: JwtPayload) {
     return this.workspacesService.getWorkspace(workspaceId, user.sub);

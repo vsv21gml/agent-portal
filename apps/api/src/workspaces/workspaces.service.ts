@@ -162,6 +162,43 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     return this.refreshWorkspaceStatus(session);
   }
 
+  async getWorkspaceEndpointHealth(
+    workspaceId: string,
+    userId: string,
+  ): Promise<{ ready: boolean; statusCode: number | null; checkedUrl: string }> {
+    const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
+    const refreshed = await this.refreshWorkspaceStatus(session);
+    const endpoint = new URL(refreshed.endpointUrl);
+    const target = this.buildWorkspaceHealthcheckTarget(endpoint);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(target.url, {
+        method: "GET",
+        headers: target.headers,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      return {
+        ready: response.status === 200,
+        statusCode: response.status,
+        checkedUrl: target.url,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Workspace endpoint probe failed session=${refreshed.id} deployment=${refreshed.deploymentName} target=${target.url}: ${this.describeError(error)}`,
+      );
+      return {
+        ready: false,
+        statusCode: null,
+        checkedUrl: target.url,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async updateWorkspaceRuntime(workspaceId: string, userId: string, runtime: string): Promise<WorkspaceSessionEntity> {
     const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
     const repo = await this.gitlabService.getRepo(session.projectId, session.repoId);
@@ -818,6 +855,31 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       path,
       ingressPath: path === "/" ? "/" : path.replace(/\/+$/, ""),
     };
+  }
+
+  private buildWorkspaceHealthcheckTarget(endpoint: URL): { url: string; headers: Record<string, string> } {
+    const configuredBaseUrl = this.configService.get<string>("WORKSPACE_HEALTHCHECK_BASE_URL")?.trim() ?? "";
+    const fallbackBaseUrl = this.isLocalWorkspaceHost(endpoint.hostname)
+      ? "http://ingress-nginx-controller.ingress-nginx.svc.cluster.local"
+      : "";
+    const baseUrl = configuredBaseUrl || fallbackBaseUrl;
+
+    if (!baseUrl) {
+      return { url: endpoint.toString(), headers: {} };
+    }
+
+    const target = new URL(baseUrl);
+    target.pathname = endpoint.pathname;
+    target.search = endpoint.search;
+
+    return {
+      url: target.toString(),
+      headers: { Host: endpoint.host },
+    };
+  }
+
+  private isLocalWorkspaceHost(hostname: string): boolean {
+    return hostname === "127.0.0.1.nip.io" || hostname.endsWith(".127.0.0.1.nip.io");
   }
 
   private normalizeWorkspacePath(path: string): string {
