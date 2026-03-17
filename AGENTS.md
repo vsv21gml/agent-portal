@@ -51,3 +51,16 @@ Recent commits use short, task-oriented subjects such as `화면수정, dockerfi
 
 ## Security & Configuration Tips
 Do not commit real secrets. Use `.env.sample` as the template, and keep local overrides in untracked environment files. For local Kubernetes deploys, keep images pinned to `:latest` and verify Helm values before restarting workloads.
+
+Security rules for all future changes:
+
+- Treat authentication and authorization as part of the feature, not follow-up cleanup. Any new API route or UI flow must be reviewed for `401` and `403` behavior before finishing.
+- Do not add or expand auth bypass behavior in production paths. `AUTH_BYPASS`-style shortcuts must remain development-only and must be explicitly gated by non-production environment checks.
+- Do not enable permissive CORS by default for production. New API changes must preserve the allowlist model using `CORS_ALLOWED_ORIGINS`, and any production cross-origin requirement should be added deliberately.
+- Admin-only APIs must be enforced on the server with role and permission guards. Never rely on hidden buttons or frontend routing alone to protect admin functionality.
+- When an admin action needs to operate on resources owned by another user, implement an explicit admin service path such as `adminStop...` instead of reusing owner-scoped methods. Keep owner-scoped and admin-override code paths separate.
+- Admin override actions must leave an audit trail that records both the acting admin and the original owner or target context. Favor reusable helper methods that accept an `adminOverride` flag rather than duplicating stop/delete logic.
+- In `apps/web` and `apps/admin-web`, keep `401` and `403` handling centralized in shared auth/error helpers or boundaries. Avoid scattering one-off redirect logic across pages when a shared mechanism can enforce the same rule consistently.
+- `401` should clear client auth state and redirect to the correct login entry point. `403` should keep the session intact and redirect to a safe page for the current app context instead of silently failing.
+- Admin portal flows must verify admin role explicitly and redirect non-admin users back to the user portal rather than leaving them in a broken or partially loaded admin UI.
+- Before shipping security-sensitive changes, at minimum run type-checks for every affected workspace and manually verify unauthenticated, authenticated-non-admin, and authenticated-authorized flows when relevant.
