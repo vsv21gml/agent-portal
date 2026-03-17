@@ -281,12 +281,16 @@ export class LlmService {
       },
     );
 
+    const resolvedSpendUsd = this.resolveCurrentPeriodSpendUsd({
+      keySpend: keyInfo?.spend,
+      userSpend: userInfo?.spend,
+      logSpend: totals.currentMonthSpendUsd,
+      ownerUserId,
+    });
+
     return {
       ...totals,
-      currentMonthSpendUsd:
-        totals.currentMonthSpendUsd > 0
-          ? totals.currentMonthSpendUsd
-          : this.toNumber(keyInfo?.spend) || this.toNumber(userInfo?.spend),
+      currentMonthSpendUsd: resolvedSpendUsd,
       currentMonthBudgetUsd:
         keyInfo?.max_budget ?? keyInfo?.soft_budget ?? userInfo?.max_budget ?? userKey.maxBudgetUsd ?? null,
       budgetDuration: keyInfo?.budget_duration ?? userInfo?.budget_duration ?? userKey.budgetDuration ?? null,
@@ -815,6 +819,34 @@ export class LlmService {
     return [];
   }
 
+  private resolveCurrentPeriodSpendUsd(params: {
+    keySpend: unknown;
+    userSpend: unknown;
+    logSpend: number;
+    ownerUserId: string;
+  }): number {
+    const keySpend = this.toNullableNumber(params.keySpend);
+    const userSpend = this.toNullableNumber(params.userSpend);
+    const logSpend = Math.max(params.logSpend, 0);
+    const authoritativeSpend = keySpend ?? userSpend;
+
+    if (
+      authoritativeSpend !== null &&
+      logSpend > 0 &&
+      Math.abs(authoritativeSpend - logSpend) >= 0.01
+    ) {
+      this.logger.warn(
+        `LiteLLM spend mismatch ownerUserId=${params.ownerUserId} key/user=${authoritativeSpend.toFixed(6)} logs=${logSpend.toFixed(6)}`,
+      );
+    }
+
+    if (authoritativeSpend !== null) {
+      return Math.max(authoritativeSpend, 0);
+    }
+
+    return logSpend;
+  }
+
   private toNumber(value: unknown): number {
     if (typeof value === "number" && Number.isFinite(value)) {
       return value;
@@ -824,6 +856,23 @@ export class LlmService {
       return Number.isFinite(parsed) ? parsed : 0;
     }
     return 0;
+  }
+
+  private toNullableNumber(value: unknown): number | null {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    return null;
   }
 
   private async createRemoteUserWithKey(
