@@ -322,6 +322,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     const runtimeImage = this.getRuntimeImage(session.runtime);
     const gitToken = this.configService.get<string>("GITLAB_TOKEN")?.trim() ?? "";
     const liteLlmBaseUrl = this.configService.get<string>("LITELLM_BASE_URL")?.trim().replace(/\/+$/, "") ?? "";
+    const codeServerUserDataDir = "/workspace/.local/share/code-server";
+    const codeServerExtensionsDir = "/workspace/.local/share/code-server/extensions";
     const devcontainer = this.buildDevcontainerJson(session.runtime);
     const gitSetupScript = [
       "git config --global --add safe.directory /workspace/repo || true",
@@ -401,6 +403,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "fi",
       gitSetupScript,
       "mkdir -p /workspace/repo/.devcontainer",
+      `mkdir -p ${codeServerUserDataDir} ${codeServerExtensionsDir}`,
       "cat <<'EOF' > /workspace/repo/.devcontainer/devcontainer.json",
       devcontainer,
       "EOF",
@@ -408,6 +411,10 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     ].join("\n");
     const runtimeSetupScript = [
       "set -e",
+      "export HOME=/workspace",
+      "export XDG_CONFIG_HOME=/workspace/.config",
+      "export XDG_DATA_HOME=/workspace/.local/share",
+      `mkdir -p ${codeServerUserDataDir} ${codeServerExtensionsDir}`,
       "mkdir -p /root/.config/opencode",
       "if [ -f /workspace/.config/opencode/opencode.json ]; then",
       "  cp /workspace/.config/opencode/opencode.json /root/.config/opencode/opencode.json",
@@ -424,6 +431,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "code-server",
       "--auth none",
       "--bind-addr 0.0.0.0:8080",
+      `--user-data-dir ${codeServerUserDataDir}`,
+      `--extensions-dir ${codeServerExtensionsDir}`,
       "/workspace/repo",
     ].join(" ");
 
