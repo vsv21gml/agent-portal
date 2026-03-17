@@ -2,6 +2,7 @@ import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as k8s from "@kubernetes/client-node";
+import { spawn } from "node:child_process";
 import * as http from "node:http";
 import * as https from "node:https";
 import { Repository } from "typeorm";
@@ -35,13 +36,37 @@ type McpServerCard = {
 };
 
 type McpHttpSession = {
+  transportType: "streamable-http" | "sse" | "stdio";
   transportUrl: string;
+  requestUrl: string;
   sessionId: string | null;
   protocolVersion: string;
   serverName: string;
   serverVersion: string;
   instructions: string | null;
   tools: McpToolDefinition[];
+  close?: () => void;
+  sseConnection?: McpSseConnection;
+  stdioConnection?: McpStdioConnection;
+};
+
+type McpSseConnection = {
+  nextEvent: (timeoutMs?: number) => Promise<{ event: string | null; data: string }>;
+  close: () => void;
+};
+
+type McpStdioConnection = {
+  send: (body: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>;
+  notify: (body: Record<string, unknown>) => Promise<void>;
+  close: () => void;
+};
+
+type McpInspectorConnectionInput = {
+  url: string;
+  command: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
 };
 
 type LiteLlmToolCall = {
@@ -205,19 +230,53 @@ export class McpsService {
   async getMcpCard(mcpId: string, _userId: string): Promise<McpServerCard> {
     const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, deleteYn: "N" });
     const session = await this.inspectMcpTarget(this.getDeployedMcpBaseUrls(mcp));
-    return this.toServerCard(session);
+    try {
+      return this.toServerCard(session);
+    } finally {
+      session.close?.();
+    }
   }
 
-  async inspectExternalMcp(rawUrl: string, _userId: string, _userEmail: string): Promise<{
+  async inspectExternalMcp(
+    transportType: "streamable-http" | "sse" | "stdio",
+    input: McpInspectorConnectionInput,
+    _userId: string,
+    _userEmail: string,
+  ): Promise<{
     normalizedUrl: string;
     serverCard: McpServerCard;
   }> {
-    const normalizedUrl = this.normalizeExternalMcpUrl(rawUrl);
-    const session = await this.inspectMcpTarget([normalizedUrl]);
-    return {
-      normalizedUrl,
-      serverCard: this.toServerCard(session),
-    };
+    const normalizedUrl = transportType === "stdio" ? this.normalizeInspectorCommandLabel(input.command, input.args) : this.normalizeExternalMcpUrl(input.url);
+    const session = await this.connectExternalMcpTarget(transportType, input);
+    try {
+      return {
+        normalizedUrl,
+        serverCard: this.toServerCard(session),
+      };
+    } finally {
+      session.close?.();
+    }
+  }
+
+  async inspectInspectorMcp(
+    transportType: "streamable-http" | "sse" | "stdio",
+    input: McpInspectorConnectionInput,
+    _userId: string,
+    _userEmail: string,
+  ): Promise<{
+    normalizedUrl: string;
+    serverCard: McpServerCard;
+  }> {
+    const normalizedUrl = transportType === "stdio" ? this.normalizeInspectorCommandLabel(input.command, input.args) : this.normalizeExternalMcpUrl(input.url);
+    const session = await this.connectExternalMcpTarget(transportType, input);
+    try {
+      return {
+        normalizedUrl,
+        serverCard: this.toServerCard(session),
+      };
+    } finally {
+      session.close?.();
+    }
   }
 
   async getMcpLogs(mcpId: string, _userId: string): Promise<{ logs: string }> {
@@ -318,14 +377,36 @@ export class McpsService {
   }
 
   async chatWithExternalMcp(
-    rawUrl: string,
+    transportType: "streamable-http" | "sse" | "stdio",
+    input: McpInspectorConnectionInput,
     userId: string,
     userEmail: string,
     modelName: string,
     messages: PlaygroundMessage[],
   ): Promise<{ reply: string; toolCalls: Array<{ name: string; result: string }>; serverCard: McpServerCard }> {
-    const normalizedUrl = this.normalizeExternalMcpUrl(rawUrl);
-    return this.chatWithMcpBaseUrls([normalizedUrl], userId, userEmail, modelName, messages);
+    const session = await this.connectExternalMcpTarget(transportType, input);
+    return this.chatWithMcpSession(session, userId, userEmail, modelName, messages);
+  }
+
+  async callInspectorExternalTool(
+    transportType: "streamable-http" | "sse" | "stdio",
+    input: McpInspectorConnectionInput,
+    _userId: string,
+    _userEmail: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<{ normalizedUrl: string; result: string; serverCard: McpServerCard }> {
+    const normalizedUrl = transportType === "stdio" ? this.normalizeInspectorCommandLabel(input.command, input.args) : this.normalizeExternalMcpUrl(input.url);
+    const session = await this.connectExternalMcpTarget(transportType, input);
+    try {
+      return {
+        normalizedUrl,
+        result: await this.callMcpTool(session, toolName, args),
+        serverCard: this.toServerCard(session),
+      };
+    } finally {
+      session.close?.();
+    }
   }
 
   async chatWithMcp(
@@ -340,11 +421,45 @@ export class McpsService {
     if (refreshed.status !== "running") {
       throw new Error("MCP server is not running");
     }
-    return this.chatWithMcpBaseUrls(this.getDeployedMcpBaseUrls(refreshed), userId, userEmail, modelName, messages);
+    const session = await this.inspectMcpTarget(this.getDeployedMcpBaseUrls(refreshed));
+    return this.chatWithMcpSession(session, userId, userEmail, modelName, messages);
+  }
+
+  async callMcpToolById(
+    mcpId: string,
+    _userId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<{ result: string; serverCard: McpServerCard }> {
+    const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, deleteYn: "N" });
+    const refreshed = await this.refreshMcpStatus(mcp);
+    if (refreshed.status !== "running") {
+      throw new Error("MCP server is not running");
+    }
+    const session = await this.inspectMcpTarget(this.getDeployedMcpBaseUrls(refreshed));
+    try {
+      return {
+        result: await this.callMcpTool(session, toolName, args),
+        serverCard: this.toServerCard(session),
+      };
+    } finally {
+      session.close?.();
+    }
   }
 
   private async chatWithMcpBaseUrls(
     baseUrls: string[],
+    userId: string,
+    userEmail: string,
+    modelName: string,
+    messages: PlaygroundMessage[],
+  ): Promise<{ reply: string; toolCalls: Array<{ name: string; result: string }>; serverCard: McpServerCard }> {
+    const session = await this.inspectMcpTarget(baseUrls);
+    return this.chatWithMcpSession(session, userId, userEmail, modelName, messages);
+  }
+
+  private async chatWithMcpSession(
+    session: McpHttpSession,
     userId: string,
     userEmail: string,
     modelName: string,
@@ -357,72 +472,74 @@ export class McpsService {
     if (!llmAccess.availableModels.some((model) => model.modelName === modelName)) {
       throw new ConflictException("Model is not available to the current user");
     }
+    try {
+      const toolCalls: Array<{ name: string; result: string }> = [];
+      const conversation: LiteLlmMessage[] = [
+        {
+          role: "system",
+          content: [
+            `You are testing an MCP server named "${session.serverName}".`,
+            "Use MCP tools when they are relevant to answer the user's request.",
+            "Be concise and factual.",
+            session.instructions ? `Server instructions: ${session.instructions}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+        ...messages.map((message) => ({
+          role: (message.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+          content: message.content,
+        })),
+      ];
 
-    const session = await this.inspectMcpTarget(baseUrls);
-    const toolCalls: Array<{ name: string; result: string }> = [];
-    const conversation: LiteLlmMessage[] = [
-      {
-        role: "system",
-        content: [
-          `You are testing an MCP server named "${session.serverName}".`,
-          "Use MCP tools when they are relevant to answer the user's request.",
-          "Be concise and factual.",
-          session.instructions ? `Server instructions: ${session.instructions}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      },
-      ...messages.map((message) => ({
-        role: (message.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
-        content: message.content,
-      })),
-    ];
-
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const completion = await this.requestLiteLlmCompletion(
-        llmAccess.litellmBaseUrl,
-        llmAccess.personalKey,
-        modelName,
-        conversation,
-        session.tools,
-      );
-      const assistantMessage = completion.choices?.[0]?.message;
-      if (!assistantMessage) {
-        throw new Error("LiteLLM returned no message");
-      }
-
-      if (assistantMessage.tool_calls?.length) {
-        conversation.push({
-          role: "assistant",
-          content: assistantMessage.content ?? "",
-          tool_calls: assistantMessage.tool_calls,
-        });
-
-        for (const toolCall of assistantMessage.tool_calls) {
-          const toolResult = await this.callMcpTool(
-            session,
-            toolCall.function.name,
-            this.parseJsonSafely(toolCall.function.arguments),
-          );
-          toolCalls.push({ name: toolCall.function.name, result: toolResult });
-          conversation.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: toolResult,
-          });
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const completion = await this.requestLiteLlmCompletion(
+          llmAccess.litellmBaseUrl,
+          llmAccess.personalKey,
+          modelName,
+          conversation,
+          session.tools,
+        );
+        const assistantMessage = completion.choices?.[0]?.message;
+        if (!assistantMessage) {
+          throw new Error("LiteLLM returned no message");
         }
-        continue;
+
+        if (assistantMessage.tool_calls?.length) {
+          conversation.push({
+            role: "assistant",
+            content: assistantMessage.content ?? "",
+            tool_calls: assistantMessage.tool_calls,
+          });
+
+          for (const toolCall of assistantMessage.tool_calls) {
+            const toolResult = await this.callMcpTool(
+              session,
+              toolCall.function.name,
+              this.parseJsonSafely(toolCall.function.arguments),
+            );
+            toolCalls.push({ name: toolCall.function.name, result: toolResult });
+            conversation.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: toolResult,
+            });
+          }
+          continue;
+        }
+
+        const finalReply = assistantMessage.content?.trim() || "No response.";
+        return {
+          reply: toolCalls.length > 0 ? `${toolCalls.map((tool) => `Tool ${tool.name} called.`).join("\n")}\n\n${finalReply}` : finalReply,
+          toolCalls,
+          serverCard: this.toServerCard(session),
+        };
       }
 
-      const finalReply = assistantMessage.content?.trim() || "No response.";
-      return {
-        reply: toolCalls.length > 0 ? `${toolCalls.map((tool) => `Tool ${tool.name} called.`).join("\n")}\n\n${finalReply}` : finalReply,
-        toolCalls,
-        serverCard: this.toServerCard(session),
-      };
+      throw new Error("MCP tool-calling loop exceeded the maximum number of steps");
+    } finally {
+      session.close?.();
     }
-
-    throw new Error("MCP tool-calling loop exceeded the maximum number of steps");
   }
 
   private async refreshMcpStatus(mcp: McpDeploymentEntity): Promise<McpDeploymentEntity> {
@@ -833,9 +950,28 @@ export class McpsService {
         lastError = error instanceof Error ? error : new Error(String(error));
         this.logger.warn(`MCP inspect failed endpoint=${baseUrl}: ${lastError.message}`);
       }
+      try {
+        return await this.connectMcpSse(baseUrl);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.warn(`MCP SSE inspect failed endpoint=${baseUrl}: ${lastError.message}`);
+      }
     }
 
     throw lastError ?? new Error("Failed to inspect MCP server");
+  }
+
+  private async connectExternalMcpTarget(
+    transportType: "streamable-http" | "sse" | "stdio",
+    input: McpInspectorConnectionInput,
+  ): Promise<McpHttpSession> {
+    if (transportType === "stdio") {
+      return this.connectMcpStdio(input);
+    }
+    if (transportType === "sse") {
+      return this.connectMcpSse(this.normalizeExternalMcpUrl(input.url));
+    }
+    return this.inspectMcpTarget([this.normalizeExternalMcpUrl(input.url)]);
   }
 
   private expandMcpTransportUrls(baseUrls: string[]): string[] {
@@ -887,14 +1023,140 @@ export class McpsService {
       .filter((tool): tool is McpToolDefinition => tool !== null);
 
     return {
+      transportType: "streamable-http",
       transportUrl,
+      requestUrl: transportUrl,
       sessionId,
       protocolVersion: this.readString(initializePayload, "protocolVersion") || "2024-11-05",
       serverName: this.readNestedString(initializePayload, ["serverInfo", "name"]) || "MCP Server",
       serverVersion: this.readNestedString(initializePayload, ["serverInfo", "version"]) || "",
       instructions: this.readString(initializePayload, "instructions"),
       tools,
+      close: () => undefined,
     };
+  }
+
+  private async connectMcpSse(transportUrl: string): Promise<McpHttpSession> {
+    const sse = await this.openSseConnection(transportUrl);
+    try {
+      const requestUrl = await this.readSseEndpoint(transportUrl, sse);
+      const initializeId = crypto.randomUUID();
+      const initializeResult = await this.sendMcpSseRequest(sse, requestUrl, {
+        jsonrpc: "2.0",
+        id: initializeId,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: {
+            name: "agent-portal",
+            version: "1.0.0",
+          },
+        },
+      });
+      const initializePayload = this.extractJsonRpcResult(initializeResult.body);
+      const sessionId = initializeResult.sessionId;
+
+      await this.sendMcpSseNotification(sse, requestUrl, sessionId, {
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+        params: {},
+      });
+
+      const toolsResult = await this.sendMcpSseRequest(sse, requestUrl, {
+        jsonrpc: "2.0",
+        id: crypto.randomUUID(),
+        method: "tools/list",
+        params: {},
+      }, sessionId);
+      const toolsPayload = this.extractJsonRpcResult(toolsResult.body);
+      const toolRows = Array.isArray((toolsPayload as { tools?: unknown[] }).tools)
+        ? ((toolsPayload as { tools: unknown[] }).tools ?? [])
+        : [];
+      const tools = toolRows
+        .map((tool) => this.normalizeMcpTool(tool))
+        .filter((tool): tool is McpToolDefinition => tool !== null);
+
+      return {
+        transportType: "sse",
+        transportUrl,
+        requestUrl,
+        sessionId: toolsResult.sessionId ?? sessionId,
+        protocolVersion: this.readString(initializePayload, "protocolVersion") || "2024-11-05",
+        serverName: this.readNestedString(initializePayload, ["serverInfo", "name"]) || "MCP Server",
+        serverVersion: this.readNestedString(initializePayload, ["serverInfo", "version"]) || "",
+        instructions: this.readString(initializePayload, "instructions"),
+        tools,
+        close: () => sse.close(),
+        sseConnection: sse,
+      };
+    } catch (error) {
+      sse.close();
+      throw error;
+    }
+  }
+
+  private async connectMcpStdio(input: McpInspectorConnectionInput): Promise<McpHttpSession> {
+    const command = input.command.trim();
+    if (!command) {
+      throw new Error("MCP stdio command is required");
+    }
+    const stdio = this.openStdioConnection(command, input.args, input.cwd, input.env);
+    try {
+      const initializePayload = this.extractJsonRpcResult(
+        await stdio.send({
+          jsonrpc: "2.0",
+          id: crypto.randomUUID(),
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: {
+              name: "agent-portal",
+              version: "1.0.0",
+            },
+          },
+        }),
+      );
+
+      await stdio.notify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+        params: {},
+      });
+
+      const toolsPayload = this.extractJsonRpcResult(
+        await stdio.send({
+          jsonrpc: "2.0",
+          id: crypto.randomUUID(),
+          method: "tools/list",
+          params: {},
+        }),
+      );
+      const toolRows = Array.isArray((toolsPayload as { tools?: unknown[] }).tools)
+        ? ((toolsPayload as { tools: unknown[] }).tools ?? [])
+        : [];
+      const tools = toolRows
+        .map((tool) => this.normalizeMcpTool(tool))
+        .filter((tool): tool is McpToolDefinition => tool !== null);
+
+      return {
+        transportType: "stdio",
+        transportUrl: this.normalizeInspectorCommandLabel(command, input.args),
+        requestUrl: "",
+        sessionId: null,
+        protocolVersion: this.readString(initializePayload, "protocolVersion") || "2024-11-05",
+        serverName: this.readNestedString(initializePayload, ["serverInfo", "name"]) || "MCP Server",
+        serverVersion: this.readNestedString(initializePayload, ["serverInfo", "version"]) || "",
+        instructions: this.readString(initializePayload, "instructions"),
+        tools,
+        close: () => stdio.close(),
+        stdioConnection: stdio,
+      };
+    } catch (error) {
+      stdio.close();
+      throw error;
+    }
   }
 
   private toServerCard(session: McpHttpSession): McpServerCard {
@@ -924,16 +1186,42 @@ export class McpsService {
   }
 
   private async callMcpTool(session: McpHttpSession, name: string, args: Record<string, unknown>): Promise<string> {
-    const response = await this.sendMcpRequest(session.transportUrl, session.sessionId, {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: "tools/call",
-      params: {
-        name,
-        arguments: args,
-      },
-    });
-    const payload = this.extractJsonRpcResult(response.body);
+    const response =
+      session.transportType === "stdio"
+        ? await session.stdioConnection!.send({
+            jsonrpc: "2.0",
+            id: crypto.randomUUID(),
+            method: "tools/call",
+            params: {
+              name,
+              arguments: args,
+            },
+          })
+        : session.transportType === "sse"
+        ? await this.sendMcpSseRequest(
+            session.sseConnection ?? null,
+            session.requestUrl,
+            {
+              jsonrpc: "2.0",
+              id: crypto.randomUUID(),
+              method: "tools/call",
+              params: {
+                name,
+                arguments: args,
+              },
+            },
+            session.sessionId,
+          )
+        : await this.sendMcpRequest(session.transportUrl, session.sessionId, {
+            jsonrpc: "2.0",
+            id: crypto.randomUUID(),
+            method: "tools/call",
+            params: {
+              name,
+              arguments: args,
+            },
+          });
+    const payload = this.extractJsonRpcResult("body" in (response as { body?: unknown }) ? (response as { body: unknown }).body : response);
     return this.stringifyMcpToolResult(payload);
   }
 
@@ -1012,6 +1300,74 @@ export class McpsService {
     };
   }
 
+  private async sendMcpSseNotification(
+    sseConnection: McpSseConnection,
+    requestUrl: string,
+    sessionId: string | null,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.sendMcpSseRequest(sseConnection, requestUrl, body, sessionId);
+    } catch {
+      // ignore notification failures
+    }
+  }
+
+  private async sendMcpSseRequest(
+    sseConnection: McpSseConnection | null,
+    requestUrl: string,
+    body: Record<string, unknown>,
+    sessionId?: string | null,
+  ): Promise<{ body: unknown; sessionId: string | null }> {
+    if (!sseConnection) {
+      throw new Error("SSE connection is not available");
+    }
+
+    const requestId = typeof body.id === "string" || typeof body.id === "number" ? String(body.id) : null;
+    const response = await this.fetchWithOptionalInsecureTls(requestUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(`MCP request failed (${response.status})`);
+    }
+
+    const raw = await response.text();
+    const nextSessionId = response.headers.get("mcp-session-id") ?? response.headers.get("Mcp-Session-Id") ?? sessionId ?? null;
+    const parsedBody = raw.trim() ? this.parseJsonOrSse(raw) : null;
+    if (parsedBody && requestId) {
+      const responseId = this.readJsonRpcId(parsedBody);
+      if (!responseId || responseId === requestId) {
+        return {
+          body: parsedBody,
+          sessionId: nextSessionId,
+        };
+      }
+    } else if (parsedBody) {
+      return {
+        body: parsedBody,
+        sessionId: nextSessionId,
+      };
+    }
+
+    if (!requestId) {
+      return {
+        body: {},
+        sessionId: nextSessionId,
+      };
+    }
+
+    return {
+      body: await this.waitForSseJsonRpcResponse(sseConnection, requestId),
+      sessionId: nextSessionId,
+    };
+  }
+
   private async httpJsonRequest(
     url: string,
     body: Record<string, unknown>,
@@ -1034,6 +1390,335 @@ export class McpsService {
       body: this.parseJsonOrSse(raw),
       sessionId: response.headers.get("mcp-session-id") ?? response.headers.get("Mcp-Session-Id"),
     };
+  }
+
+  private async openSseConnection(url: string): Promise<McpSseConnection> {
+    return new Promise((resolve, reject) => {
+      const target = new URL(url);
+      const client = target.protocol === "https:" ? https : http;
+      const queue: Array<{ event: string | null; data: string }> = [];
+      const waiters: Array<{
+        resolve: (event: { event: string | null; data: string }) => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
+      }> = [];
+      let buffer = "";
+      let closed = false;
+      let responseEnded = false;
+
+      const failAll = (error: Error) => {
+        while (waiters.length) {
+          const waiter = waiters.shift()!;
+          clearTimeout(waiter.timeout);
+          waiter.reject(error);
+        }
+      };
+
+      const close = () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        req.destroy();
+        failAll(new Error("SSE connection closed"));
+      };
+
+      const pushEvent = (event: { event: string | null; data: string }) => {
+        if (waiters.length) {
+          const waiter = waiters.shift()!;
+          clearTimeout(waiter.timeout);
+          waiter.resolve(event);
+          return;
+        }
+        queue.push(event);
+      };
+
+      const drainBuffer = () => {
+        while (true) {
+          const separatorIndex = buffer.search(/\r?\n\r?\n/);
+          if (separatorIndex === -1) {
+            return;
+          }
+          const rawEvent = buffer.slice(0, separatorIndex);
+          const separatorLength = buffer.startsWith("\r\n\r\n", separatorIndex) ? 4 : buffer.slice(separatorIndex).startsWith("\n\n") ? 2 : 2;
+          buffer = buffer.slice(separatorIndex + separatorLength);
+          const event = this.parseSseEvent(rawEvent);
+          if (event) {
+            pushEvent(event);
+          }
+        }
+      };
+
+      const req = client.request(
+        {
+          protocol: target.protocol,
+          hostname: target.hostname,
+          port: target.port || undefined,
+          path: `${target.pathname}${target.search}`,
+          method: "GET",
+          headers: {
+            accept: "text/event-stream",
+            "cache-control": "no-cache",
+          },
+          rejectUnauthorized: target.protocol === "https:" ? false : undefined,
+        },
+        (res) => {
+          if ((res.statusCode ?? 500) < 200 || (res.statusCode ?? 500) >= 300) {
+            reject(new Error(`MCP SSE connection failed (${res.statusCode ?? 500})`));
+            req.destroy();
+            return;
+          }
+
+          res.on("data", (chunk) => {
+            buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+            drainBuffer();
+          });
+          res.on("end", () => {
+            responseEnded = true;
+            if (!closed) {
+              failAll(new Error("MCP SSE connection ended"));
+            }
+          });
+          res.on("error", (error) => {
+            if (!closed) {
+              failAll(error instanceof Error ? error : new Error(String(error)));
+            }
+          });
+
+          resolve({
+            nextEvent: (timeoutMs = 5000) =>
+              new Promise((nextResolve, nextReject) => {
+                if (queue.length) {
+                  nextResolve(queue.shift()!);
+                  return;
+                }
+                if (closed || responseEnded) {
+                  nextReject(new Error("MCP SSE connection closed"));
+                  return;
+                }
+                const timeout = setTimeout(() => {
+                  const index = waiters.findIndex((item) => item.resolve === nextResolve);
+                  if (index >= 0) {
+                    waiters.splice(index, 1);
+                  }
+                  nextReject(new Error("Timed out while waiting for MCP SSE event"));
+                }, timeoutMs);
+                waiters.push({ resolve: nextResolve, reject: nextReject, timeout });
+              }),
+            close,
+          });
+        },
+      );
+
+      req.on("error", (error) => {
+        if (!closed) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+          failAll(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+      req.end();
+    });
+  }
+
+  private openStdioConnection(command: string, args: string[], cwd: string, env: Record<string, string>): McpStdioConnection {
+    const child = spawn(command, args, {
+      cwd: cwd.trim() || undefined,
+      env: {
+        ...process.env,
+        ...env,
+      },
+      stdio: "pipe",
+      shell: false,
+    });
+    const pending = new Map<
+      string,
+      {
+        resolve: (value: unknown) => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
+      }
+    >();
+    let stdoutBuffer = Buffer.alloc(0);
+    let stderrBuffer = "";
+    let closed = false;
+
+    const rejectPending = (error: Error) => {
+      for (const pendingRequest of pending.values()) {
+        clearTimeout(pendingRequest.timeout);
+        pendingRequest.reject(error);
+      }
+      pending.clear();
+    };
+
+    const consumeFrames = () => {
+      while (stdoutBuffer.length > 0) {
+        const separatorIndex = stdoutBuffer.indexOf(Buffer.from("\r\n\r\n"));
+        if (separatorIndex === -1) {
+          return;
+        }
+        const headerText = stdoutBuffer.slice(0, separatorIndex).toString("utf8");
+        const contentLengthMatch = headerText.match(/content-length:\s*(\d+)/i);
+        if (!contentLengthMatch) {
+          throw new Error("Invalid MCP stdio frame without Content-Length");
+        }
+        const contentLength = Number(contentLengthMatch[1]);
+        const bodyStart = separatorIndex + 4;
+        if (stdoutBuffer.length < bodyStart + contentLength) {
+          return;
+        }
+        const payloadRaw = stdoutBuffer.slice(bodyStart, bodyStart + contentLength).toString("utf8");
+        stdoutBuffer = stdoutBuffer.slice(bodyStart + contentLength);
+        const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
+        const id = this.readJsonRpcId(payload);
+        if (!id) {
+          continue;
+        }
+        const request = pending.get(id);
+        if (!request) {
+          continue;
+        }
+        clearTimeout(request.timeout);
+        pending.delete(id);
+        request.resolve(payload);
+      }
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdoutBuffer = Buffer.concat([stdoutBuffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+      try {
+        consumeFrames();
+      } catch (error) {
+        rejectPending(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderrBuffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    });
+    child.on("error", (error) => {
+      rejectPending(error instanceof Error ? error : new Error(String(error)));
+    });
+    child.on("exit", (code, signal) => {
+      closed = true;
+      rejectPending(new Error(`MCP stdio process exited${code !== null ? ` (${code})` : ""}${signal ? ` signal=${signal}` : ""}${stderrBuffer ? `: ${stderrBuffer.trim()}` : ""}`));
+    });
+
+    const close = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      child.kill();
+      rejectPending(new Error(`MCP stdio process closed${stderrBuffer ? `: ${stderrBuffer.trim()}` : ""}`));
+    };
+
+    const writeFrame = (body: Record<string, unknown>) => {
+      const payload = Buffer.from(JSON.stringify(body), "utf8");
+      const header = Buffer.from(`Content-Length: ${payload.length}\r\n\r\n`, "utf8");
+      child.stdin.write(Buffer.concat([header, payload]));
+    };
+
+    return {
+      send: (body: Record<string, unknown>, timeoutMs = 10000) =>
+        new Promise((resolve, reject) => {
+          if (closed) {
+            reject(new Error("MCP stdio process is closed"));
+            return;
+          }
+          const id = this.readJsonRpcId(body);
+          if (!id) {
+            reject(new Error("MCP stdio request id is required"));
+            return;
+          }
+          const timeout = setTimeout(() => {
+            pending.delete(id);
+            reject(new Error(`Timed out while waiting for MCP stdio response (${id})${stderrBuffer ? `: ${stderrBuffer.trim()}` : ""}`));
+          }, timeoutMs);
+          pending.set(id, { resolve, reject, timeout });
+          try {
+            writeFrame(body);
+          } catch (error) {
+            clearTimeout(timeout);
+            pending.delete(id);
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        }),
+      notify: async (body: Record<string, unknown>) => {
+        if (closed) {
+          throw new Error("MCP stdio process is closed");
+        }
+        writeFrame(body);
+      },
+      close,
+    };
+  }
+
+  private parseSseEvent(rawEvent: string): { event: string | null; data: string } | null {
+    const lines = rawEvent.split(/\r?\n/);
+    let eventName: string | null = null;
+    const dataLines: string[] = [];
+    for (const line of lines) {
+      if (!line || line.startsWith(":")) {
+        continue;
+      }
+      if (line.startsWith("event:")) {
+        eventName = line.replace(/^event:\s*/, "").trim() || null;
+        continue;
+      }
+      if (line.startsWith("data:")) {
+        dataLines.push(line.replace(/^data:\s*/, ""));
+      }
+    }
+    const data = dataLines.join("\n").trim();
+    if (!eventName && !data) {
+      return null;
+    }
+    return {
+      event: eventName,
+      data,
+    };
+  }
+
+  private async readSseEndpoint(transportUrl: string, sseConnection: McpSseConnection): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const event = await sseConnection.nextEvent(5000);
+      const endpointCandidate = event.event === "endpoint" ? event.data : event.data;
+      if (!endpointCandidate) {
+        continue;
+      }
+      if (/^https?:\/\//i.test(endpointCandidate) || endpointCandidate.startsWith("/")) {
+        return new URL(endpointCandidate, transportUrl).toString();
+      }
+    }
+    throw new Error("Failed to discover MCP SSE endpoint");
+  }
+
+  private async waitForSseJsonRpcResponse(sseConnection: McpSseConnection, requestId: string): Promise<unknown> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const event = await sseConnection.nextEvent(5000);
+      if (!event.data) {
+        continue;
+      }
+      const payload = this.parseJsonOrSse(event.data);
+      if (this.readJsonRpcId(payload) === requestId) {
+        return payload;
+      }
+    }
+    throw new Error(`Timed out while waiting for MCP SSE response (${requestId})`);
+  }
+
+  private readJsonRpcId(payload: unknown): string | null {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const id = (payload as Record<string, unknown>).id;
+    if (typeof id === "string" || typeof id === "number") {
+      return String(id);
+    }
+    return null;
+  }
+
+  private normalizeInspectorCommandLabel(command: string, args: string[]): string {
+    return [command.trim(), ...args.map((item) => item.trim()).filter(Boolean)].filter(Boolean).join(" ");
   }
 
   private parseJsonOrSse(raw: string): unknown {

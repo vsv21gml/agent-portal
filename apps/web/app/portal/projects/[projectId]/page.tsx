@@ -158,6 +158,8 @@ type PlaygroundMessage = {
   content: string;
 };
 
+type McpInspectorConnectionType = "deployed" | "streamable-http" | "sse" | "stdio";
+
 type ExternalAgentCard = {
   name?: string;
   description?: string;
@@ -166,13 +168,14 @@ type ExternalAgentCard = {
   [key: string]: unknown;
 };
 
-type ProjectSection = "Info" | "Repo" | "Agent" | "MCP" | "Playground";
+type ProjectSection = "Info" | "Repo" | "Agent" | "MCP" | "MCP Inspector" | "Playground";
 
-const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "mcp" | "playground" }> = [
+const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "mcp" | "mcp-inspector" | "playground" }> = [
   { label: "Info", slug: "info" },
   { label: "Repo", slug: "repo" },
   { label: "Agent", slug: "agent" },
   { label: "MCP", slug: "mcp" },
+  { label: "MCP Inspector", slug: "mcp-inspector" },
   { label: "Playground", slug: "playground" },
 ];
 const runtimeOptions = [
@@ -357,6 +360,9 @@ function getSectionFromPathname(pathname: string): ProjectSection {
   if (pathname.endsWith("/mcp")) {
     return "MCP";
   }
+  if (pathname.endsWith("/mcp-inspector")) {
+    return "MCP Inspector";
+  }
   if (pathname.endsWith("/playground")) {
     return "Playground";
   }
@@ -443,7 +449,12 @@ export default function ProjectDetailPage() {
   const [devAgentCardUrl, setDevAgentCardUrl] = useState("");
   const [devPlaygroundMessages, setDevPlaygroundMessages] = useState<PlaygroundMessage[]>([]);
   const [devPlaygroundContextId, setDevPlaygroundContextId] = useState<string | null>(null);
+  const [devMcpTransportType, setDevMcpTransportType] = useState<Exclude<McpInspectorConnectionType, "deployed">>("streamable-http");
   const [devMcpUrl, setDevMcpUrl] = useState("");
+  const [devMcpCommand, setDevMcpCommand] = useState("");
+  const [devMcpCommandArgs, setDevMcpCommandArgs] = useState("[]");
+  const [devMcpCwd, setDevMcpCwd] = useState("");
+  const [devMcpEnvJson, setDevMcpEnvJson] = useState("{}");
   const [connectingDevMcp, setConnectingDevMcp] = useState(false);
   const [devMcpCard, setDevMcpCard] = useState<McpServerCard | null>(null);
   const [devMcpMessages, setDevMcpMessages] = useState<PlaygroundMessage[]>([]);
@@ -452,6 +463,20 @@ export default function ProjectDetailPage() {
   const [loadingSelectedMcpCard, setLoadingSelectedMcpCard] = useState(false);
   const devPlaygroundViewportRef = useRef<HTMLDivElement | null>(null);
   const deployedPlaygroundViewportRef = useRef<HTMLDivElement | null>(null);
+  const [inspectorConnectionType, setInspectorConnectionType] = useState<McpInspectorConnectionType>("deployed");
+  const [selectedInspectorMcpId, setSelectedInspectorMcpId] = useState<string | null>(null);
+  const [inspectorUrl, setInspectorUrl] = useState("");
+  const [inspectorCommand, setInspectorCommand] = useState("");
+  const [inspectorCommandArgs, setInspectorCommandArgs] = useState("[]");
+  const [inspectorCwd, setInspectorCwd] = useState("");
+  const [inspectorEnvJson, setInspectorEnvJson] = useState("{}");
+  const [connectingInspector, setConnectingInspector] = useState(false);
+  const [inspectorCard, setInspectorCard] = useState<McpServerCard | null>(null);
+  const [inspectorConnectedUrl, setInspectorConnectedUrl] = useState("");
+  const [selectedInspectorToolName, setSelectedInspectorToolName] = useState<string | null>(null);
+  const [inspectorToolArgs, setInspectorToolArgs] = useState("{}");
+  const [callingInspectorTool, setCallingInspectorTool] = useState(false);
+  const [inspectorToolResult, setInspectorToolResult] = useState("");
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [llmAccess, setLlmAccess] = useState<MyLiteLlmAccess | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -594,6 +619,10 @@ export default function ProjectDetailPage() {
     () => runningMcps.find((mcp) => mcp.id === selectedPlaygroundMcpId) ?? null,
     [runningMcps, selectedPlaygroundMcpId],
   );
+  const selectedInspectorMcp = useMemo(
+    () => runningMcps.find((mcp) => mcp.id === selectedInspectorMcpId) ?? null,
+    [runningMcps, selectedInspectorMcpId],
+  );
   const currentPlaygroundMessages = useMemo(
     () => (selectedPlaygroundAgentId ? playgroundMessages[selectedPlaygroundAgentId] ?? [] : []),
     [playgroundMessages, selectedPlaygroundAgentId],
@@ -605,6 +634,14 @@ export default function ProjectDetailPage() {
   const mcpPlaygroundModelOptions = useMemo(
     () => llmAccess?.availableModels.map((model) => ({ value: model.modelName, label: model.modelName })) ?? [],
     [llmAccess],
+  );
+  const inspectorToolOptions = useMemo(
+    () => inspectorCard?.tools.map((tool) => ({ value: tool.name, label: tool.name })) ?? [],
+    [inspectorCard],
+  );
+  const selectedInspectorTool = useMemo(
+    () => inspectorCard?.tools.find((tool) => tool.name === selectedInspectorToolName) ?? null,
+    [inspectorCard, selectedInspectorToolName],
   );
 
   const loadProject = async (targetProjectId: string) => {
@@ -738,6 +775,11 @@ export default function ProjectDetailPage() {
         await Promise.all([loadRepos(loadedProject), loadMcps(loadedProject), loadCatalogModels(targetProjectId)]);
         return loadedProject;
       }
+      case "MCP Inspector": {
+        const loadedProject = await loadProject(targetProjectId);
+        await loadMcps(loadedProject);
+        return loadedProject;
+      }
       case "Playground": {
         const loadedProject = await loadProject(targetProjectId);
         await Promise.all([loadAgents(loadedProject), loadMcps(loadedProject), loadCurrentLlmAccess()]);
@@ -815,6 +857,20 @@ export default function ProjectDetailPage() {
   }, [playgroundMode, playgroundTargetType, runningMcps, selectedPlaygroundMcpId]);
 
   useEffect(() => {
+    if (!runningMcps.length) {
+      setSelectedInspectorMcpId(null);
+      return;
+    }
+
+    if (
+      inspectorConnectionType === "deployed" &&
+      (!selectedInspectorMcpId || !runningMcps.some((mcp) => mcp.id === selectedInspectorMcpId))
+    ) {
+      setSelectedInspectorMcpId(runningMcps[0].id);
+    }
+  }, [inspectorConnectionType, runningMcps, selectedInspectorMcpId]);
+
+  useEffect(() => {
     if (playgroundMode !== "deployed" || playgroundTargetType !== "mcp" || !selectedPlaygroundMcpId) {
       setSelectedPlaygroundMcpCard(null);
       return;
@@ -835,6 +891,31 @@ export default function ProjectDetailPage() {
 
     void load();
   }, [playgroundMode, playgroundTargetType, selectedPlaygroundMcpId]);
+
+  useEffect(() => {
+    if (!inspectorCard?.tools.length) {
+      setSelectedInspectorToolName(null);
+      return;
+    }
+
+    if (!selectedInspectorToolName || !inspectorCard.tools.some((tool) => tool.name === selectedInspectorToolName)) {
+      setSelectedInspectorToolName(inspectorCard.tools[0].name);
+    }
+  }, [inspectorCard, selectedInspectorToolName]);
+
+  useEffect(() => {
+    if (!selectedInspectorTool) {
+      setInspectorToolArgs("{}");
+      return;
+    }
+    setInspectorToolArgs(JSON.stringify(selectedInspectorTool.inputSchema ?? {}, null, 2));
+  }, [selectedInspectorTool]);
+
+  useEffect(() => {
+    setInspectorCard(null);
+    setInspectorConnectedUrl("");
+    setInspectorToolResult("");
+  }, [inspectorConnectionType, selectedInspectorMcpId]);
 
   const refreshWorkspace = async (workspaceId: string) => {
     const latest = await apiFetch<WorkspaceSession>(`workspaces/${workspaceId}`);
@@ -1195,6 +1276,8 @@ export default function ProjectDetailPage() {
     if (!playgroundInput.trim()) {
       return;
     }
+    let devMcpParsedCommandArgs: string[] = [];
+    let devMcpParsedEnv: Record<string, string> = {};
 
     const userMessage: PlaygroundMessage = {
       id: `${Date.now()}-user`,
@@ -1214,6 +1297,28 @@ export default function ProjectDetailPage() {
       if (!devMcpUrl.trim() || !devMcpCard || !selectedMcpPlaygroundModel) {
         toastError("Connect an MCP URL and choose a model first.");
         return;
+      }
+      if (devMcpTransportType === "stdio") {
+        try {
+          const value = devMcpCommandArgs.trim();
+          devMcpParsedCommandArgs = value ? (JSON.parse(value) as string[]) : [];
+          if (!Array.isArray(devMcpParsedCommandArgs) || devMcpParsedCommandArgs.some((item) => typeof item !== "string")) {
+            throw new Error("Invalid args");
+          }
+        } catch {
+          toastError("Command args must be a JSON string array.");
+          return;
+        }
+        try {
+          const value = devMcpEnvJson.trim();
+          devMcpParsedEnv = value ? (JSON.parse(value) as Record<string, string>) : {};
+          if (!devMcpParsedEnv || typeof devMcpParsedEnv !== "object" || Array.isArray(devMcpParsedEnv)) {
+            throw new Error("Invalid env");
+          }
+        } catch {
+          toastError("Env must be a JSON object.");
+          return;
+        }
       }
       nextMessages = [...devMcpMessages, userMessage];
       setDevMcpMessages(nextMessages);
@@ -1257,7 +1362,12 @@ export default function ProjectDetailPage() {
             ? await apiFetch<{ reply: string; serverCard: McpServerCard }>("mcps/playground/chat", {
                 method: "POST",
                 body: JSON.stringify({
+                  transportType: devMcpTransportType,
                   url: devMcpUrl.trim(),
+                  command: devMcpCommand.trim(),
+                  args: devMcpParsedCommandArgs,
+                  cwd: devMcpCwd.trim(),
+                  env: devMcpParsedEnv,
                   modelName: selectedMcpPlaygroundModel,
                   messages: nextMessages.map((message) => ({
                     role: message.role === "agent" ? "assistant" : "user",
@@ -1347,7 +1457,34 @@ export default function ProjectDetailPage() {
   };
 
   const connectDevMcp = async () => {
-    if (!devMcpUrl.trim()) {
+    let parsedCommandArgs: string[] = [];
+    let parsedEnv: Record<string, string> = {};
+    if (devMcpTransportType === "stdio") {
+      if (!devMcpCommand.trim()) {
+        toastError("Enter an MCP stdio command.");
+        return;
+      }
+      try {
+        const value = devMcpCommandArgs.trim();
+        parsedCommandArgs = value ? (JSON.parse(value) as string[]) : [];
+        if (!Array.isArray(parsedCommandArgs) || parsedCommandArgs.some((item) => typeof item !== "string")) {
+          throw new Error("Invalid args");
+        }
+      } catch {
+        toastError("Command args must be a JSON string array.");
+        return;
+      }
+      try {
+        const value = devMcpEnvJson.trim();
+        parsedEnv = value ? (JSON.parse(value) as Record<string, string>) : {};
+        if (!parsedEnv || typeof parsedEnv !== "object" || Array.isArray(parsedEnv)) {
+          throw new Error("Invalid env");
+        }
+      } catch {
+        toastError("Env must be a JSON object.");
+        return;
+      }
+    } else if (!devMcpUrl.trim()) {
       toastError("Enter an MCP URL.");
       return;
     }
@@ -1356,7 +1493,14 @@ export default function ProjectDetailPage() {
     try {
       const result = await apiFetch<{ normalizedUrl: string; serverCard: McpServerCard }>("mcps/playground/inspect", {
         method: "POST",
-        body: JSON.stringify({ url: devMcpUrl.trim() }),
+        body: JSON.stringify({
+          transportType: devMcpTransportType,
+          url: devMcpUrl.trim(),
+          command: devMcpCommand.trim(),
+          args: parsedCommandArgs,
+          cwd: devMcpCwd.trim(),
+          env: parsedEnv,
+        }),
       });
       setPlaygroundMode("dev");
       setPlaygroundTargetType("mcp");
@@ -1368,6 +1512,154 @@ export default function ProjectDetailPage() {
       toastError("Failed to connect to the MCP URL.");
     } finally {
       setConnectingDevMcp(false);
+    }
+  };
+
+  const connectInspector = async () => {
+    let parsedCommandArgs: string[] = [];
+    let parsedEnv: Record<string, string> = {};
+
+    if (inspectorConnectionType === "deployed") {
+      if (!selectedInspectorMcp) {
+        toastError("Select a running MCP server.");
+        return;
+      }
+    } else if (inspectorConnectionType === "stdio") {
+      if (!inspectorCommand.trim()) {
+        toastError("Enter an MCP stdio command.");
+        return;
+      }
+      try {
+        const value = inspectorCommandArgs.trim();
+        parsedCommandArgs = value ? (JSON.parse(value) as string[]) : [];
+        if (!Array.isArray(parsedCommandArgs) || parsedCommandArgs.some((item) => typeof item !== "string")) {
+          throw new Error("Invalid args");
+        }
+      } catch {
+        toastError("Command args must be a JSON string array.");
+        return;
+      }
+      try {
+        const value = inspectorEnvJson.trim();
+        parsedEnv = value ? (JSON.parse(value) as Record<string, string>) : {};
+        if (!parsedEnv || typeof parsedEnv !== "object" || Array.isArray(parsedEnv)) {
+          throw new Error("Invalid env");
+        }
+      } catch {
+        toastError("Env must be a JSON object.");
+        return;
+      }
+    } else if (!inspectorUrl.trim()) {
+      toastError("Enter an MCP endpoint URL.");
+      return;
+    }
+
+    setConnectingInspector(true);
+    try {
+      const result =
+        inspectorConnectionType === "deployed"
+          ? await apiFetch<McpServerCard>(`mcps/${selectedInspectorMcp!.id}/card`)
+          : await apiFetch<{ normalizedUrl: string; serverCard: McpServerCard }>("mcps/inspector/inspect", {
+              method: "POST",
+              body: JSON.stringify({
+                transportType: inspectorConnectionType,
+                url: inspectorUrl.trim(),
+                command: inspectorCommand.trim(),
+                args: parsedCommandArgs,
+                cwd: inspectorCwd.trim(),
+                env: parsedEnv,
+              }),
+            });
+
+      const serverCard = "serverCard" in result ? result.serverCard : result;
+      const normalizedUrl = "normalizedUrl" in result ? result.normalizedUrl : selectedInspectorMcp!.endpointUrl;
+      setInspectorConnectedUrl(normalizedUrl);
+      setInspectorCard(serverCard);
+      setSelectedInspectorToolName(serverCard.tools[0]?.name ?? null);
+      setInspectorToolArgs(serverCard.tools[0] ? JSON.stringify(serverCard.tools[0].inputSchema ?? {}, null, 2) : "{}");
+      setInspectorToolResult("");
+      toastSuccess("MCP Inspector connected.");
+    } catch {
+      toastError("Failed to connect MCP Inspector.");
+    } finally {
+      setConnectingInspector(false);
+    }
+  };
+
+  const callInspectorTool = async () => {
+    if (!inspectorCard || !selectedInspectorTool) {
+      toastError("Connect to an MCP server and choose a tool first.");
+      return;
+    }
+
+    let parsedArgs: Record<string, unknown> = {};
+    let parsedCommandArgs: string[] = [];
+    let parsedEnv: Record<string, string> = {};
+    try {
+      const value = inspectorToolArgs.trim();
+      parsedArgs = value ? (JSON.parse(value) as Record<string, unknown>) : {};
+    } catch {
+      toastError("Tool arguments must be valid JSON.");
+      return;
+    }
+    if (inspectorConnectionType === "stdio") {
+      try {
+        const value = inspectorCommandArgs.trim();
+        parsedCommandArgs = value ? (JSON.parse(value) as string[]) : [];
+        if (!Array.isArray(parsedCommandArgs) || parsedCommandArgs.some((item) => typeof item !== "string")) {
+          throw new Error("Invalid args");
+        }
+      } catch {
+        toastError("Command args must be a JSON string array.");
+        return;
+      }
+      try {
+        const value = inspectorEnvJson.trim();
+        parsedEnv = value ? (JSON.parse(value) as Record<string, string>) : {};
+        if (!parsedEnv || typeof parsedEnv !== "object" || Array.isArray(parsedEnv)) {
+          throw new Error("Invalid env");
+        }
+      } catch {
+        toastError("Env must be a JSON object.");
+        return;
+      }
+    }
+
+    setCallingInspectorTool(true);
+    try {
+      const result =
+        inspectorConnectionType === "deployed"
+          ? await apiFetch<{ result: string; serverCard: McpServerCard }>(`mcps/${selectedInspectorMcp!.id}/tools/call`, {
+              method: "POST",
+              body: JSON.stringify({
+                toolName: selectedInspectorTool.name,
+                args: parsedArgs,
+              }),
+            })
+          : await apiFetch<{ normalizedUrl: string; result: string; serverCard: McpServerCard }>("mcps/inspector/tools/call", {
+              method: "POST",
+              body: JSON.stringify({
+                transportType: inspectorConnectionType,
+                url: inspectorConnectedUrl || inspectorUrl.trim(),
+                command: inspectorCommand.trim(),
+                commandArgs: parsedCommandArgs,
+                cwd: inspectorCwd.trim(),
+                env: parsedEnv,
+                toolName: selectedInspectorTool.name,
+                toolArgs: parsedArgs,
+              }),
+            });
+
+      setInspectorToolResult(result.result);
+      setInspectorCard(result.serverCard);
+      if ("normalizedUrl" in result) {
+        setInspectorConnectedUrl(typeof result.normalizedUrl === "string" ? result.normalizedUrl : "");
+      }
+      toastSuccess("Tool executed.");
+    } catch {
+      toastError("Failed to call the MCP tool.");
+    } finally {
+      setCallingInspectorTool(false);
     }
   };
 
@@ -1597,8 +1889,8 @@ export default function ProjectDetailPage() {
         pos="relative"
         style={{
           minHeight: "calc(100dvh - 96px)",
-          height: activeMenu === "Playground" ? "calc(100dvh - 96px)" : undefined,
-          overflow: activeMenu === "Playground" ? "hidden" : undefined,
+          height: activeMenu === "Playground" || activeMenu === "MCP Inspector" ? "calc(100dvh - 96px)" : undefined,
+          overflow: activeMenu === "Playground" || activeMenu === "MCP Inspector" ? "hidden" : undefined,
         }}
       >
         <LoadingOverlay visible={authChecking || loadingProject} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
@@ -2170,6 +2462,255 @@ export default function ProjectDetailPage() {
           </Stack>
         ) : null}
 
+        {activeMenu === "MCP Inspector" ? (
+          <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <Paper withBorder p="md" radius="md">
+              <Group justify="space-between" align="center">
+                <div>
+                  <Title order={4}>MCP Inspector</Title>
+                  <Text size="sm" c="dimmed">
+                    Inspect deployed or remote MCP servers, review tool schemas, and invoke tools directly.
+                  </Text>
+                </div>
+                <Button variant="light" onClick={() => void loadMcps()}>
+                  Refresh MCPs
+                </Button>
+              </Group>
+            </Paper>
+
+            <SimpleGrid
+              cols={{ base: 1, xl: 3 }}
+              spacing="md"
+              style={{ alignItems: "stretch", flex: 1, minHeight: 0, height: "100%", overflow: "hidden" }}
+            >
+              <Paper withBorder p="md" radius="md" style={{ minHeight: 0, overflow: "auto" }}>
+                <Stack>
+                  <Select
+                    label="Connection Type"
+                    data={[
+                      { value: "deployed", label: "Deployed MCP" },
+                      { value: "streamable-http", label: "Streamable HTTP" },
+                      { value: "sse", label: "SSE" },
+                      { value: "stdio", label: "STDIO" },
+                    ]}
+                    value={inspectorConnectionType}
+                    onChange={(value) => setInspectorConnectionType((value as McpInspectorConnectionType) ?? "deployed")}
+                  />
+
+                  {inspectorConnectionType === "deployed" ? (
+                    <Select
+                      label="Running MCP"
+                      placeholder="Select a running MCP"
+                      data={runningMcps.map((mcp) => ({
+                        value: mcp.id,
+                        label: `${mcp.mcpName} (${mcp.endpointUrl})`,
+                      }))}
+                      value={selectedInspectorMcpId}
+                      onChange={setSelectedInspectorMcpId}
+                      searchable
+                    />
+                  ) : inspectorConnectionType === "stdio" ? (
+                    <>
+                      <TextInput
+                        label="Command"
+                        placeholder="npx"
+                        value={inspectorCommand}
+                        onChange={(event) => setInspectorCommand(event.currentTarget.value)}
+                      />
+                      <Textarea
+                        label="Command Args JSON"
+                        minRows={3}
+                        autosize
+                        value={inspectorCommandArgs}
+                        onChange={(event) => setInspectorCommandArgs(event.currentTarget.value)}
+                        placeholder='["@modelcontextprotocol/server-filesystem", "D:/Dev"]'
+                      />
+                      <TextInput
+                        label="Working Directory"
+                        placeholder="D:/Dev/agent-portal"
+                        value={inspectorCwd}
+                        onChange={(event) => setInspectorCwd(event.currentTarget.value)}
+                      />
+                      <Textarea
+                        label="Env JSON"
+                        minRows={4}
+                        autosize
+                        value={inspectorEnvJson}
+                        onChange={(event) => setInspectorEnvJson(event.currentTarget.value)}
+                        placeholder='{"NODE_ENV":"development"}'
+                      />
+                    </>
+                  ) : (
+                    <TextInput
+                      label="Endpoint URL"
+                      placeholder={inspectorConnectionType === "sse" ? "https://example.com/sse" : "https://example.com/mcp"}
+                      value={inspectorUrl}
+                      onChange={(event) => setInspectorUrl(event.currentTarget.value)}
+                    />
+                  )}
+
+                  <Group justify="space-between" align="center">
+                    <Badge variant="light">
+                      {inspectorConnectionType === "deployed"
+                        ? "Internal"
+                        : inspectorConnectionType === "stdio"
+                          ? "STDIO"
+                        : inspectorConnectionType === "sse"
+                          ? "SSE"
+                          : "Streamable HTTP"}
+                    </Badge>
+                    <Button loading={connectingInspector} onClick={() => void connectInspector()}>
+                      Connect
+                    </Button>
+                  </Group>
+
+                  <Divider />
+
+                  <Stack gap={6}>
+                    <Text fw={600}>Connection Notes</Text>
+                    <Text size="sm" c="dimmed">
+                      Deployed MCP uses the currently running project deployment. Remote modes connect to an external endpoint like MCP Inspector.
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      SSE mode expects an MCP SSE endpoint that advertises its message endpoint. Streamable HTTP tries the given URL and its `/mcp` suffix.
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      STDIO mode launches a command on the API host and speaks MCP over stdio using JSON-RPC framing.
+                    </Text>
+                  </Stack>
+                </Stack>
+              </Paper>
+
+              <Paper withBorder p="md" radius="md" style={{ minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <Stack style={{ minHeight: 0, flex: 1 }}>
+                  <Group justify="space-between" align="center">
+                    <div>
+                      <Title order={5}>Server Card</Title>
+                      <Text size="sm" c="dimmed">
+                        {inspectorConnectedUrl || "Connect to load MCP metadata."}
+                      </Text>
+                    </div>
+                    {inspectorCard ? <Badge variant="light">{inspectorCard.protocolVersion}</Badge> : null}
+                  </Group>
+
+                  {inspectorCard ? (
+                    <>
+                      <Paper withBorder p="sm" radius="md">
+                        <Stack gap={4}>
+                          <Text fw={600}>{inspectorCard.name}</Text>
+                          <Text size="sm" c="dimmed">
+                            {inspectorCard.description || "No description"}
+                          </Text>
+                          <Text size="sm">Endpoint: {inspectorCard.endpointUrl}</Text>
+                          <Text size="sm">Tools: {inspectorCard.tools.length}</Text>
+                        </Stack>
+                      </Paper>
+
+                      <ScrollArea style={{ flex: 1 }}>
+                        <Stack gap="sm" pr="xs">
+                          {inspectorCard.tools.length ? (
+                            inspectorCard.tools.map((tool) => (
+                              <Card
+                                key={tool.name}
+                                withBorder
+                                radius="md"
+                                padding="md"
+                                style={{
+                                  cursor: "pointer",
+                                  borderColor: selectedInspectorToolName === tool.name ? "var(--mantine-color-blue-6)" : undefined,
+                                }}
+                                onClick={() => setSelectedInspectorToolName(tool.name)}
+                              >
+                                <Stack gap={4}>
+                                  <Group justify="space-between" align="center">
+                                    <Text fw={600}>{tool.name}</Text>
+                                    <Badge variant="light">Tool</Badge>
+                                  </Group>
+                                  <Text size="sm" c="dimmed">
+                                    {tool.description || "No description"}
+                                  </Text>
+                                </Stack>
+                              </Card>
+                            ))
+                          ) : (
+                            <Text size="sm" c="dimmed">
+                              This MCP server did not expose any tools.
+                            </Text>
+                          )}
+                        </Stack>
+                      </ScrollArea>
+                    </>
+                  ) : (
+                    <Stack justify="center" align="center" style={{ flex: 1 }}>
+                      <Text size="sm" c="dimmed">
+                        Connect to a target to inspect its server card.
+                      </Text>
+                    </Stack>
+                  )}
+                </Stack>
+              </Paper>
+
+              <Paper withBorder p="md" radius="md" style={{ minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <Stack style={{ minHeight: 0, flex: 1 }}>
+                  <Group justify="space-between" align="center">
+                    <div>
+                      <Title order={5}>Tool Runner</Title>
+                      <Text size="sm" c="dimmed">
+                        Choose a tool, adjust JSON arguments, and invoke it directly.
+                      </Text>
+                    </div>
+                    {selectedInspectorTool ? <Badge variant="light">{selectedInspectorTool.name}</Badge> : null}
+                  </Group>
+
+                  <Select
+                    label="Tool"
+                    placeholder="Choose a tool"
+                    data={inspectorToolOptions}
+                    value={selectedInspectorToolName}
+                    onChange={setSelectedInspectorToolName}
+                    disabled={!inspectorCard?.tools.length}
+                    searchable
+                  />
+
+                  {selectedInspectorTool ? (
+                    <Text size="sm" c="dimmed">
+                      {selectedInspectorTool.description || "No tool description"}
+                    </Text>
+                  ) : null}
+
+                  <Textarea
+                    label="Arguments JSON"
+                    minRows={10}
+                    autosize
+                    maxRows={18}
+                    value={inspectorToolArgs}
+                    onChange={(event) => setInspectorToolArgs(event.currentTarget.value)}
+                    placeholder='{"key":"value"}'
+                    disabled={!selectedInspectorTool}
+                  />
+
+                  <Group justify="end">
+                    <Button loading={callingInspectorTool} onClick={() => void callInspectorTool()} disabled={!selectedInspectorTool}>
+                      Run Tool
+                    </Button>
+                  </Group>
+
+                  <Textarea
+                    label="Result"
+                    minRows={12}
+                    autosize
+                    maxRows={22}
+                    value={inspectorToolResult}
+                    readOnly
+                    placeholder="Tool result will appear here."
+                    style={{ flex: 1 }}
+                  />
+                </Stack>
+              </Paper>
+            </SimpleGrid>
+          </Stack>
+        ) : null}
+
         {activeMenu === "Playground" ? (
           <Stack style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <Paper withBorder p="md" radius="md">
@@ -2444,24 +2985,72 @@ export default function ProjectDetailPage() {
                       <div>
                         <Title order={4}>Dev MCP Test</Title>
                         <Text size="sm" c="dimmed">
-                          Connect to an external MCP server, inspect its tools, choose an allowed model, and test tool-calling.
+                          Connect to an external MCP server over streamable HTTP, SSE, or stdio, inspect its tools, and test tool-calling.
                         </Text>
                       </div>
                       <Badge variant="light">MCP</Badge>
                     </Group>
 
                     <Group align="end">
-                      <TextInput
-                        label="MCP URL"
-                        placeholder="https://example.com/mcp"
-                        value={devMcpUrl}
-                        onChange={(event) => setDevMcpUrl(event.currentTarget.value)}
-                        style={{ flex: 1 }}
+                      <Select
+                        label="Transport"
+                        data={[
+                          { value: "streamable-http", label: "Streamable HTTP" },
+                          { value: "sse", label: "SSE" },
+                          { value: "stdio", label: "STDIO" },
+                        ]}
+                        value={devMcpTransportType}
+                        onChange={(value) => setDevMcpTransportType((value as Exclude<McpInspectorConnectionType, "deployed">) ?? "streamable-http")}
+                        style={{ width: 180 }}
                       />
+                      {devMcpTransportType === "stdio" ? (
+                        <TextInput
+                          label="Command"
+                          placeholder="npx"
+                          value={devMcpCommand}
+                          onChange={(event) => setDevMcpCommand(event.currentTarget.value)}
+                          style={{ flex: 1 }}
+                        />
+                      ) : (
+                        <TextInput
+                          label="MCP URL"
+                          placeholder={devMcpTransportType === "sse" ? "https://example.com/sse" : "https://example.com/mcp"}
+                          value={devMcpUrl}
+                          onChange={(event) => setDevMcpUrl(event.currentTarget.value)}
+                          style={{ flex: 1 }}
+                        />
+                      )}
                       <Button loading={connectingDevMcp} onClick={() => void connectDevMcp()}>
                         Connect
                       </Button>
                     </Group>
+
+                    {devMcpTransportType === "stdio" ? (
+                      <SimpleGrid cols={{ base: 1, lg: 3 }} spacing="md">
+                        <Textarea
+                          label="Command Args JSON"
+                          minRows={4}
+                          autosize
+                          value={devMcpCommandArgs}
+                          onChange={(event) => setDevMcpCommandArgs(event.currentTarget.value)}
+                          placeholder='["@modelcontextprotocol/server-filesystem", "D:/Dev"]'
+                        />
+                        <TextInput
+                          label="Working Directory"
+                          placeholder="D:/Dev/agent-portal"
+                          value={devMcpCwd}
+                          onChange={(event) => setDevMcpCwd(event.currentTarget.value)}
+                        />
+                        <Textarea
+                          label="Env JSON"
+                          minRows={4}
+                          autosize
+                          value={devMcpEnvJson}
+                          onChange={(event) => setDevMcpEnvJson(event.currentTarget.value)}
+                          placeholder='{"NODE_ENV":"development"}'
+                        />
+                      </SimpleGrid>
+                    ) : null}
 
                     {devMcpCard ? (
                       <Paper withBorder p="md" radius="md">
@@ -2506,7 +3095,7 @@ export default function ProjectDetailPage() {
                             ))
                           ) : (
                             <Text size="sm" c="dimmed">
-                              Connect an MCP URL and start a tool-calling test.
+                              Connect an MCP target and start a tool-calling test.
                             </Text>
                           )}
                         </Stack>

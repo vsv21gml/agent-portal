@@ -5,11 +5,41 @@ import { CreateMcpDto } from "./dto/create-mcp.dto";
 import { McpsService } from "./mcps.service";
 
 type McpPlaygroundInspectDto = {
-  url: string;
+  transportType?: "streamable-http" | "sse" | "stdio";
+  url?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+};
+
+type McpInspectorInspectDto = {
+  transportType: "streamable-http" | "sse" | "stdio";
+  url?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+};
+
+type McpInspectorToolCallDto = {
+  transportType: "streamable-http" | "sse" | "stdio";
+  url?: string;
+  command?: string;
+  commandArgs?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  toolName: string;
+  toolArgs?: Record<string, unknown>;
 };
 
 type McpPlaygroundChatDto = {
+  transportType?: "streamable-http" | "sse" | "stdio";
   url?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
   modelName: string;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
 };
@@ -30,12 +60,70 @@ export class McpsController {
 
   @Post("playground/inspect")
   inspectExternalMcp(@Body() dto: McpPlaygroundInspectDto, @CurrentUser() user: JwtPayload) {
-    return this.mcpsService.inspectExternalMcp(dto.url, user.sub, user.email);
+    return this.mcpsService.inspectExternalMcp(
+      dto.transportType ?? "streamable-http",
+      {
+        url: dto.url ?? "",
+        command: dto.command ?? "",
+        args: dto.args ?? [],
+        cwd: dto.cwd ?? "",
+        env: dto.env ?? {},
+      },
+      user.sub,
+      user.email,
+    );
   }
 
   @Post("playground/chat")
   chatExternalMcp(@Body() dto: McpPlaygroundChatDto, @CurrentUser() user: JwtPayload) {
-    return this.mcpsService.chatWithExternalMcp(dto.url ?? "", user.sub, user.email, dto.modelName, dto.messages);
+    return this.mcpsService.chatWithExternalMcp(
+      dto.transportType ?? "streamable-http",
+      {
+        url: dto.url ?? "",
+        command: dto.command ?? "",
+        args: dto.args ?? [],
+        cwd: dto.cwd ?? "",
+        env: dto.env ?? {},
+      },
+      user.sub,
+      user.email,
+      dto.modelName,
+      dto.messages,
+    );
+  }
+
+  @Post("inspector/inspect")
+  inspectInspectorMcp(@Body() dto: McpInspectorInspectDto, @CurrentUser() user: JwtPayload) {
+    return this.mcpsService.inspectInspectorMcp(
+      dto.transportType,
+      {
+        url: dto.url ?? "",
+        command: dto.command ?? "",
+        args: dto.args ?? [],
+        cwd: dto.cwd ?? "",
+        env: dto.env ?? {},
+      },
+      user.sub,
+      user.email,
+    );
+  }
+
+  @Post("inspector/tools/call")
+  callInspectorExternalTool(@Body() dto: McpInspectorToolCallDto, @CurrentUser() user: JwtPayload) {
+    return this.mcpsService.callInspectorExternalTool(
+      dto.transportType,
+      {
+        url: dto.url ?? "",
+        command: dto.command ?? "",
+        args: dto.commandArgs ?? [],
+        cwd: dto.cwd ?? "",
+        env: dto.env ?? {},
+      },
+      user.sub,
+      user.email,
+      dto.toolName,
+      dto.toolArgs ?? {},
+    );
   }
 
   @Get(":mcpId/card")
@@ -66,6 +154,11 @@ export class McpsController {
   @Delete(":mcpId")
   deleteMcp(@Param("mcpId") mcpId: string, @CurrentUser() user: JwtPayload) {
     return this.mcpsService.deleteMcp(mcpId, user.sub);
+  }
+
+  @Post(":mcpId/tools/call")
+  callMcpTool(@Param("mcpId") mcpId: string, @Body() dto: { toolName: string; args?: Record<string, unknown> }, @CurrentUser() user: JwtPayload) {
+    return this.mcpsService.callMcpToolById(mcpId, user.sub, dto.toolName, dto.args ?? {});
   }
 
   @Post(":mcpId/chat")
