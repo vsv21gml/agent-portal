@@ -410,6 +410,8 @@ export default function AdminPage() {
   const [savingRoleChanges, setSavingRoleChanges] = useState(false);
   const [reviewingUserId, setReviewingUserId] = useState<string | null>(null);
   const [reviewingProjectId, setReviewingProjectId] = useState<string | null>(null);
+  const [stoppingWorkspaceResourceId, setStoppingWorkspaceResourceId] = useState<string | null>(null);
+  const [stoppingServingResourceKey, setStoppingServingResourceKey] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDisplayName, setInviteDisplayName] = useState("");
@@ -844,6 +846,34 @@ export default function AdminPage() {
     }
   };
 
+  const stopWorkspaceResource = async (workspaceId: string) => {
+    setStoppingWorkspaceResourceId(workspaceId);
+    try {
+      await apiFetch(`admin/resources/workspaces/${workspaceId}/stop`, { method: "POST" });
+      await loadResourceData();
+      notifications.show({ title: "Stopped", message: "Workspace session stopped.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to stop workspace session.", color: "red" });
+    } finally {
+      setStoppingWorkspaceResourceId(null);
+    }
+  };
+
+  const stopServingResource = async (type: "Agent" | "MCP", deploymentId: string) => {
+    const key = `${type}-${deploymentId}`;
+    setStoppingServingResourceKey(key);
+    try {
+      const resourcePath = type === "Agent" ? "agents" : "mcps";
+      await apiFetch(`admin/resources/${resourcePath}/${deploymentId}/stop`, { method: "POST" });
+      await loadResourceData();
+      notifications.show({ title: "Stopped", message: `${type} deployment stopped.`, color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: `Failed to stop ${type} deployment.`, color: "red" });
+    } finally {
+      setStoppingServingResourceKey(null);
+    }
+  };
+
   const formatBudgetUsage = (spendUsd: number, budgetUsd: number | null) =>
     `${Math.max(spendUsd, 0).toFixed(1)}/${budgetUsd !== null ? budgetUsd.toFixed(1) : "-"}`;
 
@@ -1065,7 +1095,7 @@ export default function AdminPage() {
     const rows = [
       ...(agentResourceOverview?.rows.map((resource) => ({
         id: resource.agentId,
-        type: "Agent",
+        type: "Agent" as const,
         projectName: resource.projectName,
         name: resource.agentName,
         repoName: resource.repoName,
@@ -1078,7 +1108,7 @@ export default function AdminPage() {
       })) ?? []),
       ...(mcpResourceOverview?.rows.map((resource) => ({
         id: resource.mcpId,
-        type: "MCP",
+        type: "MCP" as const,
         projectName: resource.projectName,
         name: resource.mcpName,
         repoName: resource.repoName,
@@ -1672,6 +1702,7 @@ export default function AdminPage() {
                                 <Table.Th>MEM Gi</Table.Th>
                                 <Table.Th>Node</Table.Th>
                                 <Table.Th>Started</Table.Th>
+                                <Table.Th>Actions</Table.Th>
                               </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
@@ -1686,11 +1717,22 @@ export default function AdminPage() {
                                     <Table.Td>{resource.memoryGi}</Table.Td>
                                     <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
                                     <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                                    <Table.Td>
+                                      <Button
+                                        size="xs"
+                                        color="red"
+                                        variant="light"
+                                        loading={stoppingWorkspaceResourceId === resource.sessionId}
+                                        onClick={() => void stopWorkspaceResource(resource.sessionId)}
+                                      >
+                                        Stop
+                                      </Button>
+                                    </Table.Td>
                                   </Table.Tr>
                                 ))
                               ) : (
                                 <Table.Tr>
-                                  <Table.Td colSpan={8}>
+                                  <Table.Td colSpan={9}>
                                     <Text size="sm" c="dimmed">
                                       No running workspace sessions.
                                     </Text>
@@ -1857,6 +1899,7 @@ export default function AdminPage() {
                                 <Table.Th>MEM Gi</Table.Th>
                                 <Table.Th>Node</Table.Th>
                                 <Table.Th>Started</Table.Th>
+                                <Table.Th>Actions</Table.Th>
                               </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
@@ -1877,11 +1920,22 @@ export default function AdminPage() {
                                     <Table.Td>{resource.memoryGi.toFixed(1)}</Table.Td>
                                     <Table.Td>{resource.nodeName ?? "-"}</Table.Td>
                                     <Table.Td>{new Date(resource.createdAt).toLocaleString()}</Table.Td>
+                                    <Table.Td>
+                                      <Button
+                                        size="xs"
+                                        color="red"
+                                        variant="light"
+                                        loading={stoppingServingResourceKey === `${resource.type}-${resource.id}`}
+                                        onClick={() => void stopServingResource(resource.type, resource.id)}
+                                      >
+                                        Stop
+                                      </Button>
+                                    </Table.Td>
                                   </Table.Tr>
                                 ))
                               ) : (
                                 <Table.Tr>
-                                  <Table.Td colSpan={10}>
+                                  <Table.Td colSpan={11}>
                                     <Text size="sm" c="dimmed">
                                       No running serving deployments.
                                     </Text>

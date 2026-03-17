@@ -11,8 +11,11 @@ import { GitlabService } from "../gitlab/gitlab.service";
 import { ReviewModelAccessRequestDto } from "../llm/dto/review-model-access-request.dto";
 import { SetDefaultModelDto } from "../llm/dto/set-default-model.dto";
 import { LlmService } from "../llm/llm.service";
+import { McpsService } from "../mcps/mcps.service";
 import { AddProjectMemberDto } from "../projects/dto/add-project-member.dto";
 import { ProjectsService } from "../projects/projects.service";
+import { WorkspacesService } from "../workspaces/workspaces.service";
+import { AgentsService } from "../agents/agents.service";
 import { VectorDbService } from "../vectordb/vectordb.service";
 import { AdminService } from "./admin.service";
 
@@ -26,6 +29,9 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly gitlabService: GitlabService,
     private readonly llmService: LlmService,
+    private readonly workspacesService: WorkspacesService,
+    private readonly agentsService: AgentsService,
+    private readonly mcpsService: McpsService,
     private readonly vectorDbService: VectorDbService,
   ) {}
 
@@ -124,16 +130,34 @@ export class AdminController {
     return this.adminService.getWorkspaceResourceOverview();
   }
 
+  @Post("resources/workspaces/:workspaceId/stop")
+  @Permissions(Permission.WRITE_RESOURCE)
+  stopWorkspaceResource(@Param("workspaceId") workspaceId: string, @CurrentUser() actor: JwtPayload) {
+    return this.workspacesService.stopWorkspace(workspaceId, actor.sub);
+  }
+
   @Get("resources/agents")
   @Permissions(Permission.READ_RESOURCE)
   agentResources() {
     return this.adminService.getAgentResourceOverview();
   }
 
+  @Post("resources/agents/:agentId/stop")
+  @Permissions(Permission.WRITE_RESOURCE)
+  stopAgentResource(@Param("agentId") agentId: string, @CurrentUser() actor: JwtPayload) {
+    return this.agentsService.stopAgent(agentId, actor.sub);
+  }
+
   @Get("resources/mcps")
   @Permissions(Permission.READ_RESOURCE)
   mcpResources() {
     return this.adminService.getMcpResourceOverview();
+  }
+
+  @Post("resources/mcps/:mcpId/stop")
+  @Permissions(Permission.WRITE_RESOURCE)
+  stopMcpResource(@Param("mcpId") mcpId: string, @CurrentUser() actor: JwtPayload) {
+    return this.mcpsService.stopMcp(mcpId, actor.sub);
   }
 
   @Get("gitlab/groups")
