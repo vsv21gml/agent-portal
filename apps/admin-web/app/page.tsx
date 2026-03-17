@@ -25,7 +25,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { AdminFrame } from "../src/components/admin-frame";
 import { ProfileMenu } from "../src/components/profile-menu";
 import { ApiError, apiFetch } from "../src/lib/api-client";
-import { clearToken } from "../src/lib/auth";
+import { getAdminLoginPath, getPortalOrigin } from "../src/lib/auth-routing";
 import { AdminSection, adminNavigation } from "../src/lib/admin-navigation";
 
 type UserRow = {
@@ -429,8 +429,7 @@ export default function AdminPage() {
   const verifyAdmin = async () => {
     const me = await apiFetch<{ role: string }>("auth/me");
     if (me.role !== "admin") {
-      clearToken();
-      router.replace(`/login?next=${pathname}`);
+      window.location.assign(getPortalOrigin());
       throw new Error("Admin role required");
     }
   };
@@ -551,7 +550,11 @@ export default function AdminPage() {
         await loadSectionData();
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          router.replace(`/login?next=${pathname}`);
+          router.replace(getAdminLoginPath(pathname));
+          return;
+        }
+        if (error instanceof ApiError && error.status === 403) {
+          window.location.assign(getPortalOrigin());
           return;
         }
         notifications.show({
@@ -559,7 +562,7 @@ export default function AdminPage() {
           message: "관리자 데이터를 불러오지 못했습니다.",
           color: "red",
         });
-        router.replace("/login?next=/");
+        router.replace(getAdminLoginPath("/"));
       } finally {
         setAuthChecking(false);
       }

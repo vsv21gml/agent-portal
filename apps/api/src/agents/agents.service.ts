@@ -145,19 +145,12 @@ export class AgentsService {
 
   async stopAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
     const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId, deleteYn: "N" });
-    await this.deleteServingResources(agent);
-    agent.status = "stopped";
-    agent.lastMessage = "Agent stopped.";
-    const saved = await this.agentRepository.save(agent);
-    await this.logsService.writeAuditLog({
-      userId,
-      actionKey: "AGENT_STOPPED",
-      targetType: "agent",
-      targetId: agent.id,
-      projectId: agent.projectId,
-      metadata: { agentName: agent.agentName, repoId: agent.repoId },
-    });
-    return saved;
+    return this.stopAgentDeployment(agent, userId);
+  }
+
+  async adminStopAgent(agentId: string, actorUserId: string): Promise<AgentDeploymentEntity> {
+    const agent = await this.agentRepository.findOneByOrFail({ id: agentId, deleteYn: "N" });
+    return this.stopAgentDeployment(agent, actorUserId, true);
   }
 
   async restartAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
@@ -1156,6 +1149,31 @@ export class AgentsService {
   private async countProjectServingAgents(projectId: string, excludeAgentId?: string): Promise<number> {
     const agents = await this.agentRepository.find({ where: { projectId, deleteYn: "N" } });
     return agents.filter((agent) => agent.id !== excludeAgentId && ["running", "deploying"].includes(agent.status)).length;
+  }
+
+  private async stopAgentDeployment(
+    agent: AgentDeploymentEntity,
+    actorUserId: string,
+    adminOverride = false,
+  ): Promise<AgentDeploymentEntity> {
+    await this.deleteServingResources(agent);
+    agent.status = "stopped";
+    agent.lastMessage = "Agent stopped.";
+    const saved = await this.agentRepository.save(agent);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "AGENT_STOPPED",
+      targetType: "agent",
+      targetId: agent.id,
+      projectId: agent.projectId,
+      metadata: {
+        agentName: agent.agentName,
+        repoId: agent.repoId,
+        ownerUserId: agent.ownerUserId,
+        adminOverride,
+      },
+    });
+    return saved;
   }
 
   private sanitizeName(value: string): string {

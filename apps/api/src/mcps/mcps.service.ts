@@ -309,19 +309,12 @@ export class McpsService {
 
   async stopMcp(mcpId: string, userId: string): Promise<McpDeploymentEntity> {
     const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, ownerUserId: userId, deleteYn: "N" });
-    await this.deleteServingResources(mcp);
-    mcp.status = "stopped";
-    mcp.lastMessage = "MCP stopped.";
-    const saved = await this.mcpRepository.save(mcp);
-    await this.logsService.writeAuditLog({
-      userId,
-      actionKey: "MCP_STOPPED",
-      targetType: "mcp",
-      targetId: mcp.id,
-      projectId: mcp.projectId,
-      metadata: { mcpName: mcp.mcpName, repoId: mcp.repoId },
-    });
-    return saved;
+    return this.stopMcpDeployment(mcp, userId);
+  }
+
+  async adminStopMcp(mcpId: string, actorUserId: string): Promise<McpDeploymentEntity> {
+    const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, deleteYn: "N" });
+    return this.stopMcpDeployment(mcp, actorUserId, true);
   }
 
   async restartMcp(mcpId: string, userId: string): Promise<McpDeploymentEntity> {
@@ -1921,6 +1914,31 @@ export class McpsService {
   private async countProjectServingMcps(projectId: string, excludeMcpId?: string): Promise<number> {
     const mcps = await this.mcpRepository.find({ where: { projectId, deleteYn: "N" } });
     return mcps.filter((mcp) => mcp.id !== excludeMcpId && ["running", "deploying"].includes(mcp.status)).length;
+  }
+
+  private async stopMcpDeployment(
+    mcp: McpDeploymentEntity,
+    actorUserId: string,
+    adminOverride = false,
+  ): Promise<McpDeploymentEntity> {
+    await this.deleteServingResources(mcp);
+    mcp.status = "stopped";
+    mcp.lastMessage = "MCP stopped.";
+    const saved = await this.mcpRepository.save(mcp);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "MCP_STOPPED",
+      targetType: "mcp",
+      targetId: mcp.id,
+      projectId: mcp.projectId,
+      metadata: {
+        mcpName: mcp.mcpName,
+        repoId: mcp.repoId,
+        ownerUserId: mcp.ownerUserId,
+        adminOverride,
+      },
+    });
+    return saved;
   }
 
   private extractEcrRegion(repository: string): string {

@@ -14,7 +14,18 @@ if (fs.existsSync(rootEnvPath)) {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger("Bootstrap");
-  app.enableCors();
+  const isProduction = (process.env.NODE_ENV ?? "").trim() === "production";
+  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (isProduction && allowedOrigins.length === 0) {
+    logger.warn("CORS_ALLOWED_ORIGINS is not configured in production. Browser cross-origin requests will be blocked.");
+  }
+  app.enableCors({
+    origin: allowedOrigins.length > 0 ? allowedOrigins : isProduction ? false : true,
+    credentials: (process.env.CORS_ALLOW_CREDENTIALS ?? "false") === "true",
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

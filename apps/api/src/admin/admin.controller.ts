@@ -133,7 +133,7 @@ export class AdminController {
   @Post("resources/workspaces/:workspaceId/stop")
   @Permissions(Permission.WRITE_RESOURCE)
   stopWorkspaceResource(@Param("workspaceId") workspaceId: string, @CurrentUser() actor: JwtPayload) {
-    return this.workspacesService.stopWorkspace(workspaceId, actor.sub);
+    return this.workspacesService.adminStopWorkspace(workspaceId, actor.sub);
   }
 
   @Get("resources/agents")
@@ -145,7 +145,7 @@ export class AdminController {
   @Post("resources/agents/:agentId/stop")
   @Permissions(Permission.WRITE_RESOURCE)
   stopAgentResource(@Param("agentId") agentId: string, @CurrentUser() actor: JwtPayload) {
-    return this.agentsService.stopAgent(agentId, actor.sub);
+    return this.agentsService.adminStopAgent(agentId, actor.sub);
   }
 
   @Get("resources/mcps")
@@ -157,7 +157,7 @@ export class AdminController {
   @Post("resources/mcps/:mcpId/stop")
   @Permissions(Permission.WRITE_RESOURCE)
   stopMcpResource(@Param("mcpId") mcpId: string, @CurrentUser() actor: JwtPayload) {
-    return this.mcpsService.stopMcp(mcpId, actor.sub);
+    return this.mcpsService.adminStopMcp(mcpId, actor.sub);
   }
 
   @Get("gitlab/groups")

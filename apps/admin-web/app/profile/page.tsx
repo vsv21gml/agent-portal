@@ -23,6 +23,7 @@ import { useRouter } from "next/navigation";
 import { AdminFrame } from "../../src/components/admin-frame";
 import { ProfileMenu } from "../../src/components/profile-menu";
 import { ApiError, apiFetch } from "../../src/lib/api-client";
+import { getAdminLoginPath, getPortalOrigin } from "../../src/lib/auth-routing";
 
 type MyProfile = {
   sub: string;
@@ -81,7 +82,7 @@ export default function AdminProfilePage() {
         apiFetch<MyLiteLlmAccess>("llm/me/access"),
       ]);
       if (me.role !== "admin") {
-        router.replace("/login?next=/");
+        window.location.assign(getPortalOrigin());
         return;
       }
       setProfile(me);
@@ -89,7 +90,11 @@ export default function AdminProfilePage() {
       setAccess(accessInfo);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        router.replace("/login?next=/profile");
+        router.replace(getAdminLoginPath("/profile"));
+        return;
+      }
+      if (error instanceof ApiError && error.status === 403) {
+        window.location.assign(getPortalOrigin());
         return;
       }
       notifications.show({

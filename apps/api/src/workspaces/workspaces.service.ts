@@ -224,18 +224,12 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
 
   async stopWorkspace(workspaceId: string, userId: string): Promise<WorkspaceSessionEntity> {
     const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId, userId });
-    await this.deleteActiveWorkspaceResources(session);
-    session.status = "stopped";
-    const saved = await this.workspaceRepository.save(session);
-    await this.logsService.writeAuditLog({
-      userId,
-      actionKey: "WORKSPACE_STOPPED",
-      targetType: "workspace",
-      targetId: session.id,
-      projectId: session.projectId,
-      metadata: { repoId: session.repoId, repoName: session.repoName },
-    });
-    return saved;
+    return this.stopWorkspaceSession(session, userId);
+  }
+
+  async adminStopWorkspace(workspaceId: string, actorUserId: string): Promise<WorkspaceSessionEntity> {
+    const session = await this.workspaceRepository.findOneByOrFail({ id: workspaceId });
+    return this.stopWorkspaceSession(session, actorUserId, true);
   }
 
   async restartWorkspace(workspaceId: string, userId: string): Promise<WorkspaceSessionEntity> {
@@ -1091,6 +1085,30 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       session.status = "stopped";
       await this.workspaceRepository.save(session);
     }
+  }
+
+  private async stopWorkspaceSession(
+    session: WorkspaceSessionEntity,
+    actorUserId: string,
+    adminOverride = false,
+  ): Promise<WorkspaceSessionEntity> {
+    await this.deleteActiveWorkspaceResources(session);
+    session.status = "stopped";
+    const saved = await this.workspaceRepository.save(session);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "WORKSPACE_STOPPED",
+      targetType: "workspace",
+      targetId: session.id,
+      projectId: session.projectId,
+      metadata: {
+        repoId: session.repoId,
+        repoName: session.repoName,
+        ownerUserId: session.userId,
+        adminOverride,
+      },
+    });
+    return saved;
   }
 
   private async refreshWorkspaceStatus(session: WorkspaceSessionEntity): Promise<WorkspaceSessionEntity> {

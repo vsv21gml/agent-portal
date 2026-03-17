@@ -11,6 +11,10 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
     super();
   }
 
+  private isDevBypassEnabled(): boolean {
+    return process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV !== "production";
+  }
+
   canActivate(context: ExecutionContext) {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -22,7 +26,7 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
     }
 
     const request = context.switchToHttp().getRequest<{ user?: JwtPayload }>();
-    if (process.env.AUTH_BYPASS === "true") {
+    if (this.isDevBypassEnabled()) {
       request.user = {
         sub: process.env.AUTH_BYPASS_USER_ID ?? "dev-user-id",
         email: process.env.AUTH_BYPASS_EMAIL ?? "dev@example.com",

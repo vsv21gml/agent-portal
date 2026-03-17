@@ -1,10 +1,11 @@
 "use client";
 
 import { Button, Group, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
-import { useSearchParams, useRouter } from "next/navigation";
-import { Suspense, useState } from "react";
-import { setToken, clearToken } from "../../src/lib/auth";
 import { notifications } from "@mantine/notifications";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
+import { setToken } from "../../src/lib/auth";
+import { getPortalOrigin } from "../../src/lib/auth-routing";
 import { apiFetch } from "../../src/lib/api-client";
 
 type AuthResponse = { accessToken: string };
@@ -34,21 +35,21 @@ function LoginContent() {
 
       const me = await apiFetch<{ role: string }>("auth/me");
       if (me.role !== "admin") {
-        clearToken();
         notifications.show({
           title: "Access denied",
-          message: "관리자 권한이 없습니다.",
+          message: "Admin permission is required.",
           color: "red",
         });
+        window.location.assign(getPortalOrigin());
         return;
       }
 
-      notifications.show({ title: "Success", message: "로그인 완료", color: "teal" });
+      notifications.show({ title: "Success", message: "Logged in.", color: "teal" });
       router.push(nextPath);
     } catch {
       notifications.show({
         title: "Failed",
-        message: "로그인에 실패했습니다.",
+        message: "Login failed.",
         color: "red",
       });
     } finally {
@@ -62,7 +63,7 @@ function LoginContent() {
         <Stack>
           <Title order={3}>Admin Web</Title>
           <Text size="sm" c="dimmed">
-            관리자 계정으로 로그인하세요.
+            Sign in with an administrator account.
           </Text>
           <form
             onSubmit={(event) => {
@@ -71,8 +72,8 @@ function LoginContent() {
             }}
           >
             <Stack>
-              <TextInput label="Email" value={email} onChange={(e) => setEmail(e.currentTarget.value)} />
-              <PasswordInput label="Password" value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+              <TextInput label="Email" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+              <PasswordInput label="Password" value={password} onChange={(event) => setPassword(event.currentTarget.value)} />
               <Group justify="end">
                 <Button type="submit" loading={loading}>
                   Login

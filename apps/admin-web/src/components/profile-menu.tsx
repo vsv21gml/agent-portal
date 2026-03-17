@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, apiFetch } from "../lib/api-client";
 import { clearToken } from "../lib/auth";
+import { getAdminLoginPath, getPortalOrigin } from "../lib/auth-routing";
 
 type MyProfile = {
   sub: string;
@@ -26,7 +27,11 @@ export function ProfileMenu() {
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           clearToken();
-          router.replace("/login?next=/");
+          router.replace(getAdminLoginPath("/"));
+          return;
+        }
+        if (error instanceof ApiError && error.status === 403) {
+          window.location.assign(getPortalOrigin());
           return;
         }
         notifications.show({
@@ -47,7 +52,7 @@ export function ProfileMenu() {
       // ignore logout logging failures on client
     } finally {
       clearToken();
-      router.replace("/login?next=/");
+      router.replace(getAdminLoginPath("/"));
     }
   };
 

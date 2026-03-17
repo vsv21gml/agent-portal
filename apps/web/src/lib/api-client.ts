@@ -1,5 +1,7 @@
 import { clearToken, getToken } from "./auth";
 
+export const PORTAL_AUTH_ERROR_EVENT = "agent-portal-portal-auth-error";
+
 export class ApiError extends Error {
   status: number;
 
@@ -24,6 +26,16 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   if (!response.ok) {
     if (response.status === 401) {
       clearToken();
+    }
+    if (typeof window !== "undefined" && (response.status === 401 || response.status === 403)) {
+      window.dispatchEvent(
+        new CustomEvent(PORTAL_AUTH_ERROR_EVENT, {
+          detail: {
+            status: response.status,
+            path: path.replace(/^\/+/, ""),
+          },
+        }),
+      );
     }
     throw new ApiError(response.status, `${response.status} ${response.statusText}`);
   }

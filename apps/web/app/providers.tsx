@@ -3,6 +3,7 @@
 import { MantineProvider, createTheme } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import { ReactNode } from "react";
+import { AuthErrorBoundary } from "../src/components/auth-error-boundary";
 
 const theme = createTheme({
   primaryColor: "cyan",
@@ -18,6 +19,7 @@ export function Providers({ children }: Props) {
   return (
     <MantineProvider theme={theme}>
       <Notifications position="top-right" />
+      <AuthErrorBoundary />
       {children}
     </MantineProvider>
   );
