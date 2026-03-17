@@ -8,6 +8,7 @@ import { UserEntity } from "../auth/entities/user.entity";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
 import { LlmService } from "../llm/llm.service";
 import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
+import { ProjectMemberEntity } from "../projects/entities/project-member.entity";
 import { ProjectEntity } from "../projects/entities/project.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 
@@ -176,10 +177,17 @@ type ProjectAdminRow = {
   name: string;
   description: string;
   createdAt: string;
+  deletedYn: string;
+  status: string;
   approvalStatus: string;
   requestedByUserId: string | null;
   requestedByUserEmail: string | null;
   requestedByDisplayName: string | null;
+  repoCount: number;
+  agentCount: number;
+  mcpCount: number;
+  runningWorkspaceCount: number;
+  memberCount: number;
 };
 
 @Injectable()
@@ -198,6 +206,8 @@ export class AdminService {
     private readonly mcpRepository: Repository<McpDeploymentEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepository: Repository<ProjectEntity>,
+    @InjectRepository(ProjectMemberEntity)
+    private readonly projectMemberRepository: Repository<ProjectMemberEntity>,
     @InjectRepository(GitlabRepoEntity)
     private readonly repoRepository: Repository<GitlabRepoEntity>,
     @InjectRepository(UserEntity)
@@ -586,10 +596,25 @@ export class AdminService {
   }
 
   async listProjects(): Promise<ProjectAdminRow[]> {
-    const projects = await this.projectRepository.find({ where: { deletedYn: "N" }, order: { createdAt: "DESC" } });
+    const projects = await this.projectRepository.find({ order: { createdAt: "DESC" } });
     const requesterIds = [...new Set(projects.map((project) => project.requestedByUserId).filter(Boolean))] as string[];
-    const users = requesterIds.length ? await this.userRepository.findBy(requesterIds.map((id) => ({ id }))) : [];
+    const projectIds = projects.map((project) => project.id);
+    const [users, repos, members, workspaces, agents, mcps] = await Promise.all([
+      requesterIds.length ? this.userRepository.findBy(requesterIds.map((id) => ({ id }))) : Promise.resolve([]),
+      projectIds.length ? this.repoRepository.findBy(projectIds.map((id) => ({ projectId: id }))) : Promise.resolve([]),
+      projectIds.length ? this.projectMemberRepository.findBy(projectIds.map((id) => ({ projectId: id }))) : Promise.resolve([]),
+      projectIds.length ? this.workspaceRepository.findBy(projectIds.map((id) => ({ projectId: id }))) : Promise.resolve([]),
+      projectIds.length ? this.agentRepository.findBy(projectIds.map((id) => ({ projectId: id, deleteYn: "N" }))) : Promise.resolve([]),
+      projectIds.length ? this.mcpRepository.findBy(projectIds.map((id) => ({ projectId: id, deleteYn: "N" }))) : Promise.resolve([]),
+    ]);
     const userMap = new Map(users.map((user) => [user.id, user]));
+    const repoCountByProjectId = this.buildProjectCountMap(repos.map((repo) => repo.projectId));
+    const memberCountByProjectId = this.buildProjectCountMap(members.map((member) => member.projectId));
+    const runningWorkspaceCountByProjectId = this.buildProjectCountMap(
+      workspaces.filter((workspace) => workspace.status === "running").map((workspace) => workspace.projectId),
+    );
+    const agentCountByProjectId = this.buildProjectCountMap(agents.map((agent) => agent.projectId));
+    const mcpCountByProjectId = this.buildProjectCountMap(mcps.map((mcp) => mcp.projectId));
 
     return projects.map((project) => {
       const requester = project.requestedByUserId ? userMap.get(project.requestedByUserId) : null;
@@ -598,12 +623,27 @@ export class AdminService {
         name: project.name,
         description: project.description,
         createdAt: project.createdAt.toISOString(),
+        deletedYn: project.deletedYn,
+        status: project.deletedYn === "Y" ? "deleted" : project.approvalStatus,
         approvalStatus: project.approvalStatus,
         requestedByUserId: project.requestedByUserId,
         requestedByUserEmail: requester?.email ?? null,
         requestedByDisplayName: requester?.displayName ?? null,
+        repoCount: repoCountByProjectId.get(project.id) ?? 0,
+        agentCount: agentCountByProjectId.get(project.id) ?? 0,
+        mcpCount: mcpCountByProjectId.get(project.id) ?? 0,
+        runningWorkspaceCount: runningWorkspaceCountByProjectId.get(project.id) ?? 0,
+        memberCount: memberCountByProjectId.get(project.id) ?? 0,
       };
     });
+  }
+
+  private buildProjectCountMap(projectIds: string[]): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const projectId of projectIds) {
+      counts.set(projectId, (counts.get(projectId) ?? 0) + 1);
+    }
+    return counts;
   }
 
   private async getNodePoolSummary(constraints: NodePoolConstraints): Promise<WorkspaceResourceOverview["nodePool"]> {

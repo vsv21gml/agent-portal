@@ -246,8 +246,6 @@ export class ProjectsService {
     const project = await this.projectRepository.findOneByOrFail({ id: projectId });
     project.deletedYn = "Y";
     await this.projectRepository.save(project);
-    await this.projectMemberRepository.delete({ projectId });
-    await this.gitlabMemberSyncRepository.delete({ projectId });
     await this.logsService.writeAuditLog({
       userId: actorUserId,
       actionKey: "PROJECT_DELETED",
@@ -256,6 +254,21 @@ export class ProjectsService {
       projectId,
       metadata: { name: project.name },
     });
+  }
+
+  async restoreProject(projectId: string, actorUserId: string): Promise<ProjectEntity> {
+    const project = await this.projectRepository.findOneByOrFail({ id: projectId });
+    project.deletedYn = "N";
+    const saved = await this.projectRepository.save(project);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "PROJECT_RESTORED",
+      targetType: "project",
+      targetId: projectId,
+      projectId,
+      metadata: { name: project.name },
+    });
+    return saved;
   }
 
   async approveProject(projectId: string, reviewerUserId: string): Promise<ProjectEntity> {

@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { AuthService } from "../auth/auth.service";
 import { JwtPayload } from "../auth/types/jwt-payload.type";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { GlobalRole } from "../common/enums/global-role.enum";
@@ -10,6 +11,7 @@ import { GitlabService } from "../gitlab/gitlab.service";
 import { ReviewModelAccessRequestDto } from "../llm/dto/review-model-access-request.dto";
 import { SetDefaultModelDto } from "../llm/dto/set-default-model.dto";
 import { LlmService } from "../llm/llm.service";
+import { AddProjectMemberDto } from "../projects/dto/add-project-member.dto";
 import { ProjectsService } from "../projects/projects.service";
 import { VectorDbService } from "../vectordb/vectordb.service";
 import { AdminService } from "./admin.service";
@@ -21,6 +23,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly projectsService: ProjectsService,
+    private readonly authService: AuthService,
     private readonly gitlabService: GitlabService,
     private readonly llmService: LlmService,
     private readonly vectorDbService: VectorDbService,
@@ -36,6 +39,57 @@ export class AdminController {
   @Permissions(Permission.READ_PROJECT)
   projects() {
     return this.adminService.listProjects();
+  }
+
+  @Get("projects/:projectId/overview")
+  @Permissions(Permission.READ_PROJECT)
+  projectOverview(@Param("projectId") projectId: string) {
+    return this.projectsService.getOverview(projectId);
+  }
+
+  @Get("projects/:projectId/available-users")
+  @Permissions(Permission.READ_PROJECT)
+  projectAvailableUsers(@Param("projectId") projectId: string) {
+    return this.projectsService.listAvailableUsers(projectId);
+  }
+
+  @Post("projects/:projectId/members")
+  @Permissions(Permission.WRITE_PROJECT)
+  async addProjectMember(
+    @Param("projectId") projectId: string,
+    @Body() dto: AddProjectMemberDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    const member = await this.projectsService.addMember(projectId, dto, actor.sub);
+    const targetUser = await this.authService.findById(dto.userId);
+    await this.gitlabService.syncMemberAccess(projectId, dto.userId, dto.role, targetUser?.email);
+    return member;
+  }
+
+  @Delete("projects/:projectId/members/:userId")
+  @Permissions(Permission.WRITE_PROJECT)
+  async removeProjectMember(
+    @Param("projectId") projectId: string,
+    @Param("userId") userId: string,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    const targetUser = await this.authService.findById(userId);
+    await this.projectsService.removeMember(projectId, userId, actor.sub);
+    await this.gitlabService.removeMemberAccess(projectId, userId, targetUser?.email);
+    return { success: true };
+  }
+
+  @Delete("projects/:projectId")
+  @Permissions(Permission.WRITE_PROJECT)
+  async deleteProject(@Param("projectId") projectId: string, @CurrentUser() actor: JwtPayload) {
+    await this.projectsService.deleteProject(projectId, actor.sub);
+    return { success: true };
+  }
+
+  @Post("projects/:projectId/restore")
+  @Permissions(Permission.WRITE_PROJECT)
+  restoreProject(@Param("projectId") projectId: string, @CurrentUser() actor: JwtPayload) {
+    return this.projectsService.restoreProject(projectId, actor.sub);
   }
 
   @Get("agents")

@@ -53,10 +53,41 @@ type ProjectRow = {
   name: string;
   description: string;
   createdAt: string;
+  deletedYn: string;
+  status: string;
   approvalStatus: string;
   requestedByUserId: string | null;
   requestedByUserEmail: string | null;
   requestedByDisplayName: string | null;
+  repoCount: number;
+  agentCount: number;
+  mcpCount: number;
+  runningWorkspaceCount: number;
+  memberCount: number;
+};
+
+type ProjectMember = {
+  id: string;
+  userId: string;
+  role: string;
+  email: string | null;
+  displayName: string | null;
+  globalRole: string | null;
+};
+
+type PortalUser = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
+type ProjectOverview = {
+  project: ProjectRow;
+  members: ProjectMember[];
+  resourceLimit?: {
+    cpu: number;
+    memoryGi: number;
+  } | null;
 };
 
 type AuditLogRow = {
@@ -240,17 +271,6 @@ type GitlabRepo = {
   namespacePath: string;
 };
 
-type VectorKey = {
-  id: string;
-  projectId: string;
-  ownerUserId: string;
-  keyAlias: string;
-  indexName: string;
-  remoteKeyId: string | null;
-  createdAt: string;
-  apiKey?: string | null;
-};
-
 type CatalogModel = {
   id: string;
   modelName: string;
@@ -354,12 +374,10 @@ export default function AdminPage() {
   const [servingResourceTab, setServingResourceTab] = useState<string | null>("deployments");
   const [groups, setGroups] = useState<GitlabGroup[]>([]);
   const [repos, setRepos] = useState<GitlabRepo[]>([]);
-  const [vectorKeys, setVectorKeys] = useState<VectorKey[]>([]);
   const [catalogModels, setCatalogModels] = useState<CatalogModel[]>([]);
   const [modelRequests, setModelRequests] = useState<ModelAccessRequest[]>([]);
   const [activePage, setActivePage] = useState(1);
   const [userTab, setUserTab] = useState<string | null>("current");
-  const [projectTab, setProjectTab] = useState<string | null>("current");
   const [gitlabGroupPage, setGitlabGroupPage] = useState(1);
   const [gitlabRepoPage, setGitlabRepoPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
@@ -373,12 +391,21 @@ export default function AdminPage() {
   const [mcpProjectFilter, setMcpProjectFilter] = useState<string | null>("all");
   const [auditSearch, setAuditSearch] = useState("");
   const [accessSearch, setAccessSearch] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
+  const [projectStatusFilter, setProjectStatusFilter] = useState<string | null>("all");
   const [agentPage, setAgentPage] = useState(1);
   const [mcpPage, setMcpPage] = useState(1);
   const [auditActionFilter, setAuditActionFilter] = useState<string | null>("all");
   const [accessEventFilter, setAccessEventFilter] = useState<string | null>("all");
   const [accessStatusFilter, setAccessStatusFilter] = useState<string | null>("all");
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
+  const [detailProjectOverview, setDetailProjectOverview] = useState<ProjectOverview | null>(null);
+  const [detailProjectAvailableUsers, setDetailProjectAvailableUsers] = useState<PortalUser[]>([]);
+  const [detailProjectRepos, setDetailProjectRepos] = useState<GitlabRepo[]>([]);
+  const [loadingProjectDetail, setLoadingProjectDetail] = useState(false);
+  const [updatingProjectMembers, setUpdatingProjectMembers] = useState(false);
+  const [selectedProjectMemberId, setSelectedProjectMemberId] = useState<string | null>(null);
+  const [selectedProjectMemberRole, setSelectedProjectMemberRole] = useState<string | null>("member");
   const [pendingRoleChanges, setPendingRoleChanges] = useState<Record<string, "admin" | "user">>({});
   const [savingRoleChanges, setSavingRoleChanges] = useState(false);
   const [reviewingUserId, setReviewingUserId] = useState<string | null>(null);
@@ -392,9 +419,6 @@ export default function AdminPage() {
   const [gitlabOpen, setGitlabOpen] = useState(false);
   const [gitlabRepoName, setGitlabRepoName] = useState("");
   const [gitlabError, setGitlabError] = useState<string | null>(null);
-  const [vectorOpen, setVectorOpen] = useState(false);
-  const [vectorAlias, setVectorAlias] = useState("");
-  const [vectorError, setVectorError] = useState<string | null>(null);
   const [updatingDefaultModelName, setUpdatingDefaultModelName] = useState<string | null>(null);
   const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -417,6 +441,25 @@ export default function AdminPage() {
     const loadedProjects = await apiFetch<ProjectRow[]>("admin/projects");
     setProjects(loadedProjects);
     return loadedProjects;
+  };
+
+  const loadDetailProjectData = async (projectId: string) => {
+    setLoadingProjectDetail(true);
+    try {
+      const [overview, availableUsers, projectRepos] = await Promise.all([
+        apiFetch<ProjectOverview>(`admin/projects/${projectId}/overview`),
+        apiFetch<PortalUser[]>(`admin/projects/${projectId}/available-users`),
+        apiFetch<GitlabRepo[]>(`admin/projects/${projectId}/gitlab/repos`),
+      ]);
+      setDetailProjectOverview(overview);
+      setDetailProjectAvailableUsers(availableUsers);
+      setDetailProjectRepos(projectRepos);
+      setDetailProject((current) => (current && current.id === projectId ? { ...current, ...overview.project } : current));
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to load project details.", color: "red" });
+    } finally {
+      setLoadingProjectDetail(false);
+    }
   };
 
   const loadAgentsData = async () => {
@@ -548,6 +591,23 @@ export default function AdminPage() {
     setAccessPage(1);
   }, [accessEventFilter, accessSearch, accessStatusFilter]);
 
+  useEffect(() => {
+    setActivePage(1);
+  }, [projectSearch, projectStatusFilter]);
+
+  useEffect(() => {
+    if (!detailProject) {
+      setDetailProjectOverview(null);
+      setDetailProjectAvailableUsers([]);
+      setDetailProjectRepos([]);
+      setSelectedProjectMemberId(null);
+      setSelectedProjectMemberRole("member");
+      return;
+    }
+
+    void loadDetailProjectData(detailProject.id);
+  }, [detailProject?.id]);
+
   const tryCopyLink = async (link: string): Promise<boolean> => {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       try {
@@ -599,6 +659,38 @@ export default function AdminPage() {
     }
   };
 
+  const deleteProject = async (projectId: string) => {
+    setReviewingProjectId(projectId);
+    try {
+      await apiFetch(`admin/projects/${projectId}`, { method: "DELETE" });
+      await loadProjectsData();
+      if (detailProject?.id === projectId) {
+        await loadDetailProjectData(projectId);
+      }
+      notifications.show({ title: "Deleted", message: "Project marked as deleted.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to delete project.", color: "red" });
+    } finally {
+      setReviewingProjectId(null);
+    }
+  };
+
+  const restoreProject = async (projectId: string) => {
+    setReviewingProjectId(projectId);
+    try {
+      await apiFetch(`admin/projects/${projectId}/restore`, { method: "POST" });
+      await loadProjectsData();
+      if (detailProject?.id === projectId) {
+        await loadDetailProjectData(projectId);
+      }
+      notifications.show({ title: "Restored", message: "Project restored.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to restore project.", color: "red" });
+    } finally {
+      setReviewingProjectId(null);
+    }
+  };
+
   const createGitlabRepo = async () => {
     if (!detailProject) {
       return;
@@ -620,33 +712,6 @@ export default function AdminPage() {
       notifications.show({ title: "Created", message: "GitLab repo created.", color: "teal" });
     } catch {
       notifications.show({ title: "Failed", message: "Failed to create GitLab repo.", color: "red" });
-    }
-  };
-
-  const issueVectorKey = async () => {
-    if (!detailProject) {
-      return;
-    }
-    if (!vectorAlias.trim()) {
-      setVectorError("Key alias is required.");
-      return;
-    }
-    setVectorError(null);
-    try {
-      const created = await apiFetch<VectorKey>(`vectordb/projects/${detailProject.id}/keys`, {
-        method: "POST",
-        body: JSON.stringify({ keyAlias: vectorAlias.trim() }),
-      });
-      setVectorKeys((prev) => [created, ...prev]);
-      setVectorAlias("");
-      setVectorOpen(false);
-      notifications.show({
-        title: "Issued",
-        message: created.apiKey ? `VectorDB key issued: ${created.apiKey}` : "VectorDB key issued.",
-        color: "teal",
-      });
-    } catch {
-      notifications.show({ title: "Failed", message: "Failed to issue VectorDB key.", color: "red" });
     }
   };
 
@@ -728,21 +793,81 @@ export default function AdminPage() {
     }
   };
 
+  const addProjectMember = async () => {
+    if (!detailProject || !selectedProjectMemberId || !selectedProjectMemberRole) {
+      return;
+    }
+
+    setUpdatingProjectMembers(true);
+    try {
+      await apiFetch(`admin/projects/${detailProject.id}/members`, {
+        method: "POST",
+        body: JSON.stringify({ userId: selectedProjectMemberId, role: selectedProjectMemberRole }),
+      });
+      setSelectedProjectMemberId(null);
+      setSelectedProjectMemberRole("member");
+      await loadDetailProjectData(detailProject.id);
+      notifications.show({ title: "Updated", message: "Project member added.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to add project member.", color: "red" });
+    } finally {
+      setUpdatingProjectMembers(false);
+    }
+  };
+
+  const updateProjectMemberRole = async (projectId: string, userId: string, role: string) => {
+    setUpdatingProjectMembers(true);
+    try {
+      await apiFetch(`admin/projects/${projectId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ userId, role }),
+      });
+      await loadDetailProjectData(projectId);
+      notifications.show({ title: "Updated", message: "Project member role updated.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to update project member role.", color: "red" });
+    } finally {
+      setUpdatingProjectMembers(false);
+    }
+  };
+
+  const removeProjectMember = async (projectId: string, userId: string) => {
+    setUpdatingProjectMembers(true);
+    try {
+      await apiFetch(`admin/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+      await loadDetailProjectData(projectId);
+      notifications.show({ title: "Updated", message: "Project member removed.", color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: "Failed to remove project member.", color: "red" });
+    } finally {
+      setUpdatingProjectMembers(false);
+    }
+  };
+
   const formatBudgetUsage = (spendUsd: number, budgetUsd: number | null) =>
     `${spendUsd.toFixed(1)}/${budgetUsd !== null ? budgetUsd.toFixed(1) : "-"}`;
 
-  const projectPages = Math.max(1, Math.ceil(projects.length / PAGE_SIZE));
+  const filteredProjects = useMemo(() => {
+    const query = projectSearch.trim().toLowerCase();
+    return projects.filter((project) => {
+      const matchesStatus = projectStatusFilter === "all" || project.status === projectStatusFilter;
+      const matchesQuery =
+        !query ||
+        [
+          project.name,
+          project.description,
+          project.status,
+          project.requestedByDisplayName ?? "",
+          project.requestedByUserEmail ?? "",
+        ].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesQuery;
+    });
+  }, [projectSearch, projectStatusFilter, projects]);
+  const projectPages = Math.max(1, Math.ceil(filteredProjects.length / PAGE_SIZE));
   const pagedProjects = useMemo(() => {
     const start = (activePage - 1) * PAGE_SIZE;
-    return projects.slice(start, start + PAGE_SIZE);
-  }, [activePage, projects]);
-  const approvedProjects = useMemo(() => projects.filter((project) => project.approvalStatus === "approved"), [projects]);
-  const projectRequestRows = useMemo(() => projects.filter((project) => project.approvalStatus !== "approved"), [projects]);
-  const approvedProjectPages = Math.max(1, Math.ceil(approvedProjects.length / PAGE_SIZE));
-  const pagedApprovedProjects = useMemo(() => {
-    const start = (activePage - 1) * PAGE_SIZE;
-    return approvedProjects.slice(start, start + PAGE_SIZE);
-  }, [activePage, approvedProjects]);
+    return filteredProjects.slice(start, start + PAGE_SIZE);
+  }, [activePage, filteredProjects]);
   const projectNameById = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
   const auditActionOptions = useMemo(
     () => [{ value: "all", label: "All actions" }, ...Array.from(new Set(auditLogs.map((log) => log.actionKey))).map((action) => ({ value: action, label: action }))],
@@ -1005,6 +1130,14 @@ export default function AdminPage() {
       return [repo.repoName, repo.namespacePath, repo.projectId, projectName].some((value) => value.toLowerCase().includes(query));
     });
   }, [gitlabSearch, projectNameById, repos]);
+  const detailProjectAgents = useMemo(
+    () => (detailProject ? adminAgents.filter((agent) => agent.projectId === detailProject.id) : []),
+    [adminAgents, detailProject],
+  );
+  const detailProjectMcps = useMemo(
+    () => (detailProject ? adminMcps.filter((mcp) => mcp.projectId === detailProject.id) : []),
+    [adminMcps, detailProject],
+  );
   const gitlabGroupPages = Math.max(1, Math.ceil(filteredGitlabGroups.length / PAGE_SIZE));
   const pagedGitlabGroups = useMemo(() => {
     const start = (gitlabGroupPage - 1) * PAGE_SIZE;
@@ -1287,102 +1420,138 @@ export default function AdminPage() {
         ) : null}
 
         {activeSection === "projects" ? (
-          <Paper withBorder p="md">
-            <Tabs value={projectTab} onChange={setProjectTab}>
-              <Tabs.List>
-                <Tabs.Tab value="current">Current Projects</Tabs.Tab>
-                <Tabs.Tab value="requests">Project Requests</Tabs.Tab>
-              </Tabs.List>
-
-              <Tabs.Panel value="current" pt="md">
-                <ScrollArea>
-                  <Table withTableBorder highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Name</Table.Th>
-                        <Table.Th>ID</Table.Th>
-                        <Table.Th>Created</Table.Th>
+          <Stack gap="md">
+            <Paper withBorder p="md">
+              <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+                <TextInput
+                  label="Search"
+                  placeholder="Project, description, status, or requester"
+                  value={projectSearch}
+                  onChange={(event) => setProjectSearch(event.currentTarget.value)}
+                />
+                <Select
+                  label="Status"
+                  data={[
+                    { value: "all", label: "All statuses" },
+                    { value: "approved", label: "Approved" },
+                    { value: "pending", label: "Pending" },
+                    { value: "rejected", label: "Rejected" },
+                    { value: "deleted", label: "Deleted" },
+                  ]}
+                  value={projectStatusFilter}
+                  onChange={setProjectStatusFilter}
+                />
+              </SimpleGrid>
+            </Paper>
+            <Paper withBorder p="md">
+              <ScrollArea>
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Repos</Table.Th>
+                    <Table.Th>Agents</Table.Th>
+                    <Table.Th>MCPs</Table.Th>
+                    <Table.Th>IDE</Table.Th>
+                    <Table.Th>Members</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Created</Table.Th>
+                    <Table.Th>Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {pagedProjects.length ? (
+                    pagedProjects.map((project) => (
+                      <Table.Tr key={project.id}>
+                        <Table.Td>
+                          <Button variant="subtle" px={0} onClick={() => setDetailProject(project)}>
+                            {project.name}
+                          </Button>
+                        </Table.Td>
+                        <Table.Td>{project.repoCount}</Table.Td>
+                        <Table.Td>{project.agentCount}</Table.Td>
+                        <Table.Td>{project.mcpCount}</Table.Td>
+                        <Table.Td>{project.runningWorkspaceCount}</Table.Td>
+                        <Table.Td>{project.memberCount}</Table.Td>
+                        <Table.Td>
+                          <Badge
+                            variant="light"
+                            color={
+                              project.status === "approved"
+                                ? "teal"
+                                : project.status === "pending"
+                                  ? "orange"
+                                  : project.status === "deleted"
+                                    ? "gray"
+                                    : "red"
+                            }
+                          >
+                            {project.status}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
+                        <Table.Td>
+                          <Group gap="xs">
+                            {project.deletedYn === "Y" ? (
+                              <Button
+                                size="xs"
+                                variant="light"
+                                loading={reviewingProjectId === project.id}
+                                onClick={() => void restoreProject(project.id)}
+                              >
+                                Restore
+                              </Button>
+                            ) : project.approvalStatus !== "approved" ? (
+                              <>
+                                <Button
+                                  size="xs"
+                                  loading={reviewingProjectId === project.id}
+                                  onClick={() => void reviewProject(project.id, "approve")}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  color="red"
+                                  variant="light"
+                                  loading={reviewingProjectId === project.id}
+                                  onClick={() => void reviewProject(project.id, "reject")}
+                                >
+                                  Reject
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="light"
+                                loading={reviewingProjectId === project.id}
+                                onClick={() => void deleteProject(project.id)}
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </Group>
+                        </Table.Td>
                       </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {pagedApprovedProjects.map((project) => (
-                        <Table.Tr key={project.id} onClick={() => setDetailProject(project)} style={{ cursor: "pointer" }}>
-                          <Table.Td>{project.name}</Table.Td>
-                          <Table.Td>{project.id}</Table.Td>
-                          <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
-                        </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                </ScrollArea>
-                <Group justify="end" mt="md">
-                  <Pagination total={approvedProjectPages} value={activePage} onChange={setActivePage} />
-                </Group>
-              </Tabs.Panel>
-
-              <Tabs.Panel value="requests" pt="md">
-                <ScrollArea>
-                  <Table withTableBorder highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Name</Table.Th>
-                        <Table.Th>Description</Table.Th>
-                        <Table.Th>Requester</Table.Th>
-                        <Table.Th>Status</Table.Th>
-                        <Table.Th>Created</Table.Th>
-                        <Table.Th>Actions</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {projectRequestRows.length ? (
-                        projectRequestRows.map((project) => (
-                            <Table.Tr key={project.id}>
-                              <Table.Td>{project.name}</Table.Td>
-                              <Table.Td>{project.description || "-"}</Table.Td>
-                              <Table.Td>{project.requestedByDisplayName || project.requestedByUserEmail || "-"}</Table.Td>
-                              <Table.Td>
-                                <Badge variant="light" color={project.approvalStatus === "pending" ? "orange" : "red"}>
-                                  {project.approvalStatus}
-                                </Badge>
-                              </Table.Td>
-                              <Table.Td>{new Date(project.createdAt).toLocaleString()}</Table.Td>
-                              <Table.Td>
-                                <Group gap="xs">
-                                  <Button
-                                    size="xs"
-                                    loading={reviewingProjectId === project.id}
-                                    onClick={() => void reviewProject(project.id, "approve")}
-                                  >
-                                    Approve
-                                  </Button>
-                                  <Button
-                                    size="xs"
-                                    color="red"
-                                    variant="light"
-                                    loading={reviewingProjectId === project.id}
-                                    onClick={() => void reviewProject(project.id, "reject")}
-                                  >
-                                    Reject
-                                  </Button>
-                                </Group>
-                              </Table.Td>
-                            </Table.Tr>
-                          ))
-                      ) : (
-                        <Table.Tr>
-                          <Table.Td colSpan={6}>
-                            <Text size="sm" c="dimmed">
-                              No project creation requests.
-                            </Text>
-                          </Table.Td>
-                        </Table.Tr>
-                      )}
-                    </Table.Tbody>
-                  </Table>
-                </ScrollArea>
-              </Tabs.Panel>
-            </Tabs>
-          </Paper>
+                    ))
+                  ) : (
+                    <Table.Tr>
+                      <Table.Td colSpan={9}>
+                        <Text size="sm" c="dimmed">
+                          No projects found.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+              <Group justify="end" mt="md">
+                <Pagination total={projectPages} value={activePage} onChange={setActivePage} />
+              </Group>
+            </Paper>
+          </Stack>
         ) : null}
 
         {activeSection === "resources" ? (
@@ -2176,21 +2345,230 @@ export default function AdminPage() {
         ) : null}
       </Stack>
 
-      <Drawer opened={detailProject !== null} onClose={() => setDetailProject(null)} title="Project Detail" position="right">
+      <Drawer opened={detailProject !== null} onClose={() => setDetailProject(null)} title="Project Detail" position="right" size="xl">
+        <LoadingOverlay visible={loadingProjectDetail} zIndex={1000} overlayProps={{ radius: "sm", blur: 2 }} />
         {detailProject ? (
           <Stack>
-            <Text fw={700}>{detailProject.name}</Text>
-            <Text size="sm">{detailProject.description || "No description"}</Text>
-            <Text size="sm">ID: {detailProject.id}</Text>
-            <Text size="sm">Created: {new Date(detailProject.createdAt).toLocaleString()}</Text>
-            <Group mt="sm">
-              <Button size="xs" variant="light" onClick={() => setGitlabOpen(true)}>
-                New GitLab Repo
-              </Button>
-              <Button size="xs" variant="light" onClick={() => setVectorOpen(true)}>
-                Issue VectorDB Key
-              </Button>
-            </Group>
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <Paper withBorder p="md">
+                <Stack gap={4}>
+                  <Text fw={700}>{detailProjectOverview?.project.name ?? detailProject.name}</Text>
+                  <Text size="sm" c="dimmed">
+                    {detailProjectOverview?.project.description || detailProject.description || "No description"}
+                  </Text>
+                  <Text size="sm">ID: {detailProject.id}</Text>
+                  <Text size="sm">Creator: {detailProject.requestedByDisplayName || detailProject.requestedByUserEmail || "-"}</Text>
+                  <Text size="sm">Created: {new Date(detailProject.createdAt).toLocaleString()}</Text>
+                </Stack>
+              </Paper>
+              <Paper withBorder p="md">
+                <Stack gap={4}>
+                  <Text fw={600}>Project Summary</Text>
+                  <Text size="sm">Approval: {detailProject.approvalStatus}</Text>
+                  <Text size="sm">Members: {detailProjectOverview?.members.length ?? 0}</Text>
+                  <Text size="sm">CPU Limit: {detailProjectOverview?.resourceLimit?.cpu ?? "-"}</Text>
+                  <Text size="sm">Memory Limit: {detailProjectOverview?.resourceLimit?.memoryGi ?? "-"} Gi</Text>
+                </Stack>
+              </Paper>
+            </SimpleGrid>
+            <Paper withBorder p="md">
+              <Stack>
+                <Group justify="space-between" align="center">
+                  <div>
+                    <Text fw={600}>GitLab Repositories</Text>
+                    <Text size="sm" c="dimmed">
+                      Review repositories mapped to this project.
+                    </Text>
+                  </div>
+                  <Button size="xs" variant="light" onClick={() => setGitlabOpen(true)}>
+                    Add Git Repo
+                  </Button>
+                </Group>
+                <ScrollArea>
+                  <Table withTableBorder>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Repo</Table.Th>
+                        <Table.Th>Namespace</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {detailProjectRepos.length ? (
+                        detailProjectRepos.map((repo) => (
+                          <Table.Tr key={repo.id}>
+                            <Table.Td>{repo.repoName}</Table.Td>
+                            <Table.Td>{repo.namespacePath}</Table.Td>
+                          </Table.Tr>
+                        ))
+                      ) : (
+                        <Table.Tr>
+                          <Table.Td colSpan={2}>
+                            <Text size="sm" c="dimmed">
+                              No Git repositories mapped to this project.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Stack>
+            </Paper>
+            <Paper withBorder p="md">
+              <Stack>
+                <Group justify="space-between" align="center">
+                  <div>
+                    <Text fw={600}>Project Members</Text>
+                    <Text size="sm" c="dimmed">
+                      Manage project access for portal users.
+                    </Text>
+                  </div>
+                  <Badge variant="light">{detailProjectOverview?.members.length ?? 0} members</Badge>
+                </Group>
+                <Group align="end">
+                  <Select
+                    style={{ flex: 1 }}
+                    label="Add user"
+                    placeholder="Select a user"
+                    data={detailProjectAvailableUsers.map((user) => ({
+                      value: user.id,
+                      label: user.displayName ? `${user.displayName} (${user.email})` : user.email,
+                    }))}
+                    value={selectedProjectMemberId}
+                    onChange={setSelectedProjectMemberId}
+                    searchable
+                    nothingFoundMessage="No available users"
+                  />
+                  <Select
+                    label="Role"
+                    data={[
+                      { value: "member", label: "Member" },
+                      { value: "manager", label: "Manager" },
+                    ]}
+                    value={selectedProjectMemberRole}
+                    onChange={setSelectedProjectMemberRole}
+                  />
+                  <Button loading={updatingProjectMembers} onClick={() => void addProjectMember()}>
+                    Add Member
+                  </Button>
+                </Group>
+                <ScrollArea>
+                  <Table withTableBorder>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>Email</Table.Th>
+                        <Table.Th>Global Role</Table.Th>
+                        <Table.Th>Project Role</Table.Th>
+                        <Table.Th>Actions</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {detailProjectOverview?.members.length ? (
+                        detailProjectOverview.members.map((member) => (
+                          <Table.Tr key={member.id}>
+                            <Table.Td>{member.displayName || member.email || member.userId}</Table.Td>
+                            <Table.Td>{member.email || "-"}</Table.Td>
+                            <Table.Td>{member.globalRole || "-"}</Table.Td>
+                            <Table.Td>
+                              <Select
+                                data={[
+                                  { value: "member", label: "Member" },
+                                  { value: "manager", label: "Manager" },
+                                ]}
+                                value={member.role}
+                                onChange={(value) => (value ? void updateProjectMemberRole(detailProject.id, member.userId, value) : undefined)}
+                                disabled={updatingProjectMembers}
+                                size="xs"
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="light"
+                                loading={updatingProjectMembers}
+                                onClick={() => void removeProjectMember(detailProject.id, member.userId)}
+                              >
+                                Remove
+                              </Button>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))
+                      ) : (
+                        <Table.Tr>
+                          <Table.Td colSpan={5}>
+                            <Text size="sm" c="dimmed">
+                              No project members yet.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Stack>
+            </Paper>
+            <Paper withBorder p="md">
+              <Stack>
+                <Group justify="space-between" align="center">
+                  <div>
+                    <Text fw={600}>Serving</Text>
+                    <Text size="sm" c="dimmed">
+                      Read-only list of deployed Agents and MCP servers for this project.
+                    </Text>
+                  </div>
+                  <Badge variant="light">{detailProjectAgents.length + detailProjectMcps.length} deployments</Badge>
+                </Group>
+                <ScrollArea>
+                  <Table withTableBorder>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Type</Table.Th>
+                        <Table.Th>Name</Table.Th>
+                        <Table.Th>Repo</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {detailProjectAgents.length || detailProjectMcps.length ? (
+                        [
+                          ...detailProjectAgents.map((agent) => ({
+                            id: agent.id,
+                            type: "Agent",
+                            name: agent.agentName,
+                            repoName: agent.repoName,
+                            status: agent.status,
+                          })),
+                          ...detailProjectMcps.map((mcp) => ({
+                            id: mcp.id,
+                            type: "MCP",
+                            name: mcp.mcpName,
+                            repoName: mcp.repoName,
+                            status: mcp.status,
+                          })),
+                        ].map((deployment) => (
+                          <Table.Tr key={`${deployment.type}-${deployment.id}`}>
+                            <Table.Td>{deployment.type}</Table.Td>
+                            <Table.Td>{deployment.name}</Table.Td>
+                            <Table.Td>{deployment.repoName}</Table.Td>
+                            <Table.Td>{deployment.status}</Table.Td>
+                          </Table.Tr>
+                        ))
+                      ) : (
+                        <Table.Tr>
+                          <Table.Td colSpan={4}>
+                            <Text size="sm" c="dimmed">
+                              No serving deployments for this project.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              </Stack>
+            </Paper>
           </Stack>
         ) : null}
       </Drawer>
@@ -2209,24 +2587,6 @@ export default function AdminPage() {
               Cancel
             </Button>
             <Button onClick={createGitlabRepo}>Create</Button>
-          </Group>
-        </Stack>
-      </Drawer>
-
-      <Drawer opened={vectorOpen} onClose={() => setVectorOpen(false)} title="Issue VectorDB Key" position="right">
-        <Stack>
-          <TextInput
-            label="Key Alias"
-            value={vectorAlias}
-            onChange={(event) => setVectorAlias(event.currentTarget.value)}
-            error={vectorError}
-            placeholder="project-key"
-          />
-          <Group justify="end">
-            <Button variant="default" onClick={() => setVectorOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={issueVectorKey}>Issue</Button>
           </Group>
         </Stack>
       </Drawer>
