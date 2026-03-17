@@ -845,7 +845,7 @@ export default function AdminPage() {
   };
 
   const formatBudgetUsage = (spendUsd: number, budgetUsd: number | null) =>
-    `${spendUsd.toFixed(1)}/${budgetUsd !== null ? budgetUsd.toFixed(1) : "-"}`;
+    `${Math.max(spendUsd, 0).toFixed(1)}/${budgetUsd !== null ? budgetUsd.toFixed(1) : "-"}`;
 
   const filteredProjects = useMemo(() => {
     const query = projectSearch.trim().toLowerCase();
