@@ -954,6 +954,34 @@ export class McpsService {
     throw lastError ?? new Error("Failed to inspect MCP server");
   }
 
+  private async inspectMcpHttpTarget(baseUrls: string[]): Promise<McpHttpSession> {
+    let lastError: Error | null = null;
+    for (const baseUrl of this.expandMcpTransportUrls(baseUrls)) {
+      try {
+        return await this.connectMcpHttp(baseUrl);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.warn(`MCP HTTP inspect failed endpoint=${baseUrl}: ${lastError.message}`);
+      }
+    }
+
+    throw lastError ?? new Error("Failed to inspect MCP server over streamable HTTP");
+  }
+
+  private async inspectMcpSseTarget(baseUrls: string[]): Promise<McpHttpSession> {
+    let lastError: Error | null = null;
+    for (const baseUrl of this.expandMcpTransportUrls(baseUrls)) {
+      try {
+        return await this.connectMcpSse(baseUrl);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.warn(`MCP SSE inspect failed endpoint=${baseUrl}: ${lastError.message}`);
+      }
+    }
+
+    throw lastError ?? new Error("Failed to inspect MCP server over SSE");
+  }
+
   private async connectExternalMcpTarget(
     transportType: "streamable-http" | "sse" | "stdio",
     input: McpInspectorConnectionInput,
@@ -962,9 +990,9 @@ export class McpsService {
       return this.connectMcpStdio(input);
     }
     if (transportType === "sse") {
-      return this.connectMcpSse(this.normalizeExternalMcpUrl(input.url));
+      return this.inspectMcpSseTarget([this.normalizeExternalMcpUrl(input.url)]);
     }
-    return this.inspectMcpTarget([this.normalizeExternalMcpUrl(input.url)]);
+    return this.inspectMcpHttpTarget([this.normalizeExternalMcpUrl(input.url)]);
   }
 
   private expandMcpTransportUrls(baseUrls: string[]): string[] {
@@ -1450,7 +1478,7 @@ export class McpsService {
           path: `${target.pathname}${target.search}`,
           method: "GET",
           headers: {
-            accept: "text/event-stream",
+            accept: "application/json, text/event-stream",
             "cache-control": "no-cache",
           },
           rejectUnauthorized: target.protocol === "https:" ? false : undefined,
