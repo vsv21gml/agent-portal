@@ -1563,130 +1563,62 @@ export default function AdminPage() {
                 ) : null}
               </Group>
             </Group>
-
-            <Tabs value={userTab} onChange={setUserTab} mt="md">
-              <Tabs.List>
-                <Tabs.Tab value="current">Current Users</Tabs.Tab>
-                <Tabs.Tab value="pending">Signup Requests</Tabs.Tab>
-              </Tabs.List>
-
-              <Tabs.Panel value="current" pt="md">
-                <ScrollArea>
-                  <Table withTableBorder highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Email</Table.Th>
-                        <Table.Th>Name</Table.Th>
-                        <Table.Th>Role</Table.Th>
-                        <Table.Th>Created</Table.Th>
-                        <Table.Th>Monthly Usage / Budget</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {users.filter((user) => user.approvalStatus === "approved").map((user) => (
-                        <Table.Tr
-                          key={user.id}
-                          style={
-                            pendingRoleChanges[user.id]
-                              ? { backgroundColor: "rgba(250, 176, 5, 0.12)" }
-                              : undefined
-                          }
-                        >
-                          <Table.Td>{user.email}</Table.Td>
-                          <Table.Td>{user.displayName}</Table.Td>
-                          <Table.Td>
-                            <Select
-                              data={[
-                                { value: "admin", label: "Admin" },
-                                { value: "user", label: "User" },
-                              ]}
-                              value={pendingRoleChanges[user.id] ?? user.globalRole}
-                              onChange={(value) => {
-                                if (!value) {
-                                  return;
+            <ScrollArea mt="md">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Email</Table.Th>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Role</Table.Th>
+                    <Table.Th>Created</Table.Th>
+                    <Table.Th>Monthly Usage / Budget</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {users
+                    .filter((user) => user.approvalStatus === "approved")
+                    .map((user) => (
+                      <Table.Tr
+                        key={user.id}
+                        style={
+                          pendingRoleChanges[user.id]
+                            ? { backgroundColor: "rgba(250, 176, 5, 0.12)" }
+                            : undefined
+                        }
+                      >
+                        <Table.Td>{user.email}</Table.Td>
+                        <Table.Td>{user.displayName}</Table.Td>
+                        <Table.Td>
+                          <Select
+                            data={[
+                              { value: "admin", label: "Admin" },
+                              { value: "user", label: "User" },
+                            ]}
+                            value={pendingRoleChanges[user.id] ?? user.globalRole}
+                            onChange={(value) => {
+                              if (!value) {
+                                return;
+                              }
+                              setPendingRoleChanges((prev) => {
+                                if (value === user.globalRole) {
+                                  const next = { ...prev };
+                                  delete next[user.id];
+                                  return next;
                                 }
-                                setPendingRoleChanges((prev) => {
-                                  if (value === user.globalRole) {
-                                    const next = { ...prev };
-                                    delete next[user.id];
-                                    return next;
-                                  }
-                                  return { ...prev, [user.id]: value as "admin" | "user" };
-                                });
-                              }}
-                              disabled={savingRoleChanges}
-                              style={{ minWidth: 140 }}
-                            />
-                          </Table.Td>
-                          <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
-                          <Table.Td>{formatBudgetUsage(user.currentMonthSpendUsd, user.currentMonthBudgetUsd)}</Table.Td>
-                        </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                </ScrollArea>
-              </Tabs.Panel>
-
-              <Tabs.Panel value="pending" pt="md">
-                <ScrollArea>
-                  <Table withTableBorder highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Email</Table.Th>
-                        <Table.Th>Name</Table.Th>
-                        <Table.Th>Status</Table.Th>
-                        <Table.Th>Role</Table.Th>
-                        <Table.Th>Created</Table.Th>
-                        <Table.Th>Actions</Table.Th>
+                                return { ...prev, [user.id]: value as "admin" | "user" };
+                              });
+                            }}
+                            disabled={savingRoleChanges}
+                            style={{ minWidth: 140 }}
+                          />
+                        </Table.Td>
+                        <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
+                        <Table.Td>{formatBudgetUsage(user.currentMonthSpendUsd, user.currentMonthBudgetUsd)}</Table.Td>
                       </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {users.filter((user) => user.approvalStatus !== "approved").length === 0 ? (
-                        <Table.Tr>
-                          <Table.Td colSpan={6}>
-                            <Text size="sm" c="dimmed">
-                              No signup requests.
-                            </Text>
-                          </Table.Td>
-                        </Table.Tr>
-                      ) : (
-                        users
-                          .filter((user) => user.approvalStatus !== "approved")
-                          .map((user) => (
-                          <Table.Tr key={user.id}>
-                            <Table.Td>{user.email}</Table.Td>
-                            <Table.Td>{user.displayName}</Table.Td>
-                            <Table.Td>
-                              <Badge variant="light" color={user.approvalStatus === "pending" ? "orange" : "red"}>
-                                {user.approvalStatus}
-                              </Badge>
-                            </Table.Td>
-                            <Table.Td>{user.globalRole}</Table.Td>
-                            <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
-                            <Table.Td>
-                              <Group gap="xs">
-                                <Button size="xs" loading={reviewingUserId === user.id} onClick={() => void reviewUser(user.id, "approve")}>
-                                  Approve
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  color="red"
-                                  variant="light"
-                                  loading={reviewingUserId === user.id}
-                                  onClick={() => void reviewUser(user.id, "reject")}
-                                >
-                                  Reject
-                                </Button>
-                              </Group>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))
-                      )}
-                    </Table.Tbody>
-                  </Table>
-                </ScrollArea>
-              </Tabs.Panel>
-            </Tabs>
+                    ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
           </Paper>
         ) : null}
 
@@ -2311,123 +2243,43 @@ export default function AdminPage() {
           <Paper withBorder p="md">
             <Stack gap="md">
               <Title order={4}>Model Administration</Title>
-              <Tabs defaultValue="catalog">
-                <Tabs.List>
-                  <Tabs.Tab value="catalog">Catalog</Tabs.Tab>
-                  <Tabs.Tab value="requests">Requests</Tabs.Tab>
-                </Tabs.List>
-
-                <Tabs.Panel value="catalog" pt="md">
-                  <Table withTableBorder highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Model</Table.Th>
-                        <Table.Th>Default</Table.Th>
-                        <Table.Th>Action</Table.Th>
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Model</Table.Th>
+                    <Table.Th>Default</Table.Th>
+                    <Table.Th>Action</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {catalogModels.length ? (
+                    catalogModels.map((model) => (
+                      <Table.Tr key={model.id}>
+                        <Table.Td>{model.modelName}</Table.Td>
+                        <Table.Td>{model.isDefault ? "Yes" : "No"}</Table.Td>
+                        <Table.Td>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            loading={updatingDefaultModelName === model.modelName}
+                            onClick={() => void toggleDefaultModel(model)}
+                          >
+                            {model.isDefault ? "Unset Default" : "Set Default"}
+                          </Button>
+                        </Table.Td>
                       </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {catalogModels.length ? (
-                        catalogModels.map((model) => (
-                          <Table.Tr key={model.id}>
-                            <Table.Td>{model.modelName}</Table.Td>
-                            <Table.Td>{model.isDefault ? "Yes" : "No"}</Table.Td>
-                            <Table.Td>
-                              <Button
-                                size="xs"
-                                variant="light"
-                                loading={updatingDefaultModelName === model.modelName}
-                                onClick={() => void toggleDefaultModel(model)}
-                              >
-                                {model.isDefault ? "Unset Default" : "Set Default"}
-                              </Button>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))
-                      ) : (
-                        <Table.Tr>
-                          <Table.Td colSpan={3}>
-                            <Text size="sm" c="dimmed">
-                              No LiteLLM models found.
-                            </Text>
-                          </Table.Td>
-                        </Table.Tr>
-                      )}
-                    </Table.Tbody>
-                  </Table>
-                </Tabs.Panel>
-
-                <Tabs.Panel value="requests" pt="md">
-                  <Table withTableBorder highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Type</Table.Th>
-                        <Table.Th>User</Table.Th>
-                        <Table.Th>Email</Table.Th>
-                        <Table.Th>Project</Table.Th>
-                        <Table.Th>Target</Table.Th>
-                        <Table.Th>Model</Table.Th>
-                        <Table.Th>Status</Table.Th>
-                        <Table.Th>Requested</Table.Th>
-                        <Table.Th>Action</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {modelRequests.length ? (
-                        modelRequests.map((request) => (
-                          <Table.Tr key={request.id}>
-                            <Table.Td>
-                              {request.requestType === "agent_deploy"
-                                ? "Agent Deploy"
-                                : request.requestType === "mcp_deploy"
-                                  ? "MCP Deploy"
-                                  : "Personal"}
-                            </Table.Td>
-                            <Table.Td>{request.userDisplayName}</Table.Td>
-                            <Table.Td>{request.userEmail}</Table.Td>
-                            <Table.Td>{request.projectName ?? "-"}</Table.Td>
-                            <Table.Td>{request.agentName ?? request.mcpName ?? "-"}</Table.Td>
-                            <Table.Td>{request.modelName}</Table.Td>
-                            <Table.Td>{request.status}</Table.Td>
-                            <Table.Td>{new Date(request.createdAt).toLocaleString()}</Table.Td>
-                            <Table.Td>
-                              <Group gap="xs">
-                                <Button
-                                  size="xs"
-                                  variant="light"
-                                  disabled={request.status !== "pending"}
-                                  loading={reviewingRequestId === request.id}
-                                  onClick={() => void reviewModelRequest(request.id, "approve")}
-                                >
-                                  Approve
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  color="red"
-                                  variant="light"
-                                  disabled={request.status !== "pending"}
-                                  loading={reviewingRequestId === request.id}
-                                  onClick={() => void reviewModelRequest(request.id, "reject")}
-                                >
-                                  Reject
-                                </Button>
-                              </Group>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))
-                      ) : (
-                        <Table.Tr>
-                          <Table.Td colSpan={9}>
-                            <Text size="sm" c="dimmed">
-                              No model access requests yet.
-                            </Text>
-                          </Table.Td>
-                        </Table.Tr>
-                      )}
-                    </Table.Tbody>
-                  </Table>
-                </Tabs.Panel>
-              </Tabs>
+                    ))
+                  ) : (
+                    <Table.Tr>
+                      <Table.Td colSpan={3}>
+                        <Text size="sm" c="dimmed">
+                          No LiteLLM models found.
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
             </Stack>
           </Paper>
         ) : null}
