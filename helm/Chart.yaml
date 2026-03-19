@@ -19,6 +19,11 @@ dependencies:
     version: "0.1.0"
     repository: "file://charts/api"
     condition: api.enabled
+  - name: k8s-api
+    alias: k8sApi
+    version: "0.1.0"
+    repository: "file://charts/k8s-api"
+    condition: k8sApi.enabled
   - name: gitlab
     version: "8.9.1"
     repository: "https://charts.gitlab.io/"

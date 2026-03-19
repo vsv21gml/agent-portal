@@ -1,15 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import {
-  AMITypes,
-  CapacityTypes,
-  CreateNodegroupCommand,
-  DeleteNodegroupCommand,
-  DescribeNodegroupCommand,
-  EKSClient,
-  ListNodegroupsCommand,
-} from "@aws-sdk/client-eks";
 import * as k8s from "@kubernetes/client-node";
 import { Repository } from "typeorm";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
@@ -19,6 +10,7 @@ import { LlmService } from "../llm/llm.service";
 import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
 import { ProjectMemberEntity } from "../projects/entities/project-member.entity";
 import { ProjectEntity } from "../projects/entities/project.entity";
+import { K8sApiService } from "../k8s-api/k8s-api.service";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 
 type WorkspaceResourceRow = {
@@ -245,11 +237,10 @@ type ProjectAdminRow = {
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
-  private readonly kubeClientCore: k8s.CoreV1Api | null;
-  private readonly eksClient: EKSClient | null;
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly k8sApiService: K8sApiService,
     private readonly llmService: LlmService,
     @InjectRepository(WorkspaceSessionEntity)
     private readonly workspaceRepository: Repository<WorkspaceSessionEntity>,
@@ -265,33 +256,7 @@ export class AdminService {
     private readonly repoRepository: Repository<GitlabRepoEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
-  ) {
-    if (
-      this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") === "true" ||
-      this.configService.get<string>("K8S_SERVING_ENABLED", this.configService.get<string>("K8S_AGENT_ENABLED", "false")) === "true"
-    ) {
-      const kc = new k8s.KubeConfig();
-      const kubeConfigPath = this.configService.get<string>("KUBECONFIG_PATH");
-      if (kubeConfigPath) {
-        kc.loadFromFile(kubeConfigPath);
-      } else {
-        try {
-          kc.loadFromCluster();
-        } catch {
-          kc.loadFromDefault();
-        }
-      }
-      this.kubeClientCore = kc.makeApiClient(k8s.CoreV1Api);
-    } else {
-      this.kubeClientCore = null;
-    }
-
-    const awsRegion = this.configService.get<string>("AWS_REGION", "us-east-1");
-    const clusterName = this.configService.get<string>("AWS_EKS_CLUSTER_NAME")?.trim() ?? "";
-    const subnetIds = this.getEksSubnetIds();
-    const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
-    this.eksClient = clusterName && subnetIds.length > 0 && nodeRoleArn ? new EKSClient({ region: awsRegion }) : null;
-  }
+  ) {}
 
   async getWorkspaceResourceOverview(): Promise<WorkspaceResourceOverview> {
     const namespace = this.configService.get<string>("K8S_WORKSPACE_NAMESPACE", "agent-workspaces");
@@ -502,80 +467,7 @@ export class AdminService {
   }
 
   async getManagedNodeGroupOverview(poolType: ManagedNodeGroupPoolType): Promise<ManagedNodeGroupOverview> {
-    const clusterName = this.configService.get<string>("AWS_EKS_CLUSTER_NAME")?.trim() ?? null;
-    const region = this.configService.get<string>("AWS_REGION", "us-east-1");
-    const subnetIds = this.getEksSubnetIds();
-    const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
-    const constraints = poolType === "workspace" ? this.getWorkspaceNodeConstraints() : this.getServingNodeConstraints();
-    const defaults = this.getNodeGroupDefaults(poolType);
-
-    if (!this.eksClient || !clusterName) {
-      return {
-        configured: false,
-        poolType,
-        clusterName,
-        region,
-        nodeRoleArnConfigured: Boolean(nodeRoleArn),
-        subnetCount: subnetIds.length,
-        scheduling: constraints,
-        defaults,
-        nodeGroups: [],
-        message: "AWS_EKS_CLUSTER_NAME, AWS_EKS_NODE_ROLE_ARN, AWS_EKS_SUBNET_IDS, and AWS credentials are required.",
-      };
-    }
-
-    const nodeNamesByGroup = await this.getNodeNamesByNodeGroup();
-    const listed = await this.eksClient.send(new ListNodegroupsCommand({ clusterName }));
-    const nodeGroupNames = listed.nodegroups ?? [];
-    const described = await Promise.all(
-      nodeGroupNames.map(async (nodegroupName) => {
-        try {
-          const result = await this.eksClient!.send(new DescribeNodegroupCommand({ clusterName, nodegroupName }));
-          return result.nodegroup ?? null;
-        } catch (error) {
-          this.logger.warn(`Failed to describe nodegroup ${nodegroupName}: ${this.describeError(error)}`);
-          return null;
-        }
-      }),
-    );
-
-    const nodeGroups = described
-      .filter((nodegroup): nodegroup is NonNullable<(typeof described)[number]> => Boolean(nodegroup))
-      .filter((nodegroup) => this.matchesManagedNodeGroup(nodegroup.labels ?? {}, nodegroup.taints ?? [], constraints))
-      .map((nodegroup) => ({
-        nodeGroupName: nodegroup.nodegroupName ?? "-",
-        status: nodegroup.status ?? "UNKNOWN",
-        desiredSize: nodegroup.scalingConfig?.desiredSize ?? 0,
-        minSize: nodegroup.scalingConfig?.minSize ?? 0,
-        maxSize: nodegroup.scalingConfig?.maxSize ?? 0,
-        diskSize: nodegroup.diskSize ?? null,
-        capacityType: nodegroup.capacityType ?? null,
-        amiType: nodegroup.amiType ?? null,
-        instanceTypes: nodegroup.instanceTypes ?? [],
-        labels: Object.fromEntries(Object.entries(nodegroup.labels ?? {}).map(([key, value]) => [key, value ?? ""])),
-        taints: (nodegroup.taints ?? []).map((taint) => ({
-          key: taint.key ?? "",
-          value: taint.value ?? "",
-          effect: taint.effect ?? "",
-        })),
-        matchingNodeCount: (nodeNamesByGroup.get(nodegroup.nodegroupName ?? "") ?? []).length,
-        matchingNodeNames: nodeNamesByGroup.get(nodegroup.nodegroupName ?? "") ?? [],
-        createdAt: nodegroup.createdAt ? nodegroup.createdAt.toISOString() : null,
-      }))
-      .sort((left, right) => left.nodeGroupName.localeCompare(right.nodeGroupName));
-
-    return {
-      configured: true,
-      poolType,
-      clusterName,
-      region,
-      nodeRoleArnConfigured: Boolean(nodeRoleArn),
-      subnetCount: subnetIds.length,
-      scheduling: constraints,
-      defaults,
-      nodeGroups,
-      message: null,
-    };
+    return (await this.k8sApiService.getManagedNodeGroupOverview(poolType)) as ManagedNodeGroupOverview;
   }
 
   async createManagedNodeGroup(
@@ -591,70 +483,11 @@ export class AdminService {
       amiType?: string;
     },
   ): Promise<ManagedNodeGroupOverview> {
-    const clusterName = this.configService.get<string>("AWS_EKS_CLUSTER_NAME")?.trim() ?? "";
-    const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
-    const subnetIds = this.getEksSubnetIds();
-    if (!this.eksClient || !clusterName || !nodeRoleArn || subnetIds.length === 0) {
-      throw new Error("AWS EKS nodegroup configuration is incomplete");
-    }
-
-    const defaults = this.getNodeGroupDefaults(poolType);
-    const constraints = poolType === "workspace" ? this.getWorkspaceNodeConstraints() : this.getServingNodeConstraints();
-    const nodeGroupName = input.nodeGroupName.trim();
-    if (!nodeGroupName) {
-      throw new Error("Nodegroup name is required");
-    }
-
-    const minSize = input.minSize ?? defaults.minSize;
-    const maxSize = input.maxSize ?? defaults.maxSize;
-    const desiredSize = input.desiredSize ?? defaults.desiredSize;
-    if (minSize > maxSize || desiredSize < minSize || desiredSize > maxSize) {
-      throw new Error("Scaling configuration is invalid");
-    }
-
-    await this.eksClient.send(
-      new CreateNodegroupCommand({
-        clusterName,
-        nodegroupName: nodeGroupName,
-        nodeRole: nodeRoleArn,
-        subnets: subnetIds,
-        scalingConfig: {
-          minSize,
-          maxSize,
-          desiredSize,
-        },
-        instanceTypes: input.instanceTypes?.length ? input.instanceTypes : defaults.instanceTypes,
-        diskSize: input.diskSize ?? defaults.diskSize,
-        capacityType: ((input.capacityType ?? defaults.capacityType ?? undefined) as CapacityTypes | undefined),
-        amiType: ((input.amiType ?? defaults.amiType ?? undefined) as AMITypes | undefined),
-        labels: constraints.selector,
-        taints: constraints.tolerations
-          .filter((item) => item.key && item.effect)
-          .map((item) => ({
-            key: item.key!,
-            value: item.value ?? "",
-            effect: this.toEksTaintEffect(item.effect!),
-          })),
-      }),
-    );
-
-    return this.getManagedNodeGroupOverview(poolType);
+    return (await this.k8sApiService.createManagedNodeGroup(poolType, input as Record<string, unknown>)) as ManagedNodeGroupOverview;
   }
 
   async deleteManagedNodeGroup(poolType: ManagedNodeGroupPoolType, nodeGroupName: string): Promise<ManagedNodeGroupOverview> {
-    const clusterName = this.configService.get<string>("AWS_EKS_CLUSTER_NAME")?.trim() ?? "";
-    if (!this.eksClient || !clusterName) {
-      throw new Error("AWS EKS nodegroup configuration is incomplete");
-    }
-
-    await this.eksClient.send(
-      new DeleteNodegroupCommand({
-        clusterName,
-        nodegroupName: nodeGroupName,
-      }),
-    );
-
-    return this.getManagedNodeGroupOverview(poolType);
+    return (await this.k8sApiService.deleteManagedNodeGroup(poolType, nodeGroupName)) as ManagedNodeGroupOverview;
   }
 
   async listAgents(): Promise<AgentAdminRow[]> {
@@ -767,14 +600,10 @@ export class AdminService {
   }
 
   private async getPodsByDeployment(namespace: string, labelKey: string): Promise<Map<string, k8s.V1Pod>> {
-    if (!this.kubeClientCore) {
-      return new Map();
-    }
-
     try {
-      const result = await this.kubeClientCore.listNamespacedPod({ namespace });
+      const result = await this.k8sApiService.listPods(namespace);
       const map = new Map<string, k8s.V1Pod>();
-      for (const pod of result.items) {
+      for (const pod of result.items as k8s.V1Pod[]) {
         const deploymentName = pod.metadata?.labels?.[labelKey];
         if (deploymentName) {
           const existing = map.get(deploymentName);
@@ -862,13 +691,9 @@ export class AdminService {
   }
 
   private async getNodePoolSummary(constraints: NodePoolConstraints): Promise<WorkspaceResourceOverview["nodePool"]> {
-    if (!this.kubeClientCore) {
-      return { nodeCount: 0, totalCpu: 0, totalMemoryGi: 0, nodes: [] };
-    }
-
     try {
-      const result = await this.kubeClientCore.listNode();
-      const matchingNodes = result.items.filter((node) => this.matchesNodePoolConstraints(node, constraints));
+      const result = await this.k8sApiService.listNodes();
+      const matchingNodes = (result.items as k8s.V1Node[]).filter((node) => this.matchesNodePoolConstraints(node, constraints));
 
       return {
         nodeCount: matchingNodes.length,
@@ -998,14 +823,10 @@ export class AdminService {
   }
 
   private async getNodeNamesByNodeGroup(): Promise<Map<string, string[]>> {
-    if (!this.kubeClientCore) {
-      return new Map();
-    }
-
     try {
-      const result = await this.kubeClientCore.listNode();
+      const result = await this.k8sApiService.listNodes();
       const map = new Map<string, string[]>();
-      for (const node of result.items) {
+      for (const node of result.items as k8s.V1Node[]) {
         const nodeGroupName = node.metadata?.labels?.["eks.amazonaws.com/nodegroup"];
         const nodeName = node.metadata?.name ?? "";
         if (!nodeGroupName || !nodeName) {

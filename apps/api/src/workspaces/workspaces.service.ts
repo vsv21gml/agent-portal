@@ -1,11 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import * as k8s from "@kubernetes/client-node";
 import { Repository } from "typeorm";
 import { AuthService } from "../auth/auth.service";
 import { GitlabService } from "../gitlab/gitlab.service";
 import { GitlabRepoEntity } from "../gitlab/entities/gitlab-repo.entity";
+import { K8sApiService } from "../k8s-api/k8s-api.service";
 import { LlmService } from "../llm/llm.service";
 import { LogsService } from "../logs/logs.service";
 import { ProjectsService } from "../projects/projects.service";
@@ -15,15 +15,13 @@ import { WorkspaceSessionEntity } from "./entities/workspace-session.entity";
 @Injectable()
 export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WorkspacesService.name);
-  private readonly kubeClientApps: k8s.AppsV1Api | null;
-  private readonly kubeClientCore: k8s.CoreV1Api | null;
-  private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private cleanupRunning = false;
   private readonly healingSessions = new Set<string>();
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly k8sApiService: K8sApiService,
     private readonly projectsService: ProjectsService,
     private readonly gitlabService: GitlabService,
     private readonly authService: AuthService,
@@ -31,33 +29,10 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     private readonly logsService: LogsService,
     @InjectRepository(WorkspaceSessionEntity)
     private readonly workspaceRepository: Repository<WorkspaceSessionEntity>,
-  ) {
-    if (this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") === "true") {
-      const kc = new k8s.KubeConfig();
-      const kubeConfigPath = this.configService.get<string>("KUBECONFIG_PATH");
-      if (kubeConfigPath) {
-        kc.loadFromFile(kubeConfigPath);
-      } else {
-        try {
-          kc.loadFromCluster();
-        } catch {
-          kc.loadFromDefault();
-        }
-      }
-      this.kubeClientApps = kc.makeApiClient(k8s.AppsV1Api);
-      this.kubeClientCore = kc.makeApiClient(k8s.CoreV1Api);
-      this.kubeClientNetworking = kc.makeApiClient(k8s.NetworkingV1Api);
-      this.logger.log(`Kubernetes workspace client enabled (namespace=${this.configService.get<string>("K8S_WORKSPACE_NAMESPACE", "agent-workspaces")})`);
-    } else {
-      this.kubeClientApps = null;
-      this.kubeClientCore = null;
-      this.kubeClientNetworking = null;
-      this.logger.log("Kubernetes workspace client disabled");
-    }
-  }
+  ) {}
 
   onModuleInit(): void {
-    if (!this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking) {
+    if (this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") !== "true") {
       return;
     }
 
@@ -281,7 +256,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     repo: GitlabRepoEntity,
     gitIdentity: { gitUserName: string; gitUserEmail: string; liteLlmApiKey: string },
   ): Promise<void> {
-    if (!this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking) {
+    if (this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") !== "true") {
       this.logger.warn(`Skipping workspace provisioning because Kubernetes clients are unavailable session=${session.id}`);
       return;
     }
@@ -296,11 +271,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureNamespace(namespace: string): Promise<void> {
-    if (!this.kubeClientCore) {
-      return;
-    }
     try {
-      await this.kubeClientCore.readNamespace({ name: namespace });
+      await this.k8sApiService.readNamespace(namespace);
     } catch (error) {
       this.logger.warn(`Workspace namespace check failed or namespace missing: ${namespace} (${this.describeError(error)})`);
       return;
@@ -308,21 +280,12 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensurePvc(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientCore) {
-      return;
-    }
-
     try {
-      await this.kubeClientCore.readNamespacedPersistentVolumeClaim({
-        namespace: session.namespace,
-        name: session.pvcName,
-      });
+      await this.k8sApiService.readPersistentVolumeClaim(session.namespace, session.pvcName);
       this.logger.log(`Workspace PVC already exists namespace=${session.namespace} pvc=${session.pvcName}`);
     } catch {
       this.logger.log(`Creating workspace PVC namespace=${session.namespace} pvc=${session.pvcName}`);
-      await this.kubeClientCore.createNamespacedPersistentVolumeClaim({
-        namespace: session.namespace,
-        body: {
+      await this.k8sApiService.createPersistentVolumeClaim(session.namespace, {
           apiVersion: "v1",
           kind: "PersistentVolumeClaim",
           metadata: {
@@ -337,7 +300,6 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
               },
             },
           },
-        } as k8s.V1PersistentVolumeClaim,
       });
     }
   }
@@ -347,10 +309,6 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     repo: GitlabRepoEntity,
     gitIdentity: { gitUserName: string; gitUserEmail: string; liteLlmApiKey: string },
   ): Promise<void> {
-    if (!this.kubeClientApps) {
-      return;
-    }
-
     const repoCloneUrl = repo.cloneUrl ?? repo.webUrl?.concat(".git") ?? this.buildRepoCloneUrl(repo.namespacePath);
     const runtimeImage = this.getRuntimeImage(session.runtime);
     const gitToken = this.configService.get<string>("GITLAB_TOKEN")?.trim() ?? "";
@@ -470,17 +428,12 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     ].join(" ");
 
     try {
-      await this.kubeClientApps.readNamespacedDeployment({
-        namespace: session.namespace,
-        name: session.deploymentName,
-      });
+      await this.k8sApiService.readDeployment(session.namespace, session.deploymentName);
       this.logger.log(`Workspace deployment already exists namespace=${session.namespace} deployment=${session.deploymentName}`);
       return;
     } catch {
       this.logger.log(`Creating workspace deployment namespace=${session.namespace} deployment=${session.deploymentName} image=${runtimeImage}`);
-      await this.kubeClientApps.createNamespacedDeployment({
-        namespace: session.namespace,
-        body: {
+      await this.k8sApiService.createDeployment(session.namespace, {
           apiVersion: "apps/v1",
           kind: "Deployment",
           metadata: {
@@ -560,21 +513,13 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
               },
             },
           },
-        } as k8s.V1Deployment,
       });
     }
   }
 
   private async deleteDeployment(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientApps) {
-      return;
-    }
-
     try {
-      await this.kubeClientApps.deleteNamespacedDeployment({
-        namespace: session.namespace,
-        name: session.deploymentName,
-      });
+      await this.k8sApiService.deleteDeployment(session.namespace, session.deploymentName);
     } catch {
       this.logger.warn(`Workspace deployment delete skipped namespace=${session.namespace} deployment=${session.deploymentName}`);
       return;
@@ -582,15 +527,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deleteService(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientCore) {
-      return;
-    }
-
     try {
-      await this.kubeClientCore.deleteNamespacedService({
-        namespace: session.namespace,
-        name: session.serviceName,
-      });
+      await this.k8sApiService.deleteService(session.namespace, session.serviceName);
     } catch {
       this.logger.warn(`Workspace service delete skipped namespace=${session.namespace} service=${session.serviceName}`);
       return;
@@ -598,15 +536,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deleteIngress(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientNetworking) {
-      return;
-    }
-
     try {
-      await this.kubeClientNetworking.deleteNamespacedIngress({
-        namespace: session.namespace,
-        name: session.ingressName,
-      });
+      await this.k8sApiService.deleteIngress(session.namespace, session.ingressName);
     } catch {
       this.logger.warn(`Workspace ingress delete skipped namespace=${session.namespace} ingress=${session.ingressName}`);
       return;
@@ -614,15 +545,8 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deletePvc(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientCore) {
-      return;
-    }
-
     try {
-      await this.kubeClientCore.deleteNamespacedPersistentVolumeClaim({
-        namespace: session.namespace,
-        name: session.pvcName,
-      });
+      await this.k8sApiService.deletePersistentVolumeClaim(session.namespace, session.pvcName);
     } catch {
       this.logger.warn(`Workspace PVC delete skipped namespace=${session.namespace} pvc=${session.pvcName}`);
       return;
@@ -643,22 +567,13 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureService(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientCore) {
-      return;
-    }
-
     try {
-      await this.kubeClientCore.readNamespacedService({
-        namespace: session.namespace,
-        name: session.serviceName,
-      });
+      await this.k8sApiService.readService(session.namespace, session.serviceName);
       this.logger.log(`Workspace service already exists namespace=${session.namespace} service=${session.serviceName}`);
       return;
     } catch {
       this.logger.log(`Creating workspace service namespace=${session.namespace} service=${session.serviceName}`);
-      await this.kubeClientCore.createNamespacedService({
-        namespace: session.namespace,
-        body: {
+      await this.k8sApiService.createService(session.namespace, {
           apiVersion: "v1",
           kind: "Service",
           metadata: {
@@ -669,16 +584,11 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
             selector: this.getWorkspaceSelectorLabels(session),
             ports: [{ port: 8080, targetPort: 8080 }],
           },
-        } as k8s.V1Service,
       });
     }
   }
 
   private async ensureIngress(session: WorkspaceSessionEntity): Promise<void> {
-    if (!this.kubeClientNetworking) {
-      return;
-    }
-
     const { host, ingressPath } = this.parseWorkspaceEndpoint(session.endpointUrl);
     const ingressClassName = this.configService.get<string>("K8S_WORKSPACE_INGRESS_CLASS", "nginx");
     const ingressAnnotations: Record<string, string> = {
@@ -715,17 +625,16 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
           },
         ],
       },
-    } as k8s.V1Ingress;
+    } as Record<string, unknown>;
 
     try {
-      const existing = await this.kubeClientNetworking.readNamespacedIngress({
-        namespace: session.namespace,
-        name: session.ingressName,
-      });
-      const existingHost = existing.spec?.rules?.[0]?.host ?? "";
-      const existingPath = existing.spec?.rules?.[0]?.http?.paths?.[0]?.path ?? "";
-      const existingClassName = existing.spec?.ingressClassName ?? "";
-      const existingAnnotations = existing.metadata?.annotations ?? {};
+      const existing = await this.k8sApiService.readIngress(session.namespace, session.ingressName);
+      const existingSpec = (existing.spec as { rules?: Array<{ host?: string; http?: { paths?: Array<{ path?: string }> } }>; ingressClassName?: string } | undefined) ?? {};
+      const existingMetadata = (existing.metadata as { annotations?: Record<string, string>; resourceVersion?: string } | undefined) ?? {};
+      const existingHost = existingSpec.rules?.[0]?.host ?? "";
+      const existingPath = existingSpec.rules?.[0]?.http?.paths?.[0]?.path ?? "";
+      const existingClassName = existingSpec.ingressClassName ?? "";
+      const existingAnnotations = existingMetadata.annotations ?? {};
       const needsUpdate =
         existingHost !== host ||
         existingPath !== ingressPath ||
@@ -740,15 +649,11 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Updating workspace ingress namespace=${session.namespace} ingress=${session.ingressName} host=${host} path=${ingressPath}`,
       );
-      await this.kubeClientNetworking.replaceNamespacedIngress({
-        namespace: session.namespace,
-        name: session.ingressName,
-        body: {
-          ...desiredIngress,
-          metadata: {
-            ...desiredIngress.metadata,
-            resourceVersion: existing.metadata?.resourceVersion,
-          },
+      await this.k8sApiService.replaceIngress(session.namespace, session.ingressName, {
+        ...desiredIngress,
+        metadata: {
+          ...(desiredIngress.metadata as Record<string, unknown>),
+          resourceVersion: existingMetadata.resourceVersion,
         },
       });
       return;
@@ -756,10 +661,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Creating workspace ingress namespace=${session.namespace} ingress=${session.ingressName} host=${host} path=${ingressPath}`,
       );
-      await this.kubeClientNetworking.createNamespacedIngress({
-        namespace: session.namespace,
-        body: desiredIngress,
-      });
+      await this.k8sApiService.createIngress(session.namespace, desiredIngress);
     }
   }
 
@@ -905,7 +807,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async cleanupOrphanedWorkspaceResources(): Promise<void> {
-    if (this.cleanupRunning || !this.kubeClientApps || !this.kubeClientCore || !this.kubeClientNetworking) {
+    if (this.cleanupRunning || this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") !== "true") {
       return;
     }
 
@@ -926,10 +828,10 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       );
 
       const [deployments, services, ingresses, pvcs] = await Promise.all([
-        this.kubeClientApps.listNamespacedDeployment({ namespace }),
-        this.kubeClientCore.listNamespacedService({ namespace }),
-        this.kubeClientNetworking.listNamespacedIngress({ namespace }),
-        this.kubeClientCore.listNamespacedPersistentVolumeClaim({ namespace }),
+        this.k8sApiService.listDeployments(namespace),
+        this.k8sApiService.listServices(namespace),
+        this.k8sApiService.listIngresses(namespace),
+        this.k8sApiService.listPersistentVolumeClaims(namespace),
       ]);
 
       await this.cleanupNamedResources(
@@ -937,29 +839,28 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
         namespace,
         deployments.items,
         expectedDeploymentNames,
-        (item) => this.kubeClientApps!.deleteNamespacedDeployment({ namespace, name: item.metadata?.name ?? "" }),
+        (item) => this.k8sApiService.deleteDeployment(namespace, (item.metadata as { name?: string } | undefined)?.name ?? ""),
       );
       await this.cleanupNamedResources(
         "service",
         namespace,
         services.items,
         expectedServiceNames,
-        (item) => this.kubeClientCore!.deleteNamespacedService({ namespace, name: item.metadata?.name ?? "" }),
+        (item) => this.k8sApiService.deleteService(namespace, (item.metadata as { name?: string } | undefined)?.name ?? ""),
       );
       await this.cleanupNamedResources(
         "ingress",
         namespace,
         ingresses.items,
         expectedIngressNames,
-        (item) => this.kubeClientNetworking!.deleteNamespacedIngress({ namespace, name: item.metadata?.name ?? "" }),
+        (item) => this.k8sApiService.deleteIngress(namespace, (item.metadata as { name?: string } | undefined)?.name ?? ""),
       );
       await this.cleanupNamedResources(
         "pvc",
         namespace,
         pvcs.items,
         expectedPvcNames,
-        (item) =>
-          this.kubeClientCore!.deleteNamespacedPersistentVolumeClaim({ namespace, name: item.metadata?.name ?? "" }),
+        (item) => this.k8sApiService.deletePersistentVolumeClaim(namespace, (item.metadata as { name?: string } | undefined)?.name ?? ""),
       );
       this.logger.log(`Workspace cleanup scan finished namespace=${namespace}`);
     } catch (error) {
@@ -1040,7 +941,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private getWorkspaceTolerations(): k8s.V1Toleration[] | undefined {
+  private getWorkspaceTolerations(): Array<Record<string, unknown>> | undefined {
     const raw = this.configService.get<string>("K8S_WORKSPACE_TOLERATIONS_JSON")?.trim() ?? "";
     if (!raw) {
       return undefined;
@@ -1112,7 +1013,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async refreshWorkspaceStatus(session: WorkspaceSessionEntity): Promise<WorkspaceSessionEntity> {
-    if (!this.kubeClientApps) {
+    if (this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") !== "true") {
       return session;
     }
 
@@ -1121,12 +1022,11 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const deployment = await this.kubeClientApps.readNamespacedDeployment({
-        namespace: session.namespace,
-        name: session.deploymentName,
-      });
-      const readyReplicas = deployment.status?.readyReplicas ?? 0;
-      const desiredReplicas = deployment.spec?.replicas ?? 1;
+      const deployment = await this.k8sApiService.readDeployment(session.namespace, session.deploymentName);
+      const deploymentStatus = (deployment.status as { readyReplicas?: number } | undefined) ?? {};
+      const deploymentSpec = (deployment.spec as { replicas?: number } | undefined) ?? {};
+      const readyReplicas = deploymentStatus.readyReplicas ?? 0;
+      const desiredReplicas = deploymentSpec.replicas ?? 1;
       const nextStatus = readyReplicas >= desiredReplicas ? "running" : "provisioning";
       this.logger.log(
         `Workspace status check session=${session.id} namespace=${session.namespace} deployment=${session.deploymentName} ready=${readyReplicas}/${desiredReplicas} status=${nextStatus}`,
@@ -1157,9 +1057,7 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
   private async healWorkspaceResources(session: WorkspaceSessionEntity): Promise<void> {
     if (
       this.healingSessions.has(session.id) ||
-      !this.kubeClientApps ||
-      !this.kubeClientCore ||
-      !this.kubeClientNetworking
+      this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") !== "true"
     ) {
       return;
     }

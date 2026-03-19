@@ -1,7 +1,6 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import * as k8s from "@kubernetes/client-node";
 import { In, Repository } from "typeorm";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
 import { UserEntity } from "../auth/entities/user.entity";
@@ -16,6 +15,7 @@ import { LiteLlmModelEntity } from "../llm/entities/litellm-model.entity";
 import { LiteLlmTeamEntity } from "../llm/entities/litellm-team.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
 import { VectorKeyEntity } from "../vectordb/entities/vector-key.entity";
+import { K8sApiService } from "../k8s-api/k8s-api.service";
 import { AddProjectMemberDto } from "./dto/add-project-member.dto";
 import { ConnectProjectEndpointDto } from "./dto/connect-project-endpoint.dto";
 import { CreateProjectDto } from "./dto/create-project.dto";
@@ -30,10 +30,10 @@ import { ProjectEntity } from "./entities/project.entity";
 @Injectable()
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
-  private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly k8sApiService: K8sApiService,
     @InjectRepository(ProjectEntity)
     private readonly projectRepository: Repository<ProjectEntity>,
     @InjectRepository(ProjectMemberEntity)
@@ -65,20 +65,7 @@ export class ProjectsService {
     @InjectRepository(ProjectEndpointEntity)
     private readonly projectEndpointRepository: Repository<ProjectEndpointEntity>,
     private readonly logsService: LogsService,
-  ) {
-    const kc = new k8s.KubeConfig();
-    const kubeConfigPath = this.configService.get<string>("KUBECONFIG_PATH");
-    if (kubeConfigPath) {
-      kc.loadFromFile(kubeConfigPath);
-    } else {
-      try {
-        kc.loadFromCluster();
-      } catch {
-        kc.loadFromDefault();
-      }
-    }
-    this.kubeClientNetworking = kc.makeApiClient(k8s.NetworkingV1Api);
-  }
+  ) {}
 
   async createProject(dto: CreateProjectDto, creatorUserId: string): Promise<ProjectEntity> {
     const project = await this.projectRepository.save(
@@ -609,29 +596,19 @@ export class ProjectsService {
           },
         ],
       },
-    } as k8s.V1Ingress;
+    } as Record<string, unknown>;
 
     try {
-      const existing = await this.kubeClientNetworking!.readNamespacedIngress({
-        namespace: params.namespace,
-        name: params.ingressName,
-      });
-      await this.kubeClientNetworking!.replaceNamespacedIngress({
-        namespace: params.namespace,
-        name: params.ingressName,
-        body: {
-          ...desiredIngress,
-          metadata: {
-            ...desiredIngress.metadata,
-            resourceVersion: existing.metadata?.resourceVersion,
-          },
+      const existing = await this.k8sApiService.readIngress(params.namespace, params.ingressName);
+      await this.k8sApiService.replaceIngress(params.namespace, params.ingressName, {
+        ...desiredIngress,
+        metadata: {
+          ...(desiredIngress.metadata as Record<string, unknown>),
+          resourceVersion: (existing.metadata as { resourceVersion?: string } | undefined)?.resourceVersion,
         },
       });
     } catch {
-      await this.kubeClientNetworking!.createNamespacedIngress({
-        namespace: params.namespace,
-        body: desiredIngress,
-      });
+      await this.k8sApiService.createIngress(params.namespace, desiredIngress);
     }
   }
 
@@ -640,10 +617,7 @@ export class ProjectsService {
       return;
     }
     try {
-      await this.kubeClientNetworking?.deleteNamespacedIngress({
-        namespace,
-        name: ingressName,
-      });
+      await this.k8sApiService.deleteIngress(namespace, ingressName);
     } catch (error) {
       this.logger.warn(`Endpoint ingress delete skipped namespace=${namespace} ingress=${ingressName}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -651,10 +625,7 @@ export class ProjectsService {
 
   private async deletePublicIngress(targetType: "agent" | "mcp", record: AgentDeploymentEntity | McpDeploymentEntity): Promise<void> {
     try {
-      await this.kubeClientNetworking?.deleteNamespacedIngress({
-        namespace: record.namespace,
-        name: record.ingressName,
-      });
+      await this.k8sApiService.deleteIngress(record.namespace, record.ingressName);
     } catch (error) {
       this.logger.warn(
         `Public ingress delete skipped type=${targetType} namespace=${record.namespace} ingress=${record.ingressName}: ${error instanceof Error ? error.message : String(error)}`,

@@ -1,7 +1,6 @@
 import { ConflictException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
-import * as k8s from "@kubernetes/client-node";
 import * as http from "node:http";
 import * as https from "node:https";
 import { Repository } from "typeorm";
@@ -12,19 +11,17 @@ import { LlmService } from "../llm/llm.service";
 import { LiteLlmModelAccessRequestEntity } from "../llm/entities/litellm-model-access-request.entity";
 import { LogsService } from "../logs/logs.service";
 import { ProjectsService } from "../projects/projects.service";
+import { K8sApiService } from "../k8s-api/k8s-api.service";
 import { CreateAgentDto } from "./dto/create-agent.dto";
 import { AgentDeploymentEntity } from "./entities/agent-deployment.entity";
 
 @Injectable()
 export class AgentsService {
   private readonly logger = new Logger(AgentsService.name);
-  private readonly kubeClientApps: k8s.AppsV1Api | null;
-  private readonly kubeClientBatch: k8s.BatchV1Api | null;
-  private readonly kubeClientCore: k8s.CoreV1Api | null;
-  private readonly kubeClientNetworking: k8s.NetworkingV1Api | null;
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly k8sApiService: K8sApiService,
     private readonly projectsService: ProjectsService,
     private readonly gitlabService: GitlabService,
     private readonly authService: AuthService,
@@ -34,23 +31,7 @@ export class AgentsService {
     private readonly agentRepository: Repository<AgentDeploymentEntity>,
     @InjectRepository(LiteLlmModelAccessRequestEntity)
     private readonly modelAccessRequestRepository: Repository<LiteLlmModelAccessRequestEntity>,
-  ) {
-    const kc = new k8s.KubeConfig();
-    const kubeConfigPath = this.configService.get<string>("KUBECONFIG_PATH");
-    if (kubeConfigPath) {
-      kc.loadFromFile(kubeConfigPath);
-    } else {
-      try {
-        kc.loadFromCluster();
-      } catch {
-        kc.loadFromDefault();
-      }
-    }
-    this.kubeClientApps = kc.makeApiClient(k8s.AppsV1Api);
-    this.kubeClientBatch = kc.makeApiClient(k8s.BatchV1Api);
-    this.kubeClientCore = kc.makeApiClient(k8s.CoreV1Api);
-    this.kubeClientNetworking = kc.makeApiClient(k8s.NetworkingV1Api);
-  }
+  ) {}
 
   async createAgent(dto: CreateAgentDto, userId: string): Promise<AgentDeploymentEntity> {
     await this.projectsService.getProject(dto.projectId);
@@ -229,10 +210,12 @@ export class AgentsService {
       if (!buildPod) {
         return { logs: "" };
       }
+      const buildPodMetadata = (buildPod.metadata as { name?: string } | undefined) ?? {};
+      const buildPodSpec = (buildPod.spec as { containers?: Array<{ name?: string }> } | undefined) ?? {};
       const response = await this.readPodLogSafely({
         namespace: agent.namespace,
-        name: buildPod.metadata?.name ?? "",
-        container: buildPod.spec?.containers?.some((item) => item.name === "kaniko") ? "kaniko" : undefined,
+        name: buildPodMetadata.name ?? "",
+        container: buildPodSpec.containers?.some((item) => item.name === "kaniko") ? "kaniko" : undefined,
       });
       return { logs: response };
     }
@@ -241,9 +224,10 @@ export class AgentsService {
     if (!pod) {
       return { logs: "" };
     }
+    const podMetadata = (pod.metadata as { name?: string } | undefined) ?? {};
     const response = await this.readPodLogSafely({
       namespace: agent.namespace,
-      name: pod.metadata?.name ?? "",
+      name: podMetadata.name ?? "",
     });
     return { logs: response };
   }
@@ -254,7 +238,7 @@ export class AgentsService {
     container?: string;
   }): Promise<string> {
     try {
-      return await this.kubeClientCore!.readNamespacedPodLog(params);
+      return (await this.k8sApiService.readPodLog(params.namespace, params.name, params.container)).logs;
     } catch (error) {
       const message = this.describePendingLogState(error);
       if (message) {
@@ -326,8 +310,10 @@ export class AgentsService {
 
     if (agent.status === "running") {
       const deployment = await this.safeReadDeployment(agent);
-      const readyReplicas = deployment?.status?.readyReplicas ?? 0;
-      const desiredReplicas = deployment?.spec?.replicas ?? 1;
+      const deploymentStatus = (deployment?.status as { readyReplicas?: number } | undefined) ?? {};
+      const deploymentSpec = (deployment?.spec as { replicas?: number } | undefined) ?? {};
+      const readyReplicas = deploymentStatus.readyReplicas ?? 0;
+      const desiredReplicas = deploymentSpec.replicas ?? 1;
       if (readyReplicas < desiredReplicas) {
         agent.status = "deploying";
         agent.lastMessage = "Waiting for serving endpoint";
@@ -340,8 +326,9 @@ export class AgentsService {
 
   private async refreshBuildAndDeployStatus(agent: AgentDeploymentEntity): Promise<AgentDeploymentEntity> {
     const job = await this.safeReadJob(agent);
-    const succeeded = job?.status?.succeeded ?? 0;
-    const failed = job?.status?.failed ?? 0;
+    const jobStatus = (job?.status as { succeeded?: number; failed?: number } | undefined) ?? {};
+    const succeeded = jobStatus.succeeded ?? 0;
+    const failed = jobStatus.failed ?? 0;
 
     if (failed > 0) {
       agent.status = "failed";
@@ -378,8 +365,10 @@ export class AgentsService {
         return this.agentRepository.save(agent);
       }
 
-      const readyReplicas = deployment.status?.readyReplicas ?? 0;
-      const desiredReplicas = deployment.spec?.replicas ?? 1;
+      const deploymentStatus = (deployment.status as { readyReplicas?: number } | undefined) ?? {};
+      const deploymentSpec = (deployment.spec as { replicas?: number } | undefined) ?? {};
+      const readyReplicas = deploymentStatus.readyReplicas ?? 0;
+      const desiredReplicas = deploymentSpec.replicas ?? 1;
       agent.status = readyReplicas >= desiredReplicas ? "running" : "deploying";
       agent.lastMessage = agent.status === "running" ? "Agent is ready." : "Waiting for serving endpoint";
       return this.agentRepository.save(agent);
@@ -394,10 +383,12 @@ export class AgentsService {
       if (!buildPod) {
         return fallback;
       }
+      const buildPodMetadata = (buildPod.metadata as { name?: string } | undefined) ?? {};
+      const buildPodSpec = (buildPod.spec as { containers?: Array<{ name?: string }> } | undefined) ?? {};
       const logs = await this.readPodLogSafely({
         namespace,
-        name: buildPod.metadata?.name ?? "",
-        container: buildPod.spec?.containers?.some((item) => item.name === "kaniko") ? "kaniko" : undefined,
+        name: buildPodMetadata.name ?? "",
+        container: buildPodSpec.containers?.some((item) => item.name === "kaniko") ? "kaniko" : undefined,
       });
       return this.summarizeBuildFailure(logs, fallback);
     } catch (error) {
@@ -457,9 +448,7 @@ export class AgentsService {
     ].join("\n");
     const validateScript = this.buildValidatorScript(agent, dockerfilePath);
 
-    await this.kubeClientBatch!.createNamespacedJob({
-      namespace: agent.namespace,
-      body: {
+    await this.k8sApiService.createJob(agent.namespace, {
         apiVersion: "batch/v1",
         kind: "Job",
         metadata: {
@@ -523,8 +512,7 @@ export class AgentsService {
             },
           },
         },
-      } as k8s.V1Job,
-    });
+      });
   }
 
   private buildValidatorScript(agent: AgentDeploymentEntity, dockerfilePath: string): string {
@@ -684,27 +672,21 @@ export class AgentsService {
 
   private async deleteServingResources(agent: AgentDeploymentEntity): Promise<void> {
     await Promise.allSettled([
-      this.kubeClientApps?.deleteNamespacedDeployment({ namespace: agent.namespace, name: agent.deploymentName }),
-      this.kubeClientCore?.deleteNamespacedService({ namespace: agent.namespace, name: agent.serviceName }),
-      this.kubeClientNetworking?.deleteNamespacedIngress({ namespace: agent.namespace, name: agent.ingressName }),
+      this.k8sApiService.deleteDeployment(agent.namespace, agent.deploymentName),
+      this.k8sApiService.deleteService(agent.namespace, agent.serviceName),
+      this.k8sApiService.deleteIngress(agent.namespace, agent.ingressName),
     ]);
   }
 
   private async deleteAgentResources(agent: AgentDeploymentEntity): Promise<void> {
     await this.deleteServingResources(agent);
     await Promise.allSettled([
-      this.kubeClientBatch?.deleteNamespacedJob({
-        namespace: agent.namespace,
-        name: agent.buildJobName,
-        body: { propagationPolicy: "Background" } as k8s.V1DeleteOptions,
-      }),
+      this.k8sApiService.deleteJob(agent.namespace, agent.buildJobName, { propagationPolicy: "Background" }),
     ]);
   }
 
   private async ensureAgentDeployment(agent: AgentDeploymentEntity): Promise<void> {
-    await this.kubeClientApps!.createNamespacedDeployment({
-      namespace: agent.namespace,
-      body: {
+    await this.k8sApiService.createDeployment(agent.namespace, {
         apiVersion: "apps/v1",
         kind: "Deployment",
         metadata: {
@@ -743,14 +725,11 @@ export class AgentsService {
             },
           },
         },
-      } as k8s.V1Deployment,
-    });
+      });
   }
 
   private async ensureAgentService(agent: AgentDeploymentEntity): Promise<void> {
-    await this.kubeClientCore!.createNamespacedService({
-      namespace: agent.namespace,
-      body: {
+    await this.k8sApiService.createService(agent.namespace, {
         apiVersion: "v1",
         kind: "Service",
         metadata: { name: agent.serviceName, labels: this.getAgentLabels(agent) },
@@ -758,16 +737,13 @@ export class AgentsService {
           selector: this.getAgentSelectorLabels(agent),
           ports: [{ port: 8080, targetPort: 8080 }],
         },
-      } as k8s.V1Service,
-    });
+      });
   }
 
   private async ensureAgentIngress(agent: AgentDeploymentEntity): Promise<void> {
     const { host, ingressPath } = this.parseEndpoint(agent.endpointUrl);
     const ingressClassName = this.getServingConfig("K8S_SERVING_INGRESS_CLASS", "K8S_AGENT_INGRESS_CLASS") || "nginx";
-    await this.kubeClientNetworking!.createNamespacedIngress({
-      namespace: agent.namespace,
-      body: {
+    await this.k8sApiService.createIngress(agent.namespace, {
         apiVersion: "networking.k8s.io/v1",
         kind: "Ingress",
         metadata: {
@@ -795,41 +771,35 @@ export class AgentsService {
             },
           ],
         },
-      } as k8s.V1Ingress,
-    });
+      });
   }
 
   private async ensureNamespace(namespace: string): Promise<void> {
     try {
-      await this.kubeClientCore!.readNamespace({ name: namespace });
+      await this.k8sApiService.readNamespace(namespace);
     } catch {
-      await this.kubeClientCore!.createNamespace({
-        body: { apiVersion: "v1", kind: "Namespace", metadata: { name: namespace } },
-      });
+      await this.k8sApiService.createNamespace({ apiVersion: "v1", kind: "Namespace", metadata: { name: namespace } });
     }
   }
 
-  private async safeReadJob(agent: AgentDeploymentEntity): Promise<k8s.V1Job | null> {
+  private async safeReadJob(agent: AgentDeploymentEntity): Promise<Record<string, unknown> | null> {
     try {
-      return await this.kubeClientBatch!.readNamespacedJob({ namespace: agent.namespace, name: agent.buildJobName });
+      return await this.k8sApiService.readJob(agent.namespace, agent.buildJobName);
     } catch {
       return null;
     }
   }
 
-  private async safeReadDeployment(agent: AgentDeploymentEntity): Promise<k8s.V1Deployment | null> {
+  private async safeReadDeployment(agent: AgentDeploymentEntity): Promise<Record<string, unknown> | null> {
     try {
-      return await this.kubeClientApps!.readNamespacedDeployment({ namespace: agent.namespace, name: agent.deploymentName });
+      return await this.k8sApiService.readDeployment(agent.namespace, agent.deploymentName);
     } catch {
       return null;
     }
   }
 
-  private async findFirstPodByLabel(namespace: string, key: string, value: string): Promise<k8s.V1Pod | null> {
-    const result = await this.kubeClientCore!.listNamespacedPod({
-      namespace,
-      labelSelector: `${key}=${value}`,
-    });
+  private async findFirstPodByLabel(namespace: string, key: string, value: string): Promise<Record<string, unknown> | null> {
+    const result = await this.k8sApiService.listPods(namespace, `${key}=${value}`);
     return result.items[0] ?? null;
   }
 
@@ -856,12 +826,12 @@ export class AgentsService {
     return JSON.parse(raw) as Record<string, string>;
   }
 
-  private getAgentTolerations(): k8s.V1Toleration[] | undefined {
+  private getAgentTolerations(): Array<Record<string, unknown>> | undefined {
     const raw = this.getServingConfig("K8S_SERVING_TOLERATIONS_JSON", "K8S_AGENT_TOLERATIONS_JSON") ?? "";
     if (!raw) {
       return undefined;
     }
-    return JSON.parse(raw) as k8s.V1Toleration[];
+    return JSON.parse(raw) as Array<Record<string, unknown>>;
   }
 
   private getAgentIngressAnnotations(): Record<string, string> {

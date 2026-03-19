@@ -34,6 +34,7 @@ import { ProjectEndpointEntity } from "./projects/entities/project-endpoint.enti
 import { ProjectResourceLimitEntity } from "./projects/entities/project-resource-limit.entity";
 import { ProjectEntity } from "./projects/entities/project.entity";
 import { ProjectsModule } from "./projects/projects.module";
+import { K8sApiModule } from "./k8s-api/k8s-api.module";
 import { VectorKeyEntity } from "./vectordb/entities/vector-key.entity";
 import { VectorDbModule } from "./vectordb/vectordb.module";
 import { WorkspaceSessionEntity } from "./workspaces/entities/workspace-session.entity";
@@ -80,6 +81,7 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
       }),
     }),
     AuthModule,
+    K8sApiModule,
     ProjectsModule,
     WorkspacesModule,
     GitlabModule,

@@ -99,6 +99,30 @@ api:
     AGENT_VALIDATOR_LLM_MODEL: "gpt-4.1-mini"
     KANIKO_EXECUTOR_IMAGE: "gcr.io/kaniko-project/executor:latest"
     AGENT_ECR_REPOSITORY: ""
+    K8S_API_BASE_URL: "http://agent-portal-k8s-api:4300"
+    K8S_API_INTERNAL_TOKEN: "change-me"
+
+k8sApi:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: agent-portal-k8s-api
+    tag: latest
+  service:
+    type: ClusterIP
+    port: 4300
+  env:
+    PORT: "4300"
+    KUBECONFIG_PATH: ""
+    K8S_API_INTERNAL_TOKEN: "change-me"
+    AWS_REGION: "us-east-1"
+    AWS_EKS_CLUSTER_NAME: ""
+    AWS_EKS_NODE_ROLE_ARN: ""
+    AWS_EKS_SUBNET_IDS: ""
+    K8S_WORKSPACE_NODE_SELECTOR_JSON: "{}"
+    K8S_WORKSPACE_TOLERATIONS_JSON: "[]"
+    K8S_SERVING_NODE_SELECTOR_JSON: "{}"
+    K8S_SERVING_TOLERATIONS_JSON: "[]"
 
 gitlab:
   enabled: false

@@ -1,0 +1,23 @@
+replicaCount: 1
+
+image:
+  repository: agent-portal-k8s-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 4300
+
+env:
+  PORT: "4300"
+  KUBECONFIG_PATH: ""
+  K8S_API_INTERNAL_TOKEN: "change-me"
+  AWS_REGION: "us-east-1"
+  AWS_EKS_CLUSTER_NAME: ""
+  AWS_EKS_NODE_ROLE_ARN: ""
+  AWS_EKS_SUBNET_IDS: ""
+  K8S_WORKSPACE_NODE_SELECTOR_JSON: "{}"
+  K8S_WORKSPACE_TOLERATIONS_JSON: "[]"
+  K8S_SERVING_NODE_SELECTOR_JSON: "{}"
+  K8S_SERVING_TOLERATIONS_JSON: "[]"
