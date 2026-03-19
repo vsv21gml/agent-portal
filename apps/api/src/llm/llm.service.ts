@@ -249,7 +249,7 @@ export class LlmService implements OnModuleInit {
 
     const existing = await this.userKeyRepository.findOne({ where: { ownerUserId } });
     const needsReprovision = !existing?.apiKey || existing.remoteUserId !== null;
-    const desiredKeyAlias = this.buildUserKeyAlias(ownerUserId);
+    const desiredKeyAlias = this.buildUserKeyAlias(userEmail);
     if (existing?.apiKey && !needsReprovision) {
       if (existing.userEmail !== userEmail || existing.keyAlias !== desiredKeyAlias) {
         existing.userEmail = userEmail;
@@ -914,8 +914,8 @@ export class LlmService implements OnModuleInit {
     return null;
   }
 
-  private buildUserKeyAlias(ownerUserId: string): string {
-    return `user-key-${ownerUserId}`;
+  private buildUserKeyAlias(userEmail: string): string {
+    return userEmail.trim().toLowerCase();
   }
 
   private async remoteFetch(path: string, init: RequestInit): Promise<Response> {
