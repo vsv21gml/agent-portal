@@ -342,7 +342,7 @@ export class AgentsService {
 
     if (failed > 0) {
       agent.status = "failed";
-      agent.lastMessage = "Build job failed";
+      agent.lastMessage = await this.buildFailureMessage(agent.namespace, agent.buildJobName, "Build job failed");
       return this.agentRepository.save(agent);
     }
 
@@ -383,6 +383,48 @@ export class AgentsService {
     }
 
     return agent;
+  }
+
+  private async buildFailureMessage(namespace: string, buildJobName: string, fallback: string): Promise<string> {
+    try {
+      const buildPod = await this.findFirstPodByLabel(namespace, "job-name", buildJobName);
+      if (!buildPod) {
+        return fallback;
+      }
+      const logs = await this.readPodLogSafely({
+        namespace,
+        name: buildPod.metadata?.name ?? "",
+        container: buildPod.spec?.containers?.some((item) => item.name === "kaniko") ? "kaniko" : undefined,
+      });
+      return this.summarizeBuildFailure(logs, fallback);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to summarize agent build failure namespace=${namespace} job=${buildJobName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return fallback;
+    }
+  }
+
+  private summarizeBuildFailure(logs: string, fallback: string): string {
+    const cleanedLines = logs
+      .replace(/\u001b\[[0-9;]*m/g, "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (!cleanedLines.length) {
+      return fallback;
+    }
+
+    const failurePattern = /(error|failed|fatal|not found|denied|unauthorized|forbidden|no such file|cannot|unable)/i;
+    const ignoredPattern = /^(info|time=|level=info\b|level=debug\b)/i;
+    const matchedLine = [...cleanedLines]
+      .reverse()
+      .find((line) => failurePattern.test(line) && !ignoredPattern.test(line));
+    const summary = matchedLine ?? cleanedLines[cleanedLines.length - 1];
+    const normalized = summary.replace(/\s+/g, " ").trim();
+    const truncated = normalized.length > 220 ? `${normalized.slice(0, 217)}...` : normalized;
+    return truncated.toLowerCase().startsWith("build failed") ? truncated : `Build failed: ${truncated}`;
   }
 
   private async ensureBuildJob(

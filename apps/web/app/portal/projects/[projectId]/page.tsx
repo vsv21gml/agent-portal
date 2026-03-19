@@ -369,6 +369,16 @@ function getSectionFromPathname(pathname: string): ProjectSection {
   return "Info";
 }
 
+function getDeploymentMessageColor(status: string): string {
+  if (status === "failed") {
+    return "red";
+  }
+  if (status === "pending_approval") {
+    return "yellow";
+  }
+  return "dimmed";
+}
+
 export default function ProjectDetailPage() {
   const params = useParams<{ projectId: string }>();
   const pathname = usePathname();
@@ -2034,7 +2044,18 @@ export default function ProjectDetailPage() {
                         <Table.Td>{agent.description || "-"}</Table.Td>
                         <Table.Td>{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Table.Td>
                         <Table.Td>
-                          <Badge variant="light">{agent.status}</Badge>
+                          <Stack gap={4}>
+                            <div>
+                              <Badge variant="light" color={agent.status === "failed" ? "red" : undefined}>
+                                {agent.status}
+                              </Badge>
+                            </div>
+                            {agent.lastMessage ? (
+                              <Text size="xs" c={getDeploymentMessageColor(agent.status)} style={{ whiteSpace: "pre-wrap" }}>
+                                {agent.lastMessage}
+                              </Text>
+                            ) : null}
+                          </Stack>
                         </Table.Td>
                         <Table.Td>{new Date(agent.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>
@@ -2043,7 +2064,12 @@ export default function ProjectDetailPage() {
                           </Button>
                         </Table.Td>
                         <Table.Td>
-                          <Button size="xs" variant="light" onClick={() => void loadAgentLogs(agent)}>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color={agent.status === "failed" ? "red" : undefined}
+                            onClick={() => void loadAgentLogs(agent)}
+                          >
                             Logs
                           </Button>
                         </Table.Td>
@@ -2173,7 +2199,18 @@ export default function ProjectDetailPage() {
                         <Table.Td>{mcp.useLlm === "Y" ? "Enabled" : "Disabled"}</Table.Td>
                         <Table.Td>{mcp.litellmModel || "-"}</Table.Td>
                         <Table.Td>
-                          <Badge variant="light">{mcp.status}</Badge>
+                          <Stack gap={4}>
+                            <div>
+                              <Badge variant="light" color={mcp.status === "failed" ? "red" : undefined}>
+                                {mcp.status}
+                              </Badge>
+                            </div>
+                            {mcp.lastMessage ? (
+                              <Text size="xs" c={getDeploymentMessageColor(mcp.status)} style={{ whiteSpace: "pre-wrap" }}>
+                                {mcp.lastMessage}
+                              </Text>
+                            ) : null}
+                          </Stack>
                         </Table.Td>
                         <Table.Td>{new Date(mcp.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>
@@ -2182,7 +2219,12 @@ export default function ProjectDetailPage() {
                           </Button>
                         </Table.Td>
                         <Table.Td>
-                          <Button size="xs" variant="light" onClick={() => void loadMcpLogs(mcp)}>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color={mcp.status === "failed" ? "red" : undefined}
+                            onClick={() => void loadMcpLogs(mcp)}
+                          >
                             Logs
                           </Button>
                         </Table.Td>
