@@ -9,7 +9,9 @@ import { Permission } from "../common/enums/permission.enum";
 import { GitlabService } from "../gitlab/gitlab.service";
 import { LlmService } from "../llm/llm.service";
 import { AddProjectMemberDto } from "./dto/add-project-member.dto";
+import { ConnectProjectEndpointDto } from "./dto/connect-project-endpoint.dto";
 import { CreateProjectDto } from "./dto/create-project.dto";
+import { CreateProjectEndpointDto } from "./dto/create-project-endpoint.dto";
 import { UpdateProjectDto } from "./dto/update-project.dto";
 import { UpdateResourceLimitDto } from "./dto/update-resource-limit.dto";
 import { ProjectManagerGuard } from "./guards/project-manager.guard";
@@ -42,6 +44,11 @@ export class ProjectsController {
   @Get(":projectId/overview")
   getOverview(@Param("projectId") projectId: string) {
     return this.projectsService.getOverview(projectId);
+  }
+
+  @Get(":projectId/endpoints")
+  listEndpoints(@Param("projectId") projectId: string) {
+    return this.projectsService.listEndpoints(projectId);
   }
 
   @Get(":projectId/members")
@@ -82,6 +89,35 @@ export class ProjectsController {
   @Patch(":projectId")
   updateProject(@Param("projectId") projectId: string, @Body() dto: UpdateProjectDto, @CurrentUser() user: JwtPayload) {
     return this.projectsService.updateProject(projectId, dto, user.sub);
+  }
+
+  @UseGuards(ProjectManagerGuard)
+  @Post(":projectId/endpoints")
+  createEndpoint(@Param("projectId") projectId: string, @Body() dto: CreateProjectEndpointDto, @CurrentUser() user: JwtPayload) {
+    return this.projectsService.createEndpoint(projectId, dto, user.sub);
+  }
+
+  @UseGuards(ProjectManagerGuard)
+  @Post(":projectId/endpoints/:endpointId/connect")
+  connectEndpoint(
+    @Param("projectId") projectId: string,
+    @Param("endpointId") endpointId: string,
+    @Body() dto: ConnectProjectEndpointDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.projectsService.connectEndpoint(projectId, endpointId, dto, user.sub);
+  }
+
+  @UseGuards(ProjectManagerGuard)
+  @Post(":projectId/endpoints/:endpointId/disconnect")
+  disconnectEndpoint(@Param("projectId") projectId: string, @Param("endpointId") endpointId: string, @CurrentUser() user: JwtPayload) {
+    return this.projectsService.disconnectEndpoint(projectId, endpointId, user.sub);
+  }
+
+  @UseGuards(ProjectManagerGuard)
+  @Delete(":projectId/endpoints/:endpointId")
+  deleteEndpoint(@Param("projectId") projectId: string, @Param("endpointId") endpointId: string, @CurrentUser() user: JwtPayload) {
+    return this.projectsService.deleteEndpoint(projectId, endpointId, user.sub);
   }
 
   @UseGuards(ProjectManagerGuard)

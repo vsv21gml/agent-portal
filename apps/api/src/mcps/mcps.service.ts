@@ -309,11 +309,13 @@ export class McpsService {
 
   async stopMcp(mcpId: string, userId: string): Promise<McpDeploymentEntity> {
     const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, ownerUserId: userId, deleteYn: "N" });
+    await this.projectsService.ensureDeploymentNotBound(mcp.projectId, "mcp", mcp.id);
     return this.stopMcpDeployment(mcp, userId);
   }
 
   async adminStopMcp(mcpId: string, actorUserId: string): Promise<McpDeploymentEntity> {
     const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, deleteYn: "N" });
+    await this.projectsService.ensureDeploymentNotBound(mcp.projectId, "mcp", mcp.id);
     return this.stopMcpDeployment(mcp, actorUserId, true);
   }
 
@@ -353,6 +355,7 @@ export class McpsService {
 
   async deleteMcp(mcpId: string, userId: string): Promise<{ id: string }> {
     const mcp = await this.mcpRepository.findOneByOrFail({ id: mcpId, ownerUserId: userId, deleteYn: "N" });
+    await this.projectsService.ensureDeploymentNotBound(mcp.projectId, "mcp", mcp.id);
     await this.deleteMcpResources(mcp);
     mcp.deleteYn = "Y";
     mcp.status = "deleted";

@@ -145,11 +145,13 @@ export class AgentsService {
 
   async stopAgent(agentId: string, userId: string): Promise<AgentDeploymentEntity> {
     const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId, deleteYn: "N" });
+    await this.projectsService.ensureDeploymentNotBound(agent.projectId, "agent", agent.id);
     return this.stopAgentDeployment(agent, userId);
   }
 
   async adminStopAgent(agentId: string, actorUserId: string): Promise<AgentDeploymentEntity> {
     const agent = await this.agentRepository.findOneByOrFail({ id: agentId, deleteYn: "N" });
+    await this.projectsService.ensureDeploymentNotBound(agent.projectId, "agent", agent.id);
     return this.stopAgentDeployment(agent, actorUserId, true);
   }
 
@@ -188,6 +190,7 @@ export class AgentsService {
 
   async deleteAgent(agentId: string, userId: string): Promise<{ id: string }> {
     const agent = await this.agentRepository.findOneByOrFail({ id: agentId, ownerUserId: userId, deleteYn: "N" });
+    await this.projectsService.ensureDeploymentNotBound(agent.projectId, "agent", agent.id);
     await this.deleteAgentResources(agent);
     agent.deleteYn = "Y";
     agent.status = "deleted";

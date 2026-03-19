@@ -122,6 +122,25 @@ type McpDeployment = {
   createdAt: string;
 };
 
+type ProjectEndpoint = {
+  id: string;
+  projectId: string;
+  name: string;
+  endpointKey: string;
+  endpointUrl: string;
+  ingressName: string;
+  namespace: string | null;
+  status: "unassigned" | "connected";
+  targetType: "agent" | "mcp" | null;
+  targetId: string | null;
+  targetName: string | null;
+  targetServiceName: string | null;
+  targetNamespace: string | null;
+  targetEndpointUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type LiteLlmAccessModel = {
   modelName: string;
   isDefault: boolean;
@@ -168,13 +187,14 @@ type ExternalAgentCard = {
   [key: string]: unknown;
 };
 
-type ProjectSection = "Info" | "Repo" | "Agent" | "MCP" | "MCP Inspector" | "Playground";
+type ProjectSection = "Info" | "Repo" | "Agent" | "MCP" | "Endpoint" | "MCP Inspector" | "Playground";
 
-const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "mcp" | "mcp-inspector" | "playground" }> = [
+const menuItems: Array<{ label: ProjectSection; slug: "" | "info" | "repo" | "agent" | "mcp" | "endpoint" | "mcp-inspector" | "playground" }> = [
   { label: "Info", slug: "info" },
   { label: "Repo", slug: "repo" },
   { label: "Agent", slug: "agent" },
   { label: "MCP", slug: "mcp" },
+  { label: "Endpoint", slug: "endpoint" },
   { label: "MCP Inspector", slug: "mcp-inspector" },
   { label: "Playground", slug: "playground" },
 ];
@@ -360,6 +380,9 @@ function getSectionFromPathname(pathname: string): ProjectSection {
   if (pathname.endsWith("/mcp")) {
     return "MCP";
   }
+  if (pathname.endsWith("/endpoint")) {
+    return "Endpoint";
+  }
   if (pathname.endsWith("/mcp-inspector")) {
     return "MCP Inspector";
   }
@@ -444,6 +467,15 @@ export default function ProjectDetailPage() {
   const [mcpLogs, setMcpLogs] = useState("");
   const [loadingMcpLogs, setLoadingMcpLogs] = useState(false);
   const mcpLogsViewportRef = useRef<HTMLDivElement | null>(null);
+  const [endpoints, setEndpoints] = useState<ProjectEndpoint[]>([]);
+  const [endpointModalOpen, setEndpointModalOpen] = useState(false);
+  const [endpointName, setEndpointName] = useState("");
+  const [creatingEndpoint, setCreatingEndpoint] = useState(false);
+  const [endpointConnectTarget, setEndpointConnectTarget] = useState<ProjectEndpoint | null>(null);
+  const [selectedEndpointTarget, setSelectedEndpointTarget] = useState<string | null>(null);
+  const [connectingEndpointId, setConnectingEndpointId] = useState<string | null>(null);
+  const [disconnectingEndpointId, setDisconnectingEndpointId] = useState<string | null>(null);
+  const [deletingEndpointId, setDeletingEndpointId] = useState<string | null>(null);
   const [playgroundMode, setPlaygroundMode] = useState<"deployed" | "dev">("deployed");
   const [playgroundTargetType, setPlaygroundTargetType] = useState<"agent" | "mcp">("agent");
   const [selectedPlaygroundAgentId, setSelectedPlaygroundAgentId] = useState<string | null>(null);
@@ -520,6 +552,37 @@ export default function ProjectDetailPage() {
   const runningMcps = useMemo(
     () => mcps.filter((mcp) => mcp.status === "running"),
     [mcps],
+  );
+  const endpointTargetOptions = useMemo(
+    () => [
+      ...runningAgents.map((agent) => ({
+        value: `agent:${agent.id}`,
+        label: `Agent · ${agent.agentName}`,
+      })),
+      ...runningMcps.map((mcp) => ({
+        value: `mcp:${mcp.id}`,
+        label: `MCP · ${mcp.mcpName}`,
+      })),
+    ],
+    [runningAgents, runningMcps],
+  );
+  const endpointBindingByAgentId = useMemo(
+    () =>
+      new Map(
+        endpoints
+          .filter((endpoint) => endpoint.targetType === "agent" && endpoint.targetId)
+          .map((endpoint) => [endpoint.targetId as string, endpoint]),
+      ),
+    [endpoints],
+  );
+  const endpointBindingByMcpId = useMemo(
+    () =>
+      new Map(
+        endpoints
+          .filter((endpoint) => endpoint.targetType === "mcp" && endpoint.targetId)
+          .map((endpoint) => [endpoint.targetId as string, endpoint]),
+      ),
+    [endpoints],
   );
   const activeServingAgents = useMemo(
     () => agents.filter((agent) => ["running", "deploying"].includes(agent.status)),
@@ -700,6 +763,20 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const loadEndpoints = async (targetProject?: Project | null) => {
+    const activeProject = targetProject ?? project;
+    if (!activeProject) {
+      return;
+    }
+
+    try {
+      const endpointRows = await apiFetch<ProjectEndpoint[]>(`projects/${activeProject.id}/endpoints`);
+      setEndpoints(endpointRows);
+    } catch {
+      toastError("Failed to load project endpoints.");
+    }
+  };
+
   const loadCatalogModels = async (targetProjectId: string) => {
     try {
       const models = await apiFetch<CatalogModel[]>(`llm/projects/${targetProjectId}/catalog-models`);
@@ -756,12 +833,17 @@ export default function ProjectDetailPage() {
       }
       case "Agent": {
         const loadedProject = await loadProject(targetProjectId);
-        await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject), loadCatalogModels(targetProjectId)]);
+        await Promise.all([loadRepos(loadedProject), loadAgents(loadedProject), loadEndpoints(loadedProject), loadCatalogModels(targetProjectId)]);
         return loadedProject;
       }
       case "MCP": {
         const loadedProject = await loadProject(targetProjectId);
-        await Promise.all([loadRepos(loadedProject), loadMcps(loadedProject), loadCatalogModels(targetProjectId)]);
+        await Promise.all([loadRepos(loadedProject), loadMcps(loadedProject), loadEndpoints(loadedProject), loadCatalogModels(targetProjectId)]);
+        return loadedProject;
+      }
+      case "Endpoint": {
+        const loadedProject = await loadProject(targetProjectId);
+        await Promise.all([loadEndpoints(loadedProject), loadAgents(loadedProject), loadMcps(loadedProject)]);
         return loadedProject;
       }
       case "MCP Inspector": {
@@ -1050,6 +1132,105 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const createEndpoint = async () => {
+    if (!project || !endpointName.trim()) {
+      toastError("Enter an endpoint name.");
+      return;
+    }
+
+    setCreatingEndpoint(true);
+    try {
+      const created = await apiFetch<ProjectEndpoint>(`projects/${project.id}/endpoints`, {
+        method: "POST",
+        body: JSON.stringify({ name: endpointName.trim() }),
+      });
+      setEndpoints((prev) => [...prev, created]);
+      setEndpointModalOpen(false);
+      setEndpointName("");
+      toastSuccess("Endpoint created.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError("A project can have up to 2 endpoints.");
+      } else {
+        toastError("Failed to create endpoint.");
+      }
+    } finally {
+      setCreatingEndpoint(false);
+    }
+  };
+
+  const connectEndpoint = async () => {
+    if (!project || !endpointConnectTarget || !selectedEndpointTarget) {
+      toastError("Choose a running Agent or MCP server.");
+      return;
+    }
+
+    const [targetType, targetId] = selectedEndpointTarget.split(":");
+    if (!targetType || !targetId || (targetType !== "agent" && targetType !== "mcp")) {
+      toastError("Invalid endpoint target.");
+      return;
+    }
+
+    setConnectingEndpointId(endpointConnectTarget.id);
+    try {
+      const updated = await apiFetch<ProjectEndpoint>(`projects/${project.id}/endpoints/${endpointConnectTarget.id}/connect`, {
+        method: "POST",
+        body: JSON.stringify({ targetType, targetId }),
+      });
+      setEndpoints((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setEndpointConnectTarget(null);
+      setSelectedEndpointTarget(null);
+      await Promise.all([loadAgents(), loadMcps()]);
+      toastSuccess("Endpoint connected.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError(error.message || "This target cannot be connected.");
+      } else {
+        toastError("Failed to connect endpoint.");
+      }
+    } finally {
+      setConnectingEndpointId(null);
+    }
+  };
+
+  const disconnectEndpoint = async (endpoint: ProjectEndpoint) => {
+    if (!project) {
+      return;
+    }
+
+    setDisconnectingEndpointId(endpoint.id);
+    try {
+      const updated = await apiFetch<ProjectEndpoint>(`projects/${project.id}/endpoints/${endpoint.id}/disconnect`, {
+        method: "POST",
+      });
+      setEndpoints((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      await Promise.all([loadAgents(), loadMcps()]);
+      toastSuccess("Endpoint disconnected.");
+    } catch {
+      toastError("Failed to disconnect endpoint.");
+    } finally {
+      setDisconnectingEndpointId(null);
+    }
+  };
+
+  const deleteEndpoint = async (endpoint: ProjectEndpoint) => {
+    if (!project) {
+      return;
+    }
+
+    setDeletingEndpointId(endpoint.id);
+    try {
+      await apiFetch(`projects/${project.id}/endpoints/${endpoint.id}`, { method: "DELETE" });
+      setEndpoints((prev) => prev.filter((item) => item.id !== endpoint.id));
+      await Promise.all([loadAgents(), loadMcps()]);
+      toastSuccess("Endpoint deleted.");
+    } catch {
+      toastError("Failed to delete endpoint.");
+    } finally {
+      setDeletingEndpointId(null);
+    }
+  };
+
   const loadAgentLogs = async (agent: AgentDeployment) => {
     setLogsTarget(agent);
     setLoadingAgentLogs(true);
@@ -1084,8 +1265,12 @@ export default function ProjectDetailPage() {
       const updated = await apiFetch<AgentDeployment>(`agents/${agent.id}/stop`, { method: "POST" });
       setAgents((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
       toastSuccess("Agent stopped.");
-    } catch {
-      toastError("Failed to stop agent.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError(error.message || "Disconnect the endpoint before stopping this agent.");
+      } else {
+        toastError("Failed to stop agent.");
+      }
     } finally {
       setStoppingAgentId(null);
     }
@@ -1114,8 +1299,12 @@ export default function ProjectDetailPage() {
       await apiFetch(`agents/${agent.id}`, { method: "DELETE" });
       setAgents((prev) => prev.filter((item) => item.id !== agent.id));
       toastSuccess("Agent deleted.");
-    } catch {
-      toastError("Failed to delete agent.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError(error.message || "Disconnect the endpoint before deleting this agent.");
+      } else {
+        toastError("Failed to delete agent.");
+      }
     } finally {
       setDeletingAgentId(null);
     }
@@ -1127,8 +1316,12 @@ export default function ProjectDetailPage() {
       const updated = await apiFetch<McpDeployment>(`mcps/${mcp.id}/stop`, { method: "POST" });
       setMcps((prev) => [updated, ...prev.filter((item) => item.id !== updated.id)]);
       toastSuccess("MCP stopped.");
-    } catch {
-      toastError("Failed to stop MCP.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError(error.message || "Disconnect the endpoint before stopping this MCP server.");
+      } else {
+        toastError("Failed to stop MCP.");
+      }
     } finally {
       setStoppingMcpId(null);
     }
@@ -1157,8 +1350,12 @@ export default function ProjectDetailPage() {
       await apiFetch(`mcps/${mcp.id}`, { method: "DELETE" });
       setMcps((prev) => prev.filter((item) => item.id !== mcp.id));
       toastSuccess("MCP deleted.");
-    } catch {
-      toastError("Failed to delete MCP.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toastError(error.message || "Disconnect the endpoint before deleting this MCP server.");
+      } else {
+        toastError("Failed to delete MCP.");
+      }
     } finally {
       setDeletingMcpId(null);
     }
@@ -2036,10 +2233,19 @@ export default function ProjectDetailPage() {
                 </Table.Thead>
                 <Table.Tbody>
                   {filteredAgents.length ? (
-                    filteredAgents.map((agent) => (
+                    filteredAgents.map((agent) => {
+                      const boundEndpoint = endpointBindingByAgentId.get(agent.id);
+                      return (
                       <Table.Tr key={agent.id}>
                         <Table.Td>
-                          <Text>{agent.agentName}</Text>
+                          <Stack gap={4}>
+                            <Text>{agent.agentName}</Text>
+                            {boundEndpoint ? (
+                              <Text size="xs" c="blue">
+                                Connected to endpoint {boundEndpoint.name}
+                              </Text>
+                            ) : null}
+                          </Stack>
                         </Table.Td>
                         <Table.Td>{agent.description || "-"}</Table.Td>
                         <Table.Td>{repos.find((repo) => repo.id === agent.repoId)?.repoName ?? agent.repoId}</Table.Td>
@@ -2059,8 +2265,12 @@ export default function ProjectDetailPage() {
                         </Table.Td>
                         <Table.Td>{new Date(agent.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>
-                          <Button size="xs" variant="light" onClick={() => void copyText(agent.endpointUrl, "Endpoint copied.")}>
-                            Copy
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => void copyText(boundEndpoint?.endpointUrl ?? agent.endpointUrl, "Endpoint copied.")}
+                          >
+                            {boundEndpoint ? "Copy Fixed" : "Copy"}
                           </Button>
                         </Table.Td>
                         <Table.Td>
@@ -2091,6 +2301,7 @@ export default function ProjectDetailPage() {
                                 color="yellow"
                                 variant="light"
                                 loading={stoppingAgentId === agent.id}
+                                disabled={Boolean(boundEndpoint)}
                                 onClick={() => void stopAgent(agent)}
                               >
                                 Stop
@@ -2101,6 +2312,7 @@ export default function ProjectDetailPage() {
                               color="red"
                               variant="light"
                               loading={deletingAgentId === agent.id}
+                              disabled={Boolean(boundEndpoint)}
                               onClick={() => void deleteAgent(agent)}
                             >
                               Delete
@@ -2108,7 +2320,8 @@ export default function ProjectDetailPage() {
                           </Group>
                         </Table.Td>
                       </Table.Tr>
-                    ))
+                    );
+                    })
                   ) : (
                     <Table.Tr>
                       <Table.Td colSpan={8}>
@@ -2189,10 +2402,19 @@ export default function ProjectDetailPage() {
                 </Table.Thead>
                 <Table.Tbody>
                   {filteredMcps.length ? (
-                    filteredMcps.map((mcp) => (
+                    filteredMcps.map((mcp) => {
+                      const boundEndpoint = endpointBindingByMcpId.get(mcp.id);
+                      return (
                       <Table.Tr key={mcp.id}>
                         <Table.Td>
-                          <Text>{mcp.mcpName}</Text>
+                          <Stack gap={4}>
+                            <Text>{mcp.mcpName}</Text>
+                            {boundEndpoint ? (
+                              <Text size="xs" c="blue">
+                                Connected to endpoint {boundEndpoint.name}
+                              </Text>
+                            ) : null}
+                          </Stack>
                         </Table.Td>
                         <Table.Td>{mcp.description || "-"}</Table.Td>
                         <Table.Td>{repos.find((repo) => repo.id === mcp.repoId)?.repoName ?? mcp.repoId}</Table.Td>
@@ -2214,8 +2436,12 @@ export default function ProjectDetailPage() {
                         </Table.Td>
                         <Table.Td>{new Date(mcp.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>
-                          <Button size="xs" variant="light" onClick={() => void copyText(mcp.endpointUrl, "Endpoint copied.")}>
-                            Copy
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => void copyText(boundEndpoint?.endpointUrl ?? mcp.endpointUrl, "Endpoint copied.")}
+                          >
+                            {boundEndpoint ? "Copy Fixed" : "Copy"}
                           </Button>
                         </Table.Td>
                         <Table.Td>
@@ -2246,6 +2472,7 @@ export default function ProjectDetailPage() {
                                 color="yellow"
                                 variant="light"
                                 loading={stoppingMcpId === mcp.id}
+                                disabled={Boolean(boundEndpoint)}
                                 onClick={() => void stopMcp(mcp)}
                               >
                                 Stop
@@ -2256,7 +2483,133 @@ export default function ProjectDetailPage() {
                               color="red"
                               variant="light"
                               loading={deletingMcpId === mcp.id}
+                              disabled={Boolean(boundEndpoint)}
                               onClick={() => void deleteMcp(mcp)}
+                            >
+                              Delete
+                            </Button>
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                    })
+                  ) : (
+                    <Table.Tr>
+                      <Table.Td colSpan={10}>
+                        <Text size="sm" c="dimmed">
+                          {mcps.length ? "No MCP deployments match the current filters." : "No MCP deployments yet."}
+                        </Text>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </Table.Tbody>
+              </Table>
+            </Paper>
+          </Stack>
+        ) : null}
+
+        {activeMenu === "Endpoint" ? (
+          <Stack>
+            <Paper withBorder p="md" radius="md">
+              <Group justify="space-between" align="center">
+                <div>
+                  <Title order={4}>Endpoints</Title>
+                  <Text size="sm" c="dimmed">
+                    Create up to 2 stable URLs and connect each one to a running Agent or MCP server.
+                  </Text>
+                </div>
+                <Group gap="sm">
+                  <Badge variant="light">{endpoints.length}/2 created</Badge>
+                  <Button variant="light" onClick={() => void Promise.all([loadEndpoints(), loadAgents(), loadMcps()])}>
+                    Refresh
+                  </Button>
+                  <Button onClick={() => setEndpointModalOpen(true)} disabled={!isManager || endpoints.length >= 2}>
+                    Create Endpoint
+                  </Button>
+                </Group>
+              </Group>
+            </Paper>
+
+            <Paper withBorder p="md" radius="md">
+              <Table withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Endpoint URL</Table.Th>
+                    <Table.Th>Connected Target</Table.Th>
+                    <Table.Th>Created</Table.Th>
+                    <Table.Th>Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {endpoints.length ? (
+                    endpoints.map((endpoint) => (
+                      <Table.Tr key={endpoint.id}>
+                        <Table.Td>{endpoint.name}</Table.Td>
+                        <Table.Td>
+                          <Badge variant="light" color={endpoint.status === "connected" ? "teal" : "gray"}>
+                            {endpoint.status}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap="xs" wrap="nowrap">
+                            <Text size="sm" style={{ wordBreak: "break-all" }}>
+                              {endpoint.endpointUrl}
+                            </Text>
+                            <Button size="xs" variant="light" onClick={() => void copyText(endpoint.endpointUrl, "Endpoint copied.")}>
+                              Copy
+                            </Button>
+                          </Group>
+                        </Table.Td>
+                        <Table.Td>
+                          {endpoint.targetType && endpoint.targetName ? (
+                            <Stack gap={2}>
+                              <Text size="sm">
+                                {endpoint.targetType === "agent" ? "Agent" : "MCP"} · {endpoint.targetName}
+                              </Text>
+                              <Text size="xs" c="dimmed">
+                                Direct deployment URL is disabled while connected.
+                              </Text>
+                            </Stack>
+                          ) : (
+                            <Text size="sm" c="dimmed">
+                              Not connected
+                            </Text>
+                          )}
+                        </Table.Td>
+                        <Table.Td>{new Date(endpoint.createdAt).toLocaleString()}</Table.Td>
+                        <Table.Td>
+                          <Group gap="xs">
+                            <Button
+                              size="xs"
+                              variant="default"
+                              disabled={!isManager || endpointTargetOptions.length === 0}
+                              loading={connectingEndpointId === endpoint.id}
+                              onClick={() => {
+                                setEndpointConnectTarget(endpoint);
+                                setSelectedEndpointTarget(endpoint.targetType && endpoint.targetId ? `${endpoint.targetType}:${endpoint.targetId}` : null);
+                              }}
+                            >
+                              {endpoint.status === "connected" ? "Change Target" : "Connect"}
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="light"
+                              color="yellow"
+                              disabled={!isManager || endpoint.status !== "connected"}
+                              loading={disconnectingEndpointId === endpoint.id}
+                              onClick={() => void disconnectEndpoint(endpoint)}
+                            >
+                              Disconnect
+                            </Button>
+                            <Button
+                              size="xs"
+                              color="red"
+                              variant="light"
+                              disabled={!isManager}
+                              loading={deletingEndpointId === endpoint.id}
+                              onClick={() => void deleteEndpoint(endpoint)}
                             >
                               Delete
                             </Button>
@@ -2266,9 +2619,9 @@ export default function ProjectDetailPage() {
                     ))
                   ) : (
                     <Table.Tr>
-                      <Table.Td colSpan={10}>
+                      <Table.Td colSpan={6}>
                         <Text size="sm" c="dimmed">
-                          {mcps.length ? "No MCP deployments match the current filters." : "No MCP deployments yet."}
+                          No fixed endpoints created yet.
                         </Text>
                       </Table.Td>
                     </Table.Tr>
@@ -2947,6 +3300,54 @@ export default function ProjectDetailPage() {
           />
           <Button loading={deployingMcp} disabled={!hasMcpServingCapacity} onClick={() => void deployMcp()}>
             Deploy MCP
+          </Button>
+        </Stack>
+      </Modal>
+
+      <Modal opened={endpointModalOpen} onClose={() => setEndpointModalOpen(false)} title="Create Endpoint" centered>
+        <Stack>
+          <TextInput
+            label="Endpoint Name"
+            placeholder="Production Agent"
+            value={endpointName}
+            onChange={(event) => setEndpointName(event.currentTarget.value)}
+          />
+          <Text size="sm" c="dimmed">
+            Each project can create up to 2 fixed endpoint URLs.
+          </Text>
+          <Button loading={creatingEndpoint} onClick={() => void createEndpoint()}>
+            Create Endpoint
+          </Button>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={endpointConnectTarget !== null}
+        onClose={() => {
+          setEndpointConnectTarget(null);
+          setSelectedEndpointTarget(null);
+        }}
+        title={endpointConnectTarget ? `${endpointConnectTarget.name} target` : "Connect Endpoint"}
+        centered
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Choose one running Agent or MCP server. The deployment-specific public URL will be disabled while this endpoint is connected.
+          </Text>
+          <Select
+            label="Running Target"
+            data={endpointTargetOptions}
+            value={selectedEndpointTarget}
+            onChange={setSelectedEndpointTarget}
+            searchable
+            placeholder="Select target"
+          />
+          <Button
+            loading={endpointConnectTarget ? connectingEndpointId === endpointConnectTarget.id : false}
+            disabled={!selectedEndpointTarget}
+            onClick={() => void connectEndpoint()}
+          >
+            Connect Endpoint
           </Button>
         </Stack>
       </Modal>
