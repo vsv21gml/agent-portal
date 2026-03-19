@@ -697,11 +697,12 @@ export default function ProjectDetailPage() {
   );
 
   const loadProject = async (targetProjectId: string) => {
-    const loadedProject = await apiFetch<Project>(`projects/${targetProjectId}`);
-    setProject(loadedProject);
-    setEditName(loadedProject.name);
-    setEditDescription(loadedProject.description);
-    return loadedProject;
+    const overview = await apiFetch<ProjectOverview>(`projects/${targetProjectId}/overview`);
+    setProject(overview.project);
+    setEditName(overview.project.name);
+    setEditDescription(overview.project.description);
+    setMembers(overview.members);
+    return overview.project;
   };
 
   const loadInfoData = async (targetProjectId: string) => {
