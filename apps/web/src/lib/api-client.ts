@@ -24,6 +24,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
+    const errorBody = (await response.json().catch(() => null)) as { message?: string | string[] } | null;
+    const errorMessage = Array.isArray(errorBody?.message)
+      ? errorBody.message.join(", ")
+      : errorBody?.message ?? `${response.status} ${response.statusText}`;
     if (response.status === 401) {
       clearToken();
     }
@@ -37,7 +41,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         }),
       );
     }
-    throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+    throw new ApiError(response.status, errorMessage);
   }
 
   return (await response.json()) as T;
