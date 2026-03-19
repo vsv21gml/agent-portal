@@ -69,17 +69,20 @@ export class AuthService {
     user.globalRole = GlobalRole.USER;
     user.approvalStatus = "pending";
     user.approvedAt = null;
+    user.passwordResetRequired = false;
+    user.passwordResetIssuedAt = null;
     await this.userRepository.save(user);
 
     return { accessToken: "" };
   }
 
-  async login(dto: LoginDto, clientIp: string | null): Promise<{ accessToken: string }> {
-    const user = await this.userRepository.findOne({ where: { email: dto.email } });
+  async login(dto: LoginDto, clientIp: string | null): Promise<{ accessToken: string; passwordResetRequired: boolean; role: GlobalRole }> {
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.userRepository.findOne({ where: { email } });
     if (!user) {
       await this.logsService.writeAccessLog({
         userId: null,
-        userEmail: dto.email.trim().toLowerCase(),
+        userEmail: email,
         clientIp,
         eventType: "LOGIN",
         authProvider: "password",
@@ -138,7 +141,11 @@ export class AuthService {
       status: "success",
       detail: null,
     });
-    return { accessToken: await this.signToken(user) };
+    return {
+      accessToken: await this.signToken(user),
+      passwordResetRequired: user.passwordResetRequired,
+      role: user.globalRole,
+    };
   }
 
   async logout(userId: string, clientIp: string | null): Promise<void> {
@@ -158,13 +165,16 @@ export class AuthService {
     return this.userRepository.findOne({ where: { id: userId } });
   }
 
-  async getProfile(userId: string): Promise<{ sub: string; email: string; role: GlobalRole; displayName: string }> {
+  async getProfile(
+    userId: string,
+  ): Promise<{ sub: string; email: string; role: GlobalRole; displayName: string; passwordResetRequired: boolean }> {
     const user = await this.userRepository.findOneByOrFail({ id: userId });
     return {
       sub: user.id,
       email: user.email,
       role: user.globalRole,
       displayName: user.displayName,
+      passwordResetRequired: user.passwordResetRequired,
     };
   }
 
@@ -199,6 +209,46 @@ export class AuthService {
     const user = await this.userRepository.findOneByOrFail({ id: userId });
     user.displayName = dto.displayName.trim();
     return this.userRepository.save(user);
+  }
+
+  async resetUserPassword(userId: string, temporaryPassword: string, actorUserId: string): Promise<{ success: true }> {
+    const user = await this.userRepository.findOneByOrFail({ id: userId });
+    if (user.approvalStatus !== "approved") {
+      throw new ConflictException("Only approved users can receive a temporary password");
+    }
+
+    user.passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    user.passwordResetRequired = true;
+    user.passwordResetIssuedAt = new Date();
+    await this.userRepository.save(user);
+    await this.logsService.writeAuditLog({
+      userId: actorUserId,
+      actionKey: "auth.user.password_reset",
+      targetType: "user",
+      targetId: user.id,
+      metadata: {
+        targetEmail: user.email,
+        passwordResetRequired: true,
+      },
+    });
+    return { success: true };
+  }
+
+  async setMyPassword(userId: string, password: string): Promise<void> {
+    const user = await this.userRepository.findOneByOrFail({ id: userId });
+    user.passwordHash = await bcrypt.hash(password, 10);
+    user.passwordResetRequired = false;
+    user.passwordResetIssuedAt = null;
+    await this.userRepository.save(user);
+    await this.logsService.writeAuditLog({
+      userId,
+      actionKey: "auth.user.password_set",
+      targetType: "user",
+      targetId: user.id,
+      metadata: {
+        email: user.email,
+      },
+    });
   }
 
   async deleteUser(userId: string, actorUserId: string): Promise<void> {
@@ -255,13 +305,15 @@ export class AuthService {
     if (!user) {
       const tempPassword = `sso-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       user = await this.userRepository.save(
-        this.userRepository.create({
+      this.userRepository.create({
           email,
           passwordHash: await bcrypt.hash(tempPassword, 10),
           displayName: displayName?.trim() || email.split("@")[0],
           globalRole: GlobalRole.USER,
           approvalStatus: "approved",
           approvedAt: new Date(),
+          passwordResetRequired: false,
+          passwordResetIssuedAt: null,
         }),
       );
       await this.gitlabService.ensureUser(user.email, user.displayName, tempPassword);
@@ -289,6 +341,8 @@ export class AuthService {
       }
       existing.approvalStatus = "approved";
       existing.approvedAt = existing.approvedAt ?? new Date();
+      existing.passwordResetRequired = false;
+      existing.passwordResetIssuedAt = null;
       await this.userRepository.save(existing);
       await this.gitlabService.ensureUser(existing.email, existing.displayName, password);
       await this.ensureLiteLlmUserKey(existing.id, existing.email, existing.displayName, "ensureInitialAdmin:existing");
@@ -303,6 +357,8 @@ export class AuthService {
       globalRole: GlobalRole.ADMIN,
       approvalStatus: "approved",
       approvedAt: new Date(),
+      passwordResetRequired: false,
+      passwordResetIssuedAt: null,
     });
     await this.userRepository.save(user);
     await this.gitlabService.ensureUser(user.email, user.displayName, finalPassword);

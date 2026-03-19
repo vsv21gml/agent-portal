@@ -8,3 +8,7 @@ export function getPortalOrigin(): string {
 export function getAdminLoginPath(nextPath: string): string {
   return `/login?next=${encodeURIComponent(nextPath || "/")}`;
 }
+
+export function getAdminResetPasswordPath(nextPath: string): string {
+  return `/reset-password?next=${encodeURIComponent(nextPath || "/")}`;
+}

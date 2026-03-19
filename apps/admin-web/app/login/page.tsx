@@ -5,10 +5,10 @@ import { notifications } from "@mantine/notifications";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { setToken } from "../../src/lib/auth";
-import { getPortalOrigin } from "../../src/lib/auth-routing";
+import { getAdminResetPasswordPath, getPortalOrigin } from "../../src/lib/auth-routing";
 import { apiFetch } from "../../src/lib/api-client";
 
-type AuthResponse = { accessToken: string };
+type AuthResponse = { accessToken: string; passwordResetRequired: boolean; role: string };
 
 function LoginContent() {
   const router = useRouter();
@@ -32,6 +32,21 @@ function LoginContent() {
       }
       const data = (await response.json()) as AuthResponse;
       setToken(data.accessToken);
+
+      if (data.role !== "admin") {
+        notifications.show({
+          title: "Access denied",
+          message: "Admin permission is required.",
+          color: "red",
+        });
+        window.location.assign(getPortalOrigin());
+        return;
+      }
+
+      if (data.passwordResetRequired) {
+        router.push(getAdminResetPasswordPath(nextPath));
+        return;
+      }
 
       const me = await apiFetch<{ role: string }>("auth/me");
       if (me.role !== "admin") {

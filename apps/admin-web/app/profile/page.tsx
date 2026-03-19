@@ -23,13 +23,14 @@ import { useRouter } from "next/navigation";
 import { AdminFrame } from "../../src/components/admin-frame";
 import { ProfileMenu } from "../../src/components/profile-menu";
 import { ApiError, apiFetch } from "../../src/lib/api-client";
-import { getAdminLoginPath, getPortalOrigin } from "../../src/lib/auth-routing";
+import { getAdminLoginPath, getAdminResetPasswordPath, getPortalOrigin } from "../../src/lib/auth-routing";
 
 type MyProfile = {
   sub: string;
   email: string;
   role: string;
   displayName: string;
+  passwordResetRequired: boolean;
 };
 
 type MyLiteLlmUsage = {
@@ -81,6 +82,10 @@ export default function AdminProfilePage() {
         apiFetch<MyLiteLlmUsage>("llm/me/usage"),
         apiFetch<MyLiteLlmAccess>("llm/me/access"),
       ]);
+      if (me.passwordResetRequired) {
+        router.replace(getAdminResetPasswordPath("/profile"));
+        return;
+      }
       if (me.role !== "admin") {
         window.location.assign(getPortalOrigin());
         return;

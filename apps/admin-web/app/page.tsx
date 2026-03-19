@@ -10,6 +10,7 @@ import {
   Menu,
   LoadingOverlay,
   NumberInput,
+  PasswordInput,
   Paper,
   Pagination,
   RingProgress,
@@ -29,7 +30,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { AdminFrame } from "../src/components/admin-frame";
 import { ProfileMenu } from "../src/components/profile-menu";
 import { ApiError, apiFetch } from "../src/lib/api-client";
-import { getAdminLoginPath, getPortalOrigin } from "../src/lib/auth-routing";
+import { getAdminLoginPath, getAdminResetPasswordPath, getPortalOrigin } from "../src/lib/auth-routing";
 import { AdminSection, adminNavigation } from "../src/lib/admin-navigation";
 
 type UserRow = {
@@ -38,6 +39,7 @@ type UserRow = {
   displayName: string;
   globalRole: string;
   approvalStatus: string;
+  passwordResetRequired: boolean;
   createdAt: string;
   currentMonthSpendUsd: number;
   currentMonthBudgetUsd: number | null;
@@ -479,6 +481,10 @@ export default function AdminPage() {
   const [selectedProjectMemberRole, setSelectedProjectMemberRole] = useState<string | null>("member");
   const [pendingRoleChanges, setPendingRoleChanges] = useState<Record<string, "admin" | "user">>({});
   const [savingRoleChanges, setSavingRoleChanges] = useState(false);
+  const [passwordResetUser, setPasswordResetUser] = useState<UserRow | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [confirmTemporaryPassword, setConfirmTemporaryPassword] = useState("");
+  const [resettingUserPassword, setResettingUserPassword] = useState(false);
   const [reviewingUserId, setReviewingUserId] = useState<string | null>(null);
   const [reviewingProjectId, setReviewingProjectId] = useState<string | null>(null);
   const [stoppingWorkspaceResourceId, setStoppingWorkspaceResourceId] = useState<string | null>(null);
@@ -545,12 +551,17 @@ export default function AdminPage() {
   const [authChecking, setAuthChecking] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const verifyAdmin = async () => {
-    const me = await apiFetch<{ role: string }>("auth/me");
+  const verifyAdmin = async (): Promise<boolean> => {
+    const me = await apiFetch<{ role: string; passwordResetRequired: boolean }>("auth/me");
+    if (me.passwordResetRequired) {
+      router.replace(getAdminResetPasswordPath(pathname));
+      return false;
+    }
     if (me.role !== "admin") {
       window.location.assign(getPortalOrigin());
-      throw new Error("Admin role required");
+      return false;
     }
+    return true;
   };
 
   const loadUsersData = async () => {
@@ -672,7 +683,10 @@ export default function AdminPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        await verifyAdmin();
+        const verified = await verifyAdmin();
+        if (!verified) {
+          return;
+        }
         await loadSectionData();
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
@@ -853,6 +867,68 @@ export default function AdminPage() {
       notifications.show({ title: "Failed", message: `Failed to ${action} project request.`, color: "red" });
     } finally {
       setReviewingProjectId(null);
+    }
+  };
+
+  const openPasswordResetDrawer = (user: UserRow) => {
+    setPasswordResetUser(user);
+    setTemporaryPassword("");
+    setConfirmTemporaryPassword("");
+  };
+
+  const closePasswordResetDrawer = () => {
+    if (resettingUserPassword) {
+      return;
+    }
+    setPasswordResetUser(null);
+    setTemporaryPassword("");
+    setConfirmTemporaryPassword("");
+  };
+
+  const resetUserPassword = async () => {
+    if (!passwordResetUser) {
+      return;
+    }
+    if (temporaryPassword.length < 8) {
+      notifications.show({
+        title: "Invalid password",
+        message: "Temporary password must be at least 8 characters.",
+        color: "red",
+      });
+      return;
+    }
+    if (temporaryPassword !== confirmTemporaryPassword) {
+      notifications.show({
+        title: "Mismatch",
+        message: "Temporary password confirmation does not match.",
+        color: "red",
+      });
+      return;
+    }
+
+    setResettingUserPassword(true);
+    try {
+      await apiFetch(`auth/users/${passwordResetUser.id}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ temporaryPassword }),
+      });
+      await loadUsersData();
+      notifications.show({
+        title: "Temporary password set",
+        message: `Temporary password issued for ${passwordResetUser.email}.`,
+        color: "teal",
+      });
+      setPasswordResetUser(null);
+      setTemporaryPassword("");
+      setConfirmTemporaryPassword("");
+    } catch {
+      notifications.show({
+        title: "Failed",
+        message: "Failed to reset user password.",
+        color: "red",
+      });
+    } finally {
+      setResettingUserPassword(false);
     }
   };
 
@@ -1880,8 +1956,10 @@ export default function AdminPage() {
                     <Table.Th>Email</Table.Th>
                     <Table.Th>Name</Table.Th>
                     <Table.Th>Role</Table.Th>
+                    <Table.Th>Password</Table.Th>
                     <Table.Th>Created</Table.Th>
                     <Table.Th>Monthly Usage / Budget</Table.Th>
+                    <Table.Th>Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -1922,8 +2000,18 @@ export default function AdminPage() {
                             style={{ minWidth: 140 }}
                           />
                         </Table.Td>
+                        <Table.Td>
+                          <Badge variant="light" color={user.passwordResetRequired ? "orange" : "teal"}>
+                            {user.passwordResetRequired ? "Temporary password active" : "Normal"}
+                          </Badge>
+                        </Table.Td>
                         <Table.Td>{new Date(user.createdAt).toLocaleString()}</Table.Td>
                         <Table.Td>{formatBudgetUsage(user.currentMonthSpendUsd, user.currentMonthBudgetUsd)}</Table.Td>
+                        <Table.Td>
+                          <Button size="xs" variant="light" onClick={() => openPasswordResetDrawer(user)}>
+                            Reset Password
+                          </Button>
+                        </Table.Td>
                       </Table.Tr>
                     ))}
                 </Table.Tbody>
@@ -3104,6 +3192,43 @@ export default function AdminPage() {
             </ScrollArea>
           </Stack>
         )}
+      </Drawer>
+
+      <Drawer
+        opened={Boolean(passwordResetUser)}
+        onClose={closePasswordResetDrawer}
+        title="Reset User Password"
+        position="right"
+        closeOnClickOutside={!resettingUserPassword}
+        closeOnEscape={!resettingUserPassword}
+        withCloseButton={!resettingUserPassword}
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            The user will sign in with this temporary password once, then must set a new personal password before continuing.
+          </Text>
+          <TextInput label="User" value={passwordResetUser?.email ?? ""} readOnly />
+          <PasswordInput
+            label="Temporary Password"
+            value={temporaryPassword}
+            onChange={(event) => setTemporaryPassword(event.currentTarget.value)}
+            disabled={resettingUserPassword}
+          />
+          <PasswordInput
+            label="Confirm Temporary Password"
+            value={confirmTemporaryPassword}
+            onChange={(event) => setConfirmTemporaryPassword(event.currentTarget.value)}
+            disabled={resettingUserPassword}
+          />
+          <Group justify="end">
+            <Button variant="default" onClick={closePasswordResetDrawer} disabled={resettingUserPassword}>
+              Cancel
+            </Button>
+            <Button onClick={() => void resetUserPassword()} loading={resettingUserPassword} disabled={resettingUserPassword}>
+              Save Temporary Password
+            </Button>
+          </Group>
+        </Stack>
       </Drawer>
 
       <Drawer opened={detailProject !== null} onClose={() => setDetailProject(null)} title="Project Detail" position="right" size="xl">

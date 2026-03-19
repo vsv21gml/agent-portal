@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, apiFetch } from "../lib/api-client";
 import { clearToken } from "../lib/auth";
+import { getPortalLoginPath, getPortalResetPasswordPath } from "../lib/auth-routing";
 import { toastError } from "../lib/toast";
 
 type MyProfile = {
@@ -12,6 +13,7 @@ type MyProfile = {
   email: string;
   role: string;
   displayName: string;
+  passwordResetRequired: boolean;
 };
 
 export function ProfileMenu() {
@@ -22,11 +24,15 @@ export function ProfileMenu() {
     const load = async () => {
       try {
         const me = await apiFetch<MyProfile>("auth/me");
+        if (me.passwordResetRequired) {
+          router.replace(getPortalResetPasswordPath("/portal"));
+          return;
+        }
         setProfile(me);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           clearToken();
-          router.replace("/login?next=/portal");
+          router.replace(getPortalLoginPath("/portal"));
           return;
         }
         toastError("Failed to load profile.");
@@ -43,7 +49,7 @@ export function ProfileMenu() {
       // ignore logout logging failures on client
     } finally {
       clearToken();
-      router.replace("/login?next=/portal");
+      router.replace(getPortalLoginPath("/portal"));
     }
   };
 

@@ -6,13 +6,14 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, apiFetch } from "../lib/api-client";
 import { clearToken } from "../lib/auth";
-import { getAdminLoginPath, getPortalOrigin } from "../lib/auth-routing";
+import { getAdminLoginPath, getAdminResetPasswordPath, getPortalOrigin } from "../lib/auth-routing";
 
 type MyProfile = {
   sub: string;
   email: string;
   role: string;
   displayName: string;
+  passwordResetRequired: boolean;
 };
 
 export function ProfileMenu() {
@@ -23,6 +24,10 @@ export function ProfileMenu() {
     const load = async () => {
       try {
         const me = await apiFetch<MyProfile>("auth/me");
+        if (me.passwordResetRequired) {
+          router.replace(getAdminResetPasswordPath("/"));
+          return;
+        }
         setProfile(me);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {

@@ -9,6 +9,8 @@ import { AcceptInvitationDto } from "./dto/accept-invitation.dto";
 import { CreateInvitationDto } from "./dto/create-invitation.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
+import { ResetUserPasswordDto } from "./dto/reset-user-password.dto";
+import { SetPasswordDto } from "./dto/set-password.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateRolePermissionsDto } from "./dto/update-role-permissions.dto";
 import { CurrentUser } from "./decorators/current-user.decorator";
@@ -49,6 +51,12 @@ export class AuthController {
   @Get("me")
   me(@CurrentUser() user: JwtPayload) {
     return this.authService.getProfile(user.sub);
+  }
+
+  @Post("me/password")
+  async setMyPassword(@CurrentUser() user: JwtPayload, @Body() dto: SetPasswordDto) {
+    await this.authService.setMyPassword(user.sub, dto.password);
+    return { success: true };
   }
 
   @Post("logout")
@@ -124,6 +132,17 @@ export class AuthController {
   @Patch("users/:userId")
   updateUser(@Param("userId") userId: string, @Body() dto: UpdateUserDto) {
     return this.authService.updateUser(userId, dto);
+  }
+
+  @Roles(GlobalRole.ADMIN)
+  @Permissions(Permission.WRITE_USER_ROLE)
+  @Post("users/:userId/reset-password")
+  async resetUserPassword(
+    @Param("userId") userId: string,
+    @Body() dto: ResetUserPasswordDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.authService.resetUserPassword(userId, dto.temporaryPassword, user.sub);
   }
 
   @Roles(GlobalRole.ADMIN)

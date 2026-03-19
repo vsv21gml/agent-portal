@@ -7,6 +7,7 @@ import { AppFrame } from "../../src/components/app-frame";
 import { ProfileMenu } from "../../src/components/profile-menu";
 import { ProjectTable } from "../../src/components/project-table";
 import { ApiError, apiFetch } from "../../src/lib/api-client";
+import { getPortalLoginPath, getPortalResetPasswordPath } from "../../src/lib/auth-routing";
 import { toastError, toastSuccess } from "../../src/lib/toast";
 import { Project } from "../../src/types/project";
 
@@ -34,14 +35,18 @@ export default function UserPortalPage() {
   useEffect(() => {
     const ensureAuth = async () => {
       try {
-        await apiFetch("auth/me");
+        const me = await apiFetch<{ passwordResetRequired: boolean }>("auth/me");
+        if (me.passwordResetRequired) {
+          router.replace(getPortalResetPasswordPath("/portal"));
+          return;
+        }
         await loadProjects();
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          router.replace("/login?next=/portal");
+          router.replace(getPortalLoginPath("/portal"));
           return;
         }
-        router.replace("/login?next=/portal");
+        router.replace(getPortalLoginPath("/portal"));
       } finally {
         setAuthChecking(false);
       }

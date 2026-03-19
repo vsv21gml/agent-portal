@@ -31,6 +31,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { AppFrame } from "../../../../src/components/app-frame";
 import { ProfileMenu } from "../../../../src/components/profile-menu";
 import { ApiError, apiFetch } from "../../../../src/lib/api-client";
+import { getPortalLoginPath, getPortalResetPasswordPath } from "../../../../src/lib/auth-routing";
 import { toastError, toastSuccess } from "../../../../src/lib/toast";
 import { Project } from "../../../../src/types/project";
 
@@ -38,6 +39,7 @@ type CurrentUser = {
   sub: string;
   email: string;
   role: string;
+  passwordResetRequired: boolean;
 };
 
 type PortalUser = {
@@ -879,11 +881,15 @@ export default function ProjectDetailPage() {
     const load = async () => {
       try {
         const me = await apiFetch<CurrentUser>("auth/me");
+        if (me.passwordResetRequired) {
+          router.replace(getPortalResetPasswordPath(pathname));
+          return;
+        }
         setCurrentUser(me);
         await loadSectionData(projectId);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
-          router.replace(`/login?next=${pathname}`);
+          router.replace(getPortalLoginPath(pathname));
           return;
         }
         toastError("Failed to load project.");

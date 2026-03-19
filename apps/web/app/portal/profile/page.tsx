@@ -22,6 +22,7 @@ import { useRouter } from "next/navigation";
 import { AppFrame } from "../../../src/components/app-frame";
 import { ProfileMenu } from "../../../src/components/profile-menu";
 import { ApiError, apiFetch } from "../../../src/lib/api-client";
+import { getPortalLoginPath, getPortalResetPasswordPath } from "../../../src/lib/auth-routing";
 import { toastError, toastSuccess } from "../../../src/lib/toast";
 
 type MyProfile = {
@@ -29,6 +30,7 @@ type MyProfile = {
   email: string;
   role: string;
   displayName: string;
+  passwordResetRequired: boolean;
 };
 
 type MyLiteLlmUsage = {
@@ -81,12 +83,16 @@ export default function ProfilePage() {
         apiFetch<MyLiteLlmUsage>("llm/me/usage"),
         apiFetch<MyLiteLlmAccess>("llm/me/access"),
       ]);
+      if (me.passwordResetRequired) {
+        router.replace(getPortalResetPasswordPath("/portal/profile"));
+        return;
+      }
       setProfile(me);
       setUsage(usageInfo);
       setAccess(accessInfo);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        router.replace("/login?next=/portal/profile");
+        router.replace(getPortalLoginPath("/portal/profile"));
         return;
       }
       toastError("Failed to load profile.");

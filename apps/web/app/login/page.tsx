@@ -4,9 +4,10 @@ import { Button, Group, Paper, PasswordInput, Stack, Tabs, Text, TextInput, Titl
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useState } from "react";
 import { setToken } from "../../src/lib/auth";
+import { getPortalResetPasswordPath } from "../../src/lib/auth-routing";
 import { toastError, toastSuccess } from "../../src/lib/toast";
 
-type AuthResponse = { accessToken: string };
+type AuthResponse = { accessToken: string; passwordResetRequired: boolean; role: string };
 type RegisterResponse = { accessToken: string };
 
 function LoginContent() {
@@ -34,6 +35,10 @@ function LoginContent() {
       }
       const data = (await response.json()) as AuthResponse;
       setToken(data.accessToken);
+      if (data.passwordResetRequired) {
+        router.push(getPortalResetPasswordPath(nextPath));
+        return;
+      }
       toastSuccess("로그인 완료");
       router.push(nextPath);
     } catch (error) {

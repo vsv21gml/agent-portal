@@ -24,6 +24,12 @@ export class UserEntity {
   @Column({ type: "timestamp", nullable: true })
   approvedAt!: Date | null;
 
+  @Column({ default: false })
+  passwordResetRequired!: boolean;
+
+  @Column({ type: "timestamp", nullable: true })
+  passwordResetIssuedAt!: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }
