@@ -12,6 +12,7 @@ import { ReviewModelAccessRequestDto } from "../llm/dto/review-model-access-requ
 import { SetDefaultModelDto } from "../llm/dto/set-default-model.dto";
 import { LlmService } from "../llm/llm.service";
 import { McpsService } from "../mcps/mcps.service";
+import { CreateManagedNodeGroupDto } from "./dto/create-managed-nodegroup.dto";
 import { AddProjectMemberDto } from "../projects/dto/add-project-member.dto";
 import { ProjectsService } from "../projects/projects.service";
 import { WorkspacesService } from "../workspaces/workspaces.service";
@@ -158,6 +159,42 @@ export class AdminController {
   @Permissions(Permission.WRITE_RESOURCE)
   stopMcpResource(@Param("mcpId") mcpId: string, @CurrentUser() actor: JwtPayload) {
     return this.mcpsService.adminStopMcp(mcpId, actor.sub);
+  }
+
+  @Get("resources/nodegroups/workspace")
+  @Permissions(Permission.READ_RESOURCE)
+  workspaceNodeGroups() {
+    return this.adminService.getManagedNodeGroupOverview("workspace");
+  }
+
+  @Post("resources/nodegroups/workspace")
+  @Permissions(Permission.WRITE_RESOURCE)
+  createWorkspaceNodeGroup(@Body() dto: CreateManagedNodeGroupDto) {
+    return this.adminService.createManagedNodeGroup("workspace", dto);
+  }
+
+  @Delete("resources/nodegroups/workspace/:nodeGroupName")
+  @Permissions(Permission.WRITE_RESOURCE)
+  deleteWorkspaceNodeGroup(@Param("nodeGroupName") nodeGroupName: string) {
+    return this.adminService.deleteManagedNodeGroup("workspace", decodeURIComponent(nodeGroupName));
+  }
+
+  @Get("resources/nodegroups/serving")
+  @Permissions(Permission.READ_RESOURCE)
+  servingNodeGroups() {
+    return this.adminService.getManagedNodeGroupOverview("serving");
+  }
+
+  @Post("resources/nodegroups/serving")
+  @Permissions(Permission.WRITE_RESOURCE)
+  createServingNodeGroup(@Body() dto: CreateManagedNodeGroupDto) {
+    return this.adminService.createManagedNodeGroup("serving", dto);
+  }
+
+  @Delete("resources/nodegroups/serving/:nodeGroupName")
+  @Permissions(Permission.WRITE_RESOURCE)
+  deleteServingNodeGroup(@Param("nodeGroupName") nodeGroupName: string) {
+    return this.adminService.deleteManagedNodeGroup("serving", decodeURIComponent(nodeGroupName));
   }
 
   @Get("gitlab/groups")

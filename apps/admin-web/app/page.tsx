@@ -6,6 +6,7 @@ import {
   Drawer,
   Group,
   LoadingOverlay,
+  NumberInput,
   Paper,
   Pagination,
   RingProgress,
@@ -221,6 +222,47 @@ type McpResourceOverview = {
   rows: McpResourceRow[];
 };
 
+type ManagedNodeGroupRow = {
+  nodeGroupName: string;
+  status: string;
+  desiredSize: number;
+  minSize: number;
+  maxSize: number;
+  diskSize: number | null;
+  capacityType: string | null;
+  amiType: string | null;
+  instanceTypes: string[];
+  labels: Record<string, string>;
+  taints: Array<{ key: string; value: string; effect: string }>;
+  matchingNodeCount: number;
+  matchingNodeNames: string[];
+  createdAt: string | null;
+};
+
+type ManagedNodeGroupOverview = {
+  configured: boolean;
+  poolType: "workspace" | "serving";
+  clusterName: string | null;
+  region: string;
+  nodeRoleArnConfigured: boolean;
+  subnetCount: number;
+  scheduling: {
+    selector: Record<string, string>;
+    tolerations: Array<{ key?: string; operator?: string; value?: string; effect?: string }>;
+  };
+  defaults: {
+    instanceTypes: string[];
+    minSize: number;
+    maxSize: number;
+    desiredSize: number;
+    diskSize: number;
+    capacityType: string | null;
+    amiType: string | null;
+  };
+  nodeGroups: ManagedNodeGroupRow[];
+  message: string | null;
+};
+
 type AgentAdminRow = {
   id: string;
   projectId: string;
@@ -373,6 +415,8 @@ export default function AdminPage() {
   const [workspaceResourceOverview, setWorkspaceResourceOverview] = useState<WorkspaceResourceOverview | null>(null);
   const [agentResourceOverview, setAgentResourceOverview] = useState<AgentResourceOverview | null>(null);
   const [mcpResourceOverview, setMcpResourceOverview] = useState<McpResourceOverview | null>(null);
+  const [workspaceNodeGroupOverview, setWorkspaceNodeGroupOverview] = useState<ManagedNodeGroupOverview | null>(null);
+  const [servingNodeGroupOverview, setServingNodeGroupOverview] = useState<ManagedNodeGroupOverview | null>(null);
   const [resourceTab, setResourceTab] = useState<string | null>("workspace");
   const [workspaceResourceTab, setWorkspaceResourceTab] = useState<string | null>("deployments");
   const [servingResourceTab, setServingResourceTab] = useState<string | null>("deployments");
@@ -416,6 +460,26 @@ export default function AdminPage() {
   const [reviewingProjectId, setReviewingProjectId] = useState<string | null>(null);
   const [stoppingWorkspaceResourceId, setStoppingWorkspaceResourceId] = useState<string | null>(null);
   const [stoppingServingResourceKey, setStoppingServingResourceKey] = useState<string | null>(null);
+  const [workspaceNodeGroupName, setWorkspaceNodeGroupName] = useState("");
+  const [workspaceNodeInstanceTypes, setWorkspaceNodeInstanceTypes] = useState("");
+  const [workspaceNodeMinSize, setWorkspaceNodeMinSize] = useState<number | string>(1);
+  const [workspaceNodeMaxSize, setWorkspaceNodeMaxSize] = useState<number | string>(3);
+  const [workspaceNodeDesiredSize, setWorkspaceNodeDesiredSize] = useState<number | string>(1);
+  const [workspaceNodeDiskSize, setWorkspaceNodeDiskSize] = useState<number | string>(50);
+  const [workspaceNodeCapacityType, setWorkspaceNodeCapacityType] = useState<string | null>("ON_DEMAND");
+  const [workspaceNodeAmiType, setWorkspaceNodeAmiType] = useState("");
+  const [creatingWorkspaceNodeGroup, setCreatingWorkspaceNodeGroup] = useState(false);
+  const [deletingWorkspaceNodeGroupName, setDeletingWorkspaceNodeGroupName] = useState<string | null>(null);
+  const [servingNodeGroupName, setServingNodeGroupName] = useState("");
+  const [servingNodeInstanceTypes, setServingNodeInstanceTypes] = useState("");
+  const [servingNodeMinSize, setServingNodeMinSize] = useState<number | string>(1);
+  const [servingNodeMaxSize, setServingNodeMaxSize] = useState<number | string>(3);
+  const [servingNodeDesiredSize, setServingNodeDesiredSize] = useState<number | string>(1);
+  const [servingNodeDiskSize, setServingNodeDiskSize] = useState<number | string>(50);
+  const [servingNodeCapacityType, setServingNodeCapacityType] = useState<string | null>("ON_DEMAND");
+  const [servingNodeAmiType, setServingNodeAmiType] = useState("");
+  const [creatingServingNodeGroup, setCreatingServingNodeGroup] = useState(false);
+  const [deletingServingNodeGroupName, setDeletingServingNodeGroupName] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteDisplayName, setInviteDisplayName] = useState("");
@@ -478,14 +542,18 @@ export default function AdminPage() {
   };
 
   const loadResourceData = async () => {
-    const [workspaceResult, agentResult, mcpResult] = await Promise.all([
+    const [workspaceResult, agentResult, mcpResult, workspaceNodeGroupsResult, servingNodeGroupsResult] = await Promise.all([
       apiFetch<WorkspaceResourceOverview>("admin/resources/workspaces"),
       apiFetch<AgentResourceOverview>("admin/resources/agents"),
       apiFetch<McpResourceOverview>("admin/resources/mcps"),
+      apiFetch<ManagedNodeGroupOverview>("admin/resources/nodegroups/workspace"),
+      apiFetch<ManagedNodeGroupOverview>("admin/resources/nodegroups/serving"),
     ]);
     setWorkspaceResourceOverview(workspaceResult);
     setAgentResourceOverview(agentResult);
     setMcpResourceOverview(mcpResult);
+    setWorkspaceNodeGroupOverview(workspaceNodeGroupsResult);
+    setServingNodeGroupOverview(servingNodeGroupsResult);
   };
 
   const loadGitlabData = async () => {
@@ -581,6 +649,32 @@ export default function AdminPage() {
   useEffect(() => {
     setPendingRoleChanges({});
   }, [users]);
+
+  useEffect(() => {
+    if (!workspaceNodeGroupOverview) {
+      return;
+    }
+    setWorkspaceNodeInstanceTypes(workspaceNodeGroupOverview.defaults.instanceTypes.join(", "));
+    setWorkspaceNodeMinSize(workspaceNodeGroupOverview.defaults.minSize);
+    setWorkspaceNodeMaxSize(workspaceNodeGroupOverview.defaults.maxSize);
+    setWorkspaceNodeDesiredSize(workspaceNodeGroupOverview.defaults.desiredSize);
+    setWorkspaceNodeDiskSize(workspaceNodeGroupOverview.defaults.diskSize);
+    setWorkspaceNodeCapacityType(workspaceNodeGroupOverview.defaults.capacityType ?? "ON_DEMAND");
+    setWorkspaceNodeAmiType(workspaceNodeGroupOverview.defaults.amiType ?? "");
+  }, [workspaceNodeGroupOverview]);
+
+  useEffect(() => {
+    if (!servingNodeGroupOverview) {
+      return;
+    }
+    setServingNodeInstanceTypes(servingNodeGroupOverview.defaults.instanceTypes.join(", "));
+    setServingNodeMinSize(servingNodeGroupOverview.defaults.minSize);
+    setServingNodeMaxSize(servingNodeGroupOverview.defaults.maxSize);
+    setServingNodeDesiredSize(servingNodeGroupOverview.defaults.desiredSize);
+    setServingNodeDiskSize(servingNodeGroupOverview.defaults.diskSize);
+    setServingNodeCapacityType(servingNodeGroupOverview.defaults.capacityType ?? "ON_DEMAND");
+    setServingNodeAmiType(servingNodeGroupOverview.defaults.amiType ?? "");
+  }, [servingNodeGroupOverview]);
 
   useEffect(() => {
     setGitlabGroupPage(1);
@@ -881,6 +975,89 @@ export default function AdminPage() {
       notifications.show({ title: "Failed", message: `Failed to stop ${type} deployment.`, color: "red" });
     } finally {
       setStoppingServingResourceKey(null);
+    }
+  };
+
+  const parseInstanceTypes = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const createManagedNodeGroup = async (poolType: "workspace" | "serving") => {
+    const isWorkspace = poolType === "workspace";
+    const nodeGroupName = (isWorkspace ? workspaceNodeGroupName : servingNodeGroupName).trim();
+    if (!nodeGroupName) {
+      notifications.show({ title: "Required", message: "Enter a nodegroup name.", color: "yellow" });
+      return;
+    }
+
+    const payload = {
+      nodeGroupName,
+      instanceTypes: parseInstanceTypes(isWorkspace ? workspaceNodeInstanceTypes : servingNodeInstanceTypes),
+      minSize: Number(isWorkspace ? workspaceNodeMinSize : servingNodeMinSize),
+      maxSize: Number(isWorkspace ? workspaceNodeMaxSize : servingNodeMaxSize),
+      desiredSize: Number(isWorkspace ? workspaceNodeDesiredSize : servingNodeDesiredSize),
+      diskSize: Number(isWorkspace ? workspaceNodeDiskSize : servingNodeDiskSize),
+      capacityType: (isWorkspace ? workspaceNodeCapacityType : servingNodeCapacityType) ?? undefined,
+      amiType: (isWorkspace ? workspaceNodeAmiType : servingNodeAmiType).trim() || undefined,
+    };
+
+    if (isWorkspace) {
+      setCreatingWorkspaceNodeGroup(true);
+    } else {
+      setCreatingServingNodeGroup(true);
+    }
+
+    try {
+      const result = await apiFetch<ManagedNodeGroupOverview>(`admin/resources/nodegroups/${poolType}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      if (isWorkspace) {
+        setWorkspaceNodeGroupOverview(result);
+        setWorkspaceNodeGroupName("");
+      } else {
+        setServingNodeGroupOverview(result);
+        setServingNodeGroupName("");
+      }
+      notifications.show({ title: "Requested", message: `${poolType === "workspace" ? "Workspace" : "Serving"} nodegroup creation requested.`, color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: `Failed to create ${poolType} nodegroup.`, color: "red" });
+    } finally {
+      if (isWorkspace) {
+        setCreatingWorkspaceNodeGroup(false);
+      } else {
+        setCreatingServingNodeGroup(false);
+      }
+    }
+  };
+
+  const deleteManagedNodeGroup = async (poolType: "workspace" | "serving", nodeGroupName: string) => {
+    if (poolType === "workspace") {
+      setDeletingWorkspaceNodeGroupName(nodeGroupName);
+    } else {
+      setDeletingServingNodeGroupName(nodeGroupName);
+    }
+
+    try {
+      const result = await apiFetch<ManagedNodeGroupOverview>(`admin/resources/nodegroups/${poolType}/${encodeURIComponent(nodeGroupName)}`, {
+        method: "DELETE",
+      });
+      if (poolType === "workspace") {
+        setWorkspaceNodeGroupOverview(result);
+      } else {
+        setServingNodeGroupOverview(result);
+      }
+      notifications.show({ title: "Requested", message: `${nodeGroupName} deletion requested.`, color: "teal" });
+    } catch {
+      notifications.show({ title: "Failed", message: `Failed to delete ${nodeGroupName}.`, color: "red" });
+    } finally {
+      if (poolType === "workspace") {
+        setDeletingWorkspaceNodeGroupName(null);
+      } else {
+        setDeletingServingNodeGroupName(null);
+      }
     }
   };
 
@@ -1769,6 +1946,158 @@ export default function AdminPage() {
                 <Stack gap="md">
                   <Paper withBorder p="md">
                     <Stack gap="md">
+                      <Group justify="space-between" align="center">
+                        <div>
+                          <Title order={4}>Workspace Managed Nodegroups</Title>
+                          <Text size="sm" c="dimmed">
+                            Create and delete EKS managed nodegroups that match the workspace scheduling policy.
+                          </Text>
+                        </div>
+                        <Badge variant="light">{workspaceNodeGroupOverview?.nodeGroups.length ?? 0} groups</Badge>
+                      </Group>
+
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Cluster
+                          </Text>
+                          <Text mt="sm" fw={700}>
+                            {workspaceNodeGroupOverview?.clusterName ?? "-"}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="xs">
+                            {workspaceNodeGroupOverview?.region ?? "-"} / subnets {workspaceNodeGroupOverview?.subnetCount ?? 0}
+                          </Text>
+                        </Paper>
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Selector
+                          </Text>
+                          <Text mt="sm" fw={700} size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                            {JSON.stringify(workspaceNodeGroupOverview?.scheduling.selector ?? {}, null, 2)}
+                          </Text>
+                        </Paper>
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Tolerations
+                          </Text>
+                          <Text mt="sm" fw={700} size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                            {JSON.stringify(workspaceNodeGroupOverview?.scheduling.tolerations ?? [], null, 2)}
+                          </Text>
+                        </Paper>
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            AWS Config
+                          </Text>
+                          <Text mt="sm" fw={700}>
+                            {workspaceNodeGroupOverview?.configured ? "Ready" : "Missing"}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="xs">
+                            {workspaceNodeGroupOverview?.message ?? "AWS credentials and EKS settings are configured."}
+                          </Text>
+                        </Paper>
+                      </SimpleGrid>
+
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <TextInput
+                          label="Nodegroup Name"
+                          placeholder="workspace-general-a"
+                          value={workspaceNodeGroupName}
+                          onChange={(event) => setWorkspaceNodeGroupName(event.currentTarget.value)}
+                        />
+                        <TextInput
+                          label="Instance Types"
+                          placeholder="t3.large, t3.xlarge"
+                          value={workspaceNodeInstanceTypes}
+                          onChange={(event) => setWorkspaceNodeInstanceTypes(event.currentTarget.value)}
+                        />
+                        <Select
+                          label="Capacity Type"
+                          data={[
+                            { value: "ON_DEMAND", label: "ON_DEMAND" },
+                            { value: "SPOT", label: "SPOT" },
+                          ]}
+                          value={workspaceNodeCapacityType}
+                          onChange={setWorkspaceNodeCapacityType}
+                        />
+                        <TextInput
+                          label="AMI Type"
+                          placeholder="AL2_x86_64"
+                          value={workspaceNodeAmiType}
+                          onChange={(event) => setWorkspaceNodeAmiType(event.currentTarget.value)}
+                        />
+                        <NumberInput label="Min Size" value={workspaceNodeMinSize} onChange={setWorkspaceNodeMinSize} min={0} />
+                        <NumberInput label="Max Size" value={workspaceNodeMaxSize} onChange={setWorkspaceNodeMaxSize} min={0} />
+                        <NumberInput label="Desired Size" value={workspaceNodeDesiredSize} onChange={setWorkspaceNodeDesiredSize} min={0} />
+                        <NumberInput label="Disk Size (GiB)" value={workspaceNodeDiskSize} onChange={setWorkspaceNodeDiskSize} min={20} />
+                      </SimpleGrid>
+
+                      <Group justify="end">
+                        <Button
+                          loading={creatingWorkspaceNodeGroup}
+                          disabled={!workspaceNodeGroupOverview?.configured}
+                          onClick={() => void createManagedNodeGroup("workspace")}
+                        >
+                          Create Workspace Nodegroup
+                        </Button>
+                      </Group>
+
+                      <ScrollArea>
+                        <Table withTableBorder highlightOnHover>
+                          <Table.Thead>
+                            <Table.Tr>
+                              <Table.Th>Nodegroup</Table.Th>
+                              <Table.Th>Status</Table.Th>
+                              <Table.Th>Scale</Table.Th>
+                              <Table.Th>Instances</Table.Th>
+                              <Table.Th>Nodes</Table.Th>
+                              <Table.Th>Created</Table.Th>
+                              <Table.Th>Actions</Table.Th>
+                            </Table.Tr>
+                          </Table.Thead>
+                          <Table.Tbody>
+                            {workspaceNodeGroupOverview?.nodeGroups.length ? (
+                              workspaceNodeGroupOverview.nodeGroups.map((group) => (
+                                <Table.Tr key={group.nodeGroupName}>
+                                  <Table.Td>{group.nodeGroupName}</Table.Td>
+                                  <Table.Td>
+                                    <Badge variant="light">{group.status}</Badge>
+                                  </Table.Td>
+                                  <Table.Td>
+                                    {group.minSize} / {group.desiredSize} / {group.maxSize}
+                                  </Table.Td>
+                                  <Table.Td>{group.instanceTypes.join(", ") || "-"}</Table.Td>
+                                  <Table.Td>{group.matchingNodeCount}</Table.Td>
+                                  <Table.Td>{group.createdAt ? new Date(group.createdAt).toLocaleString() : "-"}</Table.Td>
+                                  <Table.Td>
+                                    <Button
+                                      size="xs"
+                                      color="red"
+                                      variant="light"
+                                      loading={deletingWorkspaceNodeGroupName === group.nodeGroupName}
+                                      onClick={() => void deleteManagedNodeGroup("workspace", group.nodeGroupName)}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </Table.Td>
+                                </Table.Tr>
+                              ))
+                            ) : (
+                              <Table.Tr>
+                                <Table.Td colSpan={7}>
+                                  <Text size="sm" c="dimmed">
+                                    No workspace nodegroups matched the configured selector/taints.
+                                  </Text>
+                                </Table.Td>
+                              </Table.Tr>
+                            )}
+                          </Table.Tbody>
+                        </Table>
+                      </ScrollArea>
+                    </Stack>
+                  </Paper>
+
+                  <Paper withBorder p="md">
+                    <Stack gap="md">
                       <Title order={4}>Workspace Resource Overview</Title>
                       <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
                         <Paper withBorder p="md" radius="md">
@@ -1959,6 +2288,158 @@ export default function AdminPage() {
 
               <Tabs.Panel value="serving" pt="md">
                 <Stack gap="md">
+                  <Paper withBorder p="md">
+                    <Stack gap="md">
+                      <Group justify="space-between" align="center">
+                        <div>
+                          <Title order={4}>Serving Managed Nodegroups</Title>
+                          <Text size="sm" c="dimmed">
+                            Create and delete EKS managed nodegroups that match the serving scheduling policy.
+                          </Text>
+                        </div>
+                        <Badge variant="light">{servingNodeGroupOverview?.nodeGroups.length ?? 0} groups</Badge>
+                      </Group>
+
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Cluster
+                          </Text>
+                          <Text mt="sm" fw={700}>
+                            {servingNodeGroupOverview?.clusterName ?? "-"}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="xs">
+                            {servingNodeGroupOverview?.region ?? "-"} / subnets {servingNodeGroupOverview?.subnetCount ?? 0}
+                          </Text>
+                        </Paper>
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Selector
+                          </Text>
+                          <Text mt="sm" fw={700} size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                            {JSON.stringify(servingNodeGroupOverview?.scheduling.selector ?? {}, null, 2)}
+                          </Text>
+                        </Paper>
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            Tolerations
+                          </Text>
+                          <Text mt="sm" fw={700} size="sm" style={{ whiteSpace: "pre-wrap" }}>
+                            {JSON.stringify(servingNodeGroupOverview?.scheduling.tolerations ?? [], null, 2)}
+                          </Text>
+                        </Paper>
+                        <Paper withBorder p="md" radius="md">
+                          <Text size="xs" tt="uppercase" c="dimmed" fw={700}>
+                            AWS Config
+                          </Text>
+                          <Text mt="sm" fw={700}>
+                            {servingNodeGroupOverview?.configured ? "Ready" : "Missing"}
+                          </Text>
+                          <Text size="sm" c="dimmed" mt="xs">
+                            {servingNodeGroupOverview?.message ?? "AWS credentials and EKS settings are configured."}
+                          </Text>
+                        </Paper>
+                      </SimpleGrid>
+
+                      <SimpleGrid cols={{ base: 1, md: 2, xl: 4 }} spacing="md">
+                        <TextInput
+                          label="Nodegroup Name"
+                          placeholder="serving-general-a"
+                          value={servingNodeGroupName}
+                          onChange={(event) => setServingNodeGroupName(event.currentTarget.value)}
+                        />
+                        <TextInput
+                          label="Instance Types"
+                          placeholder="t3.large, t3.xlarge"
+                          value={servingNodeInstanceTypes}
+                          onChange={(event) => setServingNodeInstanceTypes(event.currentTarget.value)}
+                        />
+                        <Select
+                          label="Capacity Type"
+                          data={[
+                            { value: "ON_DEMAND", label: "ON_DEMAND" },
+                            { value: "SPOT", label: "SPOT" },
+                          ]}
+                          value={servingNodeCapacityType}
+                          onChange={setServingNodeCapacityType}
+                        />
+                        <TextInput
+                          label="AMI Type"
+                          placeholder="AL2_x86_64"
+                          value={servingNodeAmiType}
+                          onChange={(event) => setServingNodeAmiType(event.currentTarget.value)}
+                        />
+                        <NumberInput label="Min Size" value={servingNodeMinSize} onChange={setServingNodeMinSize} min={0} />
+                        <NumberInput label="Max Size" value={servingNodeMaxSize} onChange={setServingNodeMaxSize} min={0} />
+                        <NumberInput label="Desired Size" value={servingNodeDesiredSize} onChange={setServingNodeDesiredSize} min={0} />
+                        <NumberInput label="Disk Size (GiB)" value={servingNodeDiskSize} onChange={setServingNodeDiskSize} min={20} />
+                      </SimpleGrid>
+
+                      <Group justify="end">
+                        <Button
+                          loading={creatingServingNodeGroup}
+                          disabled={!servingNodeGroupOverview?.configured}
+                          onClick={() => void createManagedNodeGroup("serving")}
+                        >
+                          Create Serving Nodegroup
+                        </Button>
+                      </Group>
+
+                      <ScrollArea>
+                        <Table withTableBorder highlightOnHover>
+                          <Table.Thead>
+                            <Table.Tr>
+                              <Table.Th>Nodegroup</Table.Th>
+                              <Table.Th>Status</Table.Th>
+                              <Table.Th>Scale</Table.Th>
+                              <Table.Th>Instances</Table.Th>
+                              <Table.Th>Nodes</Table.Th>
+                              <Table.Th>Created</Table.Th>
+                              <Table.Th>Actions</Table.Th>
+                            </Table.Tr>
+                          </Table.Thead>
+                          <Table.Tbody>
+                            {servingNodeGroupOverview?.nodeGroups.length ? (
+                              servingNodeGroupOverview.nodeGroups.map((group) => (
+                                <Table.Tr key={group.nodeGroupName}>
+                                  <Table.Td>{group.nodeGroupName}</Table.Td>
+                                  <Table.Td>
+                                    <Badge variant="light">{group.status}</Badge>
+                                  </Table.Td>
+                                  <Table.Td>
+                                    {group.minSize} / {group.desiredSize} / {group.maxSize}
+                                  </Table.Td>
+                                  <Table.Td>{group.instanceTypes.join(", ") || "-"}</Table.Td>
+                                  <Table.Td>{group.matchingNodeCount}</Table.Td>
+                                  <Table.Td>{group.createdAt ? new Date(group.createdAt).toLocaleString() : "-"}</Table.Td>
+                                  <Table.Td>
+                                    <Button
+                                      size="xs"
+                                      color="red"
+                                      variant="light"
+                                      loading={deletingServingNodeGroupName === group.nodeGroupName}
+                                      onClick={() => void deleteManagedNodeGroup("serving", group.nodeGroupName)}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </Table.Td>
+                                </Table.Tr>
+                              ))
+                            ) : (
+                              <Table.Tr>
+                                <Table.Td colSpan={7}>
+                                  <Text size="sm" c="dimmed">
+                                    No serving nodegroups matched the configured selector/taints.
+                                  </Text>
+                                </Table.Td>
+                              </Table.Tr>
+                            )}
+                          </Table.Tbody>
+                        </Table>
+                      </ScrollArea>
+                    </Stack>
+                  </Paper>
+
                   <Paper withBorder p="md">
                     <Stack gap="md">
                       <Title order={4}>Serving Resource Overview</Title>
