@@ -470,6 +470,7 @@ export default function ProjectDetailPage() {
   const [endpoints, setEndpoints] = useState<ProjectEndpoint[]>([]);
   const [endpointModalOpen, setEndpointModalOpen] = useState(false);
   const [endpointName, setEndpointName] = useState("");
+  const [createEndpointTarget, setCreateEndpointTarget] = useState<string | null>(null);
   const [creatingEndpoint, setCreatingEndpoint] = useState(false);
   const [endpointConnectTarget, setEndpointConnectTarget] = useState<ProjectEndpoint | null>(null);
   const [selectedEndpointTarget, setSelectedEndpointTarget] = useState<string | null>(null);
@@ -592,6 +593,18 @@ export default function ProjectDetailPage() {
     () => mcps.filter((mcp) => ["running", "deploying"].includes(mcp.status)),
     [mcps],
   );
+  const parseEndpointTargetSelection = (value: string | null): { targetType: "agent" | "mcp"; targetId: string } | null => {
+    if (!value) {
+      return null;
+    }
+
+    const [targetType, targetId] = value.split(":");
+    if (!targetType || !targetId || (targetType !== "agent" && targetType !== "mcp")) {
+      return null;
+    }
+
+    return { targetType, targetId };
+  };
   const maxServingAgents = 2;
   const hasServingCapacity = activeServingAgents.length < maxServingAgents;
   const maxServingMcps = 2;
@@ -1139,19 +1152,31 @@ export default function ProjectDetailPage() {
       return;
     }
 
+    const target = parseEndpointTargetSelection(createEndpointTarget);
+    if (!target) {
+      toastError("Choose a running Agent or MCP server.");
+      return;
+    }
+
     setCreatingEndpoint(true);
     try {
       const created = await apiFetch<ProjectEndpoint>(`projects/${project.id}/endpoints`, {
         method: "POST",
         body: JSON.stringify({ name: endpointName.trim() }),
       });
-      setEndpoints((prev) => [...prev, created]);
+      const connected = await apiFetch<ProjectEndpoint>(`projects/${project.id}/endpoints/${created.id}/connect`, {
+        method: "POST",
+        body: JSON.stringify(target),
+      });
+      setEndpoints((prev) => [...prev, connected]);
       setEndpointModalOpen(false);
       setEndpointName("");
-      toastSuccess("Endpoint created.");
+      setCreateEndpointTarget(null);
+      await Promise.all([loadAgents(), loadMcps()]);
+      toastSuccess("Endpoint created and connected.");
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        toastError("A project can have up to 2 endpoints.");
+        toastError(error.message || "This target cannot be connected.");
       } else {
         toastError("Failed to create endpoint.");
       }
@@ -1166,8 +1191,8 @@ export default function ProjectDetailPage() {
       return;
     }
 
-    const [targetType, targetId] = selectedEndpointTarget.split(":");
-    if (!targetType || !targetId || (targetType !== "agent" && targetType !== "mcp")) {
+    const target = parseEndpointTargetSelection(selectedEndpointTarget);
+    if (!target) {
       toastError("Invalid endpoint target.");
       return;
     }
@@ -1176,7 +1201,7 @@ export default function ProjectDetailPage() {
     try {
       const updated = await apiFetch<ProjectEndpoint>(`projects/${project.id}/endpoints/${endpointConnectTarget.id}/connect`, {
         method: "POST",
-        body: JSON.stringify({ targetType, targetId }),
+        body: JSON.stringify(target),
       });
       setEndpoints((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setEndpointConnectTarget(null);
@@ -2524,7 +2549,7 @@ export default function ProjectDetailPage() {
                   <Button variant="light" onClick={() => void Promise.all([loadEndpoints(), loadAgents(), loadMcps()])}>
                     Refresh
                   </Button>
-                  <Button onClick={() => setEndpointModalOpen(true)} disabled={!isManager || endpoints.length >= 2}>
+                  <Button onClick={() => setEndpointModalOpen(true)} disabled={!isManager || endpoints.length >= 2 || endpointTargetOptions.length === 0}>
                     Create Endpoint
                   </Button>
                 </Group>
@@ -3305,7 +3330,16 @@ export default function ProjectDetailPage() {
         </Stack>
       </Modal>
 
-      <Modal opened={endpointModalOpen} onClose={() => setEndpointModalOpen(false)} title="Create Endpoint" centered>
+      <Modal
+        opened={endpointModalOpen}
+        onClose={() => {
+          setEndpointModalOpen(false);
+          setEndpointName("");
+          setCreateEndpointTarget(null);
+        }}
+        title="Create Endpoint"
+        centered
+      >
         <Stack>
           <TextInput
             label="Endpoint Name"
@@ -3313,10 +3347,19 @@ export default function ProjectDetailPage() {
             value={endpointName}
             onChange={(event) => setEndpointName(event.currentTarget.value)}
           />
+          <Select
+            label="Initial Target"
+            data={endpointTargetOptions}
+            value={createEndpointTarget}
+            onChange={setCreateEndpointTarget}
+            searchable
+            placeholder="Select running target"
+            disabled={endpointTargetOptions.length === 0}
+          />
           <Text size="sm" c="dimmed">
-            Each project can create up to 2 fixed endpoint URLs.
+            Create up to 2 fixed endpoint URLs and connect each one to one running Agent or MCP server.
           </Text>
-          <Button loading={creatingEndpoint} onClick={() => void createEndpoint()}>
+          <Button loading={creatingEndpoint} disabled={endpointTargetOptions.length === 0} onClick={() => void createEndpoint()}>
             Create Endpoint
           </Button>
         </Stack>
