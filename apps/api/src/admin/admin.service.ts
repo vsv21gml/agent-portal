@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
@@ -20,6 +20,8 @@ import { McpDeploymentEntity } from "../mcps/entities/mcp-deployment.entity";
 import { ProjectMemberEntity } from "../projects/entities/project-member.entity";
 import { ProjectEntity } from "../projects/entities/project.entity";
 import { WorkspaceSessionEntity } from "../workspaces/entities/workspace-session.entity";
+import { UpdateManagedNodeGroupScheduleDto } from "./dto/update-managed-nodegroup-schedule.dto";
+import { ManagedNodeGroupScheduleEntity } from "./entities/managed-nodegroup-schedule.entity";
 
 type WorkspaceResourceRow = {
   sessionId: string;
@@ -113,6 +115,7 @@ type ManagedNodeGroupOverview = {
     tolerations: k8s.V1Toleration[];
   };
   defaults: {
+    nodeGroupName: string;
     instanceTypes: string[];
     minSize: number;
     maxSize: number;
@@ -121,8 +124,29 @@ type ManagedNodeGroupOverview = {
     capacityType: string | null;
     amiType: string | null;
   };
+  schedule: ManagedNodeGroupScheduleView;
   nodeGroups: ManagedNodeGroupRow[];
   message: string | null;
+};
+
+type ManagedNodeGroupScheduleView = {
+  enabled: boolean;
+  timezone: string;
+  scaleUpTime: string | null;
+  scaleDownTime: string | null;
+  nodeGroupName: string | null;
+  instanceTypes: string[];
+  minSize: number | null;
+  maxSize: number | null;
+  desiredSize: number | null;
+  diskSize: number | null;
+  capacityType: string | null;
+  amiType: string | null;
+  lastScaleUpDate: string | null;
+  lastScaleDownDate: string | null;
+  lastActionAt: string | null;
+  lastActionStatus: string | null;
+  lastActionMessage: string | null;
 };
 
 type AgentResourceOverview = {
@@ -243,10 +267,11 @@ type ProjectAdminRow = {
 };
 
 @Injectable()
-export class AdminService {
+export class AdminService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AdminService.name);
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly eksClient: EKSClient | null;
+  private scheduleTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -265,6 +290,8 @@ export class AdminService {
     private readonly repoRepository: Repository<GitlabRepoEntity>,
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(ManagedNodeGroupScheduleEntity)
+    private readonly managedNodeGroupScheduleRepository: Repository<ManagedNodeGroupScheduleEntity>,
   ) {
     if (
       this.configService.get<string>("K8S_WORKSPACE_ENABLED", "false") === "true" ||
@@ -291,6 +318,20 @@ export class AdminService {
     const subnetIds = this.getEksSubnetIds();
     const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
     this.eksClient = clusterName && subnetIds.length > 0 && nodeRoleArn ? new EKSClient({ region: awsRegion }) : null;
+  }
+
+  onModuleInit(): void {
+    this.scheduleTimer = setInterval(() => {
+      void this.runManagedNodeGroupSchedules();
+    }, 60_000);
+    void this.runManagedNodeGroupSchedules();
+  }
+
+  onModuleDestroy(): void {
+    if (this.scheduleTimer) {
+      clearInterval(this.scheduleTimer);
+      this.scheduleTimer = null;
+    }
   }
 
   async getWorkspaceResourceOverview(): Promise<WorkspaceResourceOverview> {
@@ -508,6 +549,7 @@ export class AdminService {
     const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
     const constraints = poolType === "workspace" ? this.getWorkspaceNodeConstraints() : this.getServingNodeConstraints();
     const defaults = this.getNodeGroupDefaults(poolType);
+    const schedule = await this.getManagedNodeGroupSchedule(poolType);
 
     if (!this.eksClient || !clusterName) {
       return {
@@ -519,6 +561,7 @@ export class AdminService {
         subnetCount: subnetIds.length,
         scheduling: constraints,
         defaults,
+        schedule,
         nodeGroups: [],
         message: "AWS_EKS_CLUSTER_NAME, AWS_EKS_NODE_ROLE_ARN, AWS_EKS_SUBNET_IDS, and AWS credentials are required.",
       };
@@ -573,9 +616,54 @@ export class AdminService {
       subnetCount: subnetIds.length,
       scheduling: constraints,
       defaults,
+      schedule,
       nodeGroups,
       message: null,
     };
+  }
+
+  async getManagedNodeGroupSchedule(poolType: ManagedNodeGroupPoolType): Promise<ManagedNodeGroupScheduleView> {
+    const row = await this.getOrCreateManagedNodeGroupScheduleRow(poolType);
+    return this.toManagedNodeGroupScheduleView(row);
+  }
+
+  async updateManagedNodeGroupSchedule(
+    poolType: ManagedNodeGroupPoolType,
+    dto: UpdateManagedNodeGroupScheduleDto,
+  ): Promise<ManagedNodeGroupScheduleView> {
+    const row = await this.getOrCreateManagedNodeGroupScheduleRow(poolType);
+    const timezone = (dto.timezone ?? row.timezone ?? "Asia/Seoul").trim() || "Asia/Seoul";
+    const scaleUpTime = this.normalizeScheduleTime(dto.scaleUpTime);
+    const scaleDownTime = this.normalizeScheduleTime(dto.scaleDownTime);
+    const nodeGroupName = dto.nodeGroupName?.trim() || null;
+
+    if (dto.enabled && (!scaleUpTime || !scaleDownTime || !nodeGroupName)) {
+      throw new Error("Enabled schedules require nodegroup name, scale-up time, and scale-down time");
+    }
+    if (dto.enabled && scaleUpTime === scaleDownTime) {
+      throw new Error("Scale-up time and scale-down time must be different");
+    }
+
+    row.enabled = Boolean(dto.enabled);
+    row.timezone = timezone;
+    row.scaleUpTime = scaleUpTime;
+    row.scaleDownTime = scaleDownTime;
+    row.nodeGroupName = nodeGroupName;
+    row.instanceTypes = dto.instanceTypes?.length ? dto.instanceTypes : [];
+    row.minSize = this.toNullableInteger(dto.minSize);
+    row.maxSize = this.toNullableInteger(dto.maxSize);
+    row.desiredSize = this.toNullableInteger(dto.desiredSize);
+    row.diskSize = this.toNullableInteger(dto.diskSize);
+    row.capacityType = dto.capacityType ?? null;
+    row.amiType = dto.amiType?.trim() || null;
+    if (!row.enabled) {
+      row.lastActionStatus = "disabled";
+      row.lastActionMessage = "Automatic nodegroup scheduling is disabled.";
+      row.lastActionAt = new Date();
+    }
+
+    const saved = await this.managedNodeGroupScheduleRepository.save(row);
+    return this.toManagedNodeGroupScheduleView(saved);
   }
 
   async createManagedNodeGroup(
@@ -655,6 +743,82 @@ export class AdminService {
     );
 
     return this.getManagedNodeGroupOverview(poolType);
+  }
+
+  private async runManagedNodeGroupSchedules(): Promise<void> {
+    const schedules = await this.managedNodeGroupScheduleRepository.find();
+    for (const schedule of schedules) {
+      if (!schedule.enabled) {
+        continue;
+      }
+      try {
+        await this.applyManagedNodeGroupSchedule(schedule);
+      } catch (error) {
+        schedule.lastActionAt = new Date();
+        schedule.lastActionStatus = "failed";
+        schedule.lastActionMessage = this.describeError(error);
+        await this.managedNodeGroupScheduleRepository.save(schedule);
+        this.logger.warn(`Failed to apply managed nodegroup schedule pool=${schedule.poolType}: ${this.describeError(error)}`);
+      }
+    }
+  }
+
+  private async applyManagedNodeGroupSchedule(schedule: ManagedNodeGroupScheduleEntity): Promise<void> {
+    const localTime = this.getScheduleLocalTime(schedule.timezone || "Asia/Seoul");
+    if (schedule.scaleUpTime && localTime.time === schedule.scaleUpTime && schedule.lastScaleUpDate !== localTime.date) {
+      await this.executeManagedNodeGroupScaleUp(schedule, localTime.date);
+      return;
+    }
+    if (schedule.scaleDownTime && localTime.time === schedule.scaleDownTime && schedule.lastScaleDownDate !== localTime.date) {
+      await this.executeManagedNodeGroupScaleDown(schedule, localTime.date);
+    }
+  }
+
+  private async executeManagedNodeGroupScaleUp(schedule: ManagedNodeGroupScheduleEntity, localDate: string): Promise<void> {
+    const nodeGroupName = schedule.nodeGroupName?.trim();
+    if (!nodeGroupName) {
+      throw new Error("Scheduled nodegroup name is missing");
+    }
+
+    const overview = await this.getManagedNodeGroupOverview(schedule.poolType);
+    const existing = overview.nodeGroups.find((group) => group.nodeGroupName === nodeGroupName);
+    if (!existing) {
+      await this.createManagedNodeGroup(schedule.poolType, {
+        nodeGroupName,
+        instanceTypes: schedule.instanceTypes ?? undefined,
+        minSize: schedule.minSize ?? undefined,
+        maxSize: schedule.maxSize ?? undefined,
+        desiredSize: schedule.desiredSize ?? undefined,
+        diskSize: schedule.diskSize ?? undefined,
+        capacityType: schedule.capacityType ?? undefined,
+        amiType: schedule.amiType ?? undefined,
+      });
+    }
+
+    schedule.lastScaleUpDate = localDate;
+    schedule.lastActionAt = new Date();
+    schedule.lastActionStatus = "scaled_up";
+    schedule.lastActionMessage = existing ? `Nodegroup ${nodeGroupName} was already present.` : `Created nodegroup ${nodeGroupName}.`;
+    await this.managedNodeGroupScheduleRepository.save(schedule);
+  }
+
+  private async executeManagedNodeGroupScaleDown(schedule: ManagedNodeGroupScheduleEntity, localDate: string): Promise<void> {
+    const nodeGroupName = schedule.nodeGroupName?.trim();
+    if (!nodeGroupName) {
+      throw new Error("Scheduled nodegroup name is missing");
+    }
+
+    const overview = await this.getManagedNodeGroupOverview(schedule.poolType);
+    const existing = overview.nodeGroups.find((group) => group.nodeGroupName === nodeGroupName);
+    if (existing) {
+      await this.deleteManagedNodeGroup(schedule.poolType, nodeGroupName);
+    }
+
+    schedule.lastScaleDownDate = localDate;
+    schedule.lastActionAt = new Date();
+    schedule.lastActionStatus = "scaled_down";
+    schedule.lastActionMessage = existing ? `Deleted nodegroup ${nodeGroupName}.` : `Nodegroup ${nodeGroupName} was already absent.`;
+    await this.managedNodeGroupScheduleRepository.save(schedule);
   }
 
   async listAgents(): Promise<AgentAdminRow[]> {
@@ -934,6 +1098,106 @@ export class AdminService {
     return score;
   }
 
+  private async getOrCreateManagedNodeGroupScheduleRow(poolType: ManagedNodeGroupPoolType): Promise<ManagedNodeGroupScheduleEntity> {
+    const existing = await this.managedNodeGroupScheduleRepository.findOne({ where: { poolType } });
+    if (existing) {
+      return existing;
+    }
+
+    await this.managedNodeGroupScheduleRepository.upsert(
+      this.managedNodeGroupScheduleRepository.create({
+        poolType,
+        enabled: false,
+        timezone: "Asia/Seoul",
+        scaleUpTime: null,
+        scaleDownTime: null,
+        nodeGroupName: null,
+        instanceTypes: [],
+        minSize: null,
+        maxSize: null,
+        desiredSize: null,
+        diskSize: null,
+        capacityType: null,
+        amiType: null,
+        lastScaleUpDate: null,
+        lastScaleDownDate: null,
+        lastActionAt: null,
+        lastActionStatus: null,
+        lastActionMessage: null,
+      }),
+      ["poolType"],
+    );
+
+    return this.managedNodeGroupScheduleRepository.findOneByOrFail({ poolType });
+  }
+
+  private toManagedNodeGroupScheduleView(row: ManagedNodeGroupScheduleEntity): ManagedNodeGroupScheduleView {
+    return {
+      enabled: row.enabled,
+      timezone: row.timezone ?? "Asia/Seoul",
+      scaleUpTime: row.scaleUpTime ?? null,
+      scaleDownTime: row.scaleDownTime ?? null,
+      nodeGroupName: row.nodeGroupName ?? null,
+      instanceTypes: row.instanceTypes ?? [],
+      minSize: row.minSize ?? null,
+      maxSize: row.maxSize ?? null,
+      desiredSize: row.desiredSize ?? null,
+      diskSize: row.diskSize ?? null,
+      capacityType: row.capacityType ?? null,
+      amiType: row.amiType ?? null,
+      lastScaleUpDate: row.lastScaleUpDate ?? null,
+      lastScaleDownDate: row.lastScaleDownDate ?? null,
+      lastActionAt: row.lastActionAt ? row.lastActionAt.toISOString() : null,
+      lastActionStatus: row.lastActionStatus ?? null,
+      lastActionMessage: row.lastActionMessage ?? null,
+    };
+  }
+
+  private normalizeScheduleTime(value: string | null | undefined): string | null {
+    const normalized = value?.trim() ?? "";
+    if (!normalized) {
+      return null;
+    }
+
+    const match = /^(\d{2}):(\d{2})$/.exec(normalized);
+    if (!match) {
+      throw new Error("Schedule time must use HH:mm format");
+    }
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (hours > 23 || minutes > 59) {
+      throw new Error("Schedule time must use HH:mm format");
+    }
+
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
+
+  private toNullableInteger(value: number | null | undefined): number | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    return Number.isFinite(value) ? Math.trunc(value) : null;
+  }
+
+  private getScheduleLocalTime(timezone: string): { date: string; time: string } {
+    const formatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(new Date());
+    const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+    return {
+      date: `${pick("year")}-${pick("month")}-${pick("day")}`,
+      time: `${pick("hour")}:${pick("minute")}`,
+    };
+  }
+
   private getWorkspaceNodeConstraints(): NodePoolConstraints {
     return {
       selector: this.parseNodeSelectorConfig("K8S_WORKSPACE_NODE_SELECTOR_JSON", "workspace"),
@@ -961,7 +1225,11 @@ export class AdminService {
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+    const defaultNodeGroupName =
+      this.configService.get<string>(poolType === "workspace" ? "AWS_EKS_WORKSPACE_NODEGROUP_NAME" : "AWS_EKS_SERVING_NODEGROUP_NAME")?.trim() ??
+      (poolType === "workspace" ? "portal-workspace" : "portal-serving");
     return {
+      nodeGroupName: defaultNodeGroupName,
       instanceTypes,
       minSize: Number(this.configService.get<string>(`${prefix}_MIN_SIZE`, "1")),
       maxSize: Number(this.configService.get<string>(`${prefix}_MAX_SIZE`, "3")),

@@ -17,10 +17,19 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
 import { VectorDbModule } from "../vectordb/vectordb.module";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
+import { ManagedNodeGroupScheduleEntity } from "./entities/managed-nodegroup-schedule.entity";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([WorkspaceSessionEntity, AgentDeploymentEntity, McpDeploymentEntity, ProjectEntity, GitlabRepoEntity, UserEntity]),
+    TypeOrmModule.forFeature([
+      WorkspaceSessionEntity,
+      AgentDeploymentEntity,
+      McpDeploymentEntity,
+      ProjectEntity,
+      GitlabRepoEntity,
+      UserEntity,
+      ManagedNodeGroupScheduleEntity,
+    ]),
     AuthModule,
     ProjectsModule,
     WorkspacesModule,

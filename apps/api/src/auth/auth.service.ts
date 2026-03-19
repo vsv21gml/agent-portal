@@ -284,6 +284,9 @@ export class AuthService {
       if (existing.globalRole !== GlobalRole.ADMIN) {
         existing.globalRole = GlobalRole.ADMIN;
       }
+      if (password?.trim()) {
+        existing.passwordHash = await bcrypt.hash(password, 10);
+      }
       existing.approvalStatus = "approved";
       existing.approvedAt = existing.approvedAt ?? new Date();
       await this.userRepository.save(existing);

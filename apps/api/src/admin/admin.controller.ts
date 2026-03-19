@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -13,6 +13,7 @@ import { SetDefaultModelDto } from "../llm/dto/set-default-model.dto";
 import { LlmService } from "../llm/llm.service";
 import { McpsService } from "../mcps/mcps.service";
 import { CreateManagedNodeGroupDto } from "./dto/create-managed-nodegroup.dto";
+import { UpdateManagedNodeGroupScheduleDto } from "./dto/update-managed-nodegroup-schedule.dto";
 import { AddProjectMemberDto } from "../projects/dto/add-project-member.dto";
 import { ProjectsService } from "../projects/projects.service";
 import { WorkspacesService } from "../workspaces/workspaces.service";
@@ -167,10 +168,22 @@ export class AdminController {
     return this.adminService.getManagedNodeGroupOverview("workspace");
   }
 
+  @Get("resources/nodegroups/workspace/schedule")
+  @Permissions(Permission.READ_RESOURCE)
+  workspaceNodeGroupSchedule() {
+    return this.adminService.getManagedNodeGroupSchedule("workspace");
+  }
+
   @Post("resources/nodegroups/workspace")
   @Permissions(Permission.WRITE_RESOURCE)
   createWorkspaceNodeGroup(@Body() dto: CreateManagedNodeGroupDto) {
     return this.adminService.createManagedNodeGroup("workspace", dto);
+  }
+
+  @Put("resources/nodegroups/workspace/schedule")
+  @Permissions(Permission.WRITE_RESOURCE)
+  updateWorkspaceNodeGroupSchedule(@Body() dto: UpdateManagedNodeGroupScheduleDto) {
+    return this.adminService.updateManagedNodeGroupSchedule("workspace", dto);
   }
 
   @Delete("resources/nodegroups/workspace/:nodeGroupName")
@@ -185,10 +198,22 @@ export class AdminController {
     return this.adminService.getManagedNodeGroupOverview("serving");
   }
 
+  @Get("resources/nodegroups/serving/schedule")
+  @Permissions(Permission.READ_RESOURCE)
+  servingNodeGroupSchedule() {
+    return this.adminService.getManagedNodeGroupSchedule("serving");
+  }
+
   @Post("resources/nodegroups/serving")
   @Permissions(Permission.WRITE_RESOURCE)
   createServingNodeGroup(@Body() dto: CreateManagedNodeGroupDto) {
     return this.adminService.createManagedNodeGroup("serving", dto);
+  }
+
+  @Put("resources/nodegroups/serving/schedule")
+  @Permissions(Permission.WRITE_RESOURCE)
+  updateServingNodeGroupSchedule(@Body() dto: UpdateManagedNodeGroupScheduleDto) {
+    return this.adminService.updateManagedNodeGroupSchedule("serving", dto);
   }
 
   @Delete("resources/nodegroups/serving/:nodeGroupName")

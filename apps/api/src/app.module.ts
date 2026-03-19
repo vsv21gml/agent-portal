@@ -29,6 +29,7 @@ import { McpDeploymentEntity } from "./mcps/entities/mcp-deployment.entity";
 import { McpsModule } from "./mcps/mcps.module";
 import { AccessLogEntity } from "./logs/entities/access-log.entity";
 import { AuditLogEntity } from "./logs/entities/audit-log.entity";
+import { ManagedNodeGroupScheduleEntity } from "./admin/entities/managed-nodegroup-schedule.entity";
 import { ProjectMemberEntity } from "./projects/entities/project-member.entity";
 import { ProjectEndpointEntity } from "./projects/entities/project-endpoint.entity";
 import { ProjectResourceLimitEntity } from "./projects/entities/project-resource-limit.entity";
@@ -76,6 +77,7 @@ import { WorkspacesModule } from "./workspaces/workspaces.module";
           AccessLogEntity,
           AgentDeploymentEntity,
           McpDeploymentEntity,
+          ManagedNodeGroupScheduleEntity,
         ],
       }),
     }),
