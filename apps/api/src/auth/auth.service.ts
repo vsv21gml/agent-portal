@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import * as bcrypt from "bcryptjs";
 import { JwtService } from "@nestjs/jwt";
@@ -23,6 +23,8 @@ import { UserInvitationEntity } from "./entities/user-invitation.entity";
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectRepository(UserEntity)
     private readonly userRepository: Repository<UserEntity>,
@@ -182,7 +184,7 @@ export class AuthService {
     user.approvedAt = new Date();
     const saved = await this.userRepository.save(user);
     await this.gitlabService.ensureUser(saved.email, saved.displayName);
-    await this.llmService.ensureUserVirtualKey(saved.id, saved.email, saved.displayName);
+    await this.ensureLiteLlmUserKey(saved.id, saved.email, saved.displayName, "approveUser");
     return saved;
   }
 
@@ -263,12 +265,12 @@ export class AuthService {
         }),
       );
       await this.gitlabService.ensureUser(user.email, user.displayName, tempPassword);
-      await this.llmService.ensureUserVirtualKey(user.id, user.email, user.displayName);
+      await this.ensureLiteLlmUserKey(user.id, user.email, user.displayName, "upsertSsoUser:create");
       return user;
     }
 
     await this.gitlabService.ensureUser(user.email, user.displayName);
-    await this.llmService.ensureUserVirtualKey(user.id, user.email, user.displayName);
+    await this.ensureLiteLlmUserKey(user.id, user.email, user.displayName, "upsertSsoUser:update");
     return user;
   }
 
@@ -286,7 +288,7 @@ export class AuthService {
       existing.approvedAt = existing.approvedAt ?? new Date();
       await this.userRepository.save(existing);
       await this.gitlabService.ensureUser(existing.email, existing.displayName, password);
-      await this.llmService.ensureUserVirtualKey(existing.id, existing.email, existing.displayName);
+      await this.ensureLiteLlmUserKey(existing.id, existing.email, existing.displayName, "ensureInitialAdmin:existing");
       return { created: false };
     }
 
@@ -301,8 +303,18 @@ export class AuthService {
     });
     await this.userRepository.save(user);
     await this.gitlabService.ensureUser(user.email, user.displayName, finalPassword);
-    await this.llmService.ensureUserVirtualKey(user.id, user.email, user.displayName);
+    await this.ensureLiteLlmUserKey(user.id, user.email, user.displayName, "ensureInitialAdmin:create");
     return { created: true, password: password ? undefined : finalPassword };
+  }
+
+  private async ensureLiteLlmUserKey(userId: string, email: string, displayName: string, source: string): Promise<void> {
+    try {
+      await this.llmService.ensureUserVirtualKey(userId, email, displayName);
+    } catch (error) {
+      this.logger.warn(
+        `LiteLLM user key provisioning skipped source=${source} userId=${userId} email=${email} reason=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private async signToken(user: UserEntity): Promise<string> {

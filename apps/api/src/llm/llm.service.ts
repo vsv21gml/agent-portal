@@ -1,4 +1,4 @@
-import { BadGatewayException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadGatewayException, ConflictException, Injectable, Logger, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import { IsNull, Repository } from "typeorm";
@@ -25,14 +25,6 @@ type LiteLlmKeyResponse = {
   key?: string | null;
   token?: string | null;
   token_id?: string | null;
-};
-
-type LiteLlmUserInfo = {
-  user_id?: string | null;
-  max_budget?: number | null;
-  spend?: number | null;
-  budget_duration?: string | null;
-  budget_reset_at?: string | null;
 };
 
 type LiteLlmKeyInfo = {
@@ -78,11 +70,12 @@ type ModelAccessRequestView = {
 };
 
 @Injectable()
-export class LlmService {
+export class LlmService implements OnModuleInit {
   private static readonly TEAM_MAX_BUDGET_USD = 200;
   private static readonly TEAM_BUDGET_DURATION = "30d";
   private static readonly USER_MAX_BUDGET_USD = 100;
   private static readonly USER_BUDGET_DURATION = "1mo";
+  private static readonly USER_TEAM_NAME = "user";
 
   private readonly logger = new Logger(LlmService.name);
 
@@ -110,6 +103,15 @@ export class LlmService {
     private readonly mcpRepository: Repository<McpDeploymentEntity>,
   ) {}
 
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.ensureUserTeam();
+      await this.migrateExistingUserVirtualKeys();
+    } catch (error) {
+      this.logger.warn(`Failed to initialize LiteLLM user-team migration: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async ensureTeam(projectId: string): Promise<LiteLlmTeamEntity> {
     const existing = await this.teamRepository.findOne({ where: { projectId } });
     if (existing) {
@@ -131,6 +133,52 @@ export class LlmService {
       }),
     );
     return team;
+  }
+
+  async ensureUserTeam(): Promise<LiteLlmTeamEntity> {
+    const existing = await this.teamRepository.findOne({ where: { teamName: LlmService.USER_TEAM_NAME } });
+    if (existing) {
+      return existing;
+    }
+
+    const team = await this.teamRepository.save(
+      this.teamRepository.create({
+        projectId: null,
+        teamName: LlmService.USER_TEAM_NAME,
+      }),
+    );
+    await this.createRemoteTeamIfConfigured(team.teamName);
+    return team;
+  }
+
+  async migrateExistingUserVirtualKeys(): Promise<void> {
+    const baseUrl = this.getBaseUrl();
+    const masterKey = this.getMasterKey();
+    if (!baseUrl || !masterKey) {
+      return;
+    }
+
+    const legacyKeys = await this.userKeyRepository.find({
+      where: {},
+      order: { createdAt: "ASC" },
+    });
+    const targets = legacyKeys.filter((row) => row.remoteUserId !== null);
+    if (targets.length === 0) {
+      return;
+    }
+
+    this.logger.log(`Starting LiteLLM user-key migration count=${targets.length}`);
+    for (const row of targets) {
+      try {
+        const user = await this.userRepository.findOne({ where: { id: row.ownerUserId } });
+        await this.ensureUserVirtualKey(row.ownerUserId, user?.email ?? row.userEmail, user?.displayName);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to migrate LiteLLM user key ownerUserId=${row.ownerUserId} reason=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    this.logger.log(`Finished LiteLLM user-key migration count=${targets.length}`);
   }
 
   async issueKey(projectId: string, ownerUserId: string, dto: IssueLlmKeyDto): Promise<LiteLlmKeyEntity> {
@@ -200,10 +248,12 @@ export class LlmService {
     }
 
     const existing = await this.userKeyRepository.findOne({ where: { ownerUserId } });
-    if (existing?.apiKey) {
-      if (existing.userEmail !== userEmail || existing.keyAlias !== userEmail) {
+    const needsReprovision = !existing?.apiKey || existing.remoteUserId !== null;
+    const desiredKeyAlias = this.buildUserKeyAlias(ownerUserId);
+    if (existing?.apiKey && !needsReprovision) {
+      if (existing.userEmail !== userEmail || existing.keyAlias !== desiredKeyAlias) {
         existing.userEmail = userEmail;
-        existing.keyAlias = userEmail;
+        existing.keyAlias = desiredKeyAlias;
         const saved = await this.userKeyRepository.save(existing);
         await this.syncUserModelAccess(ownerUserId);
         return saved;
@@ -212,18 +262,25 @@ export class LlmService {
       return existing;
     }
 
-    const created = await this.createRemoteUserWithKey(ownerUserId, userEmail, displayName);
-    const ensured = created ?? (await this.issueRemoteUserKey(ownerUserId, userEmail));
-    if (!ensured?.keyValue) {
+    void displayName;
+    const allowedModels = await this.listAllowedModelNames(ownerUserId);
+    const team = await this.ensureUserTeam();
+    const issuedKey = await this.issueRemoteKeyIfConfigured(team.teamName, desiredKeyAlias, {
+      maxBudgetUsd: LlmService.USER_MAX_BUDGET_USD,
+      budgetDuration: LlmService.USER_BUDGET_DURATION,
+      modelNames: allowedModels,
+    });
+    const keyValue = issuedKey?.key ?? issuedKey?.token ?? null;
+    if (!keyValue) {
       throw new BadGatewayException("Failed to provision LiteLLM user key");
     }
 
     const row = existing ?? this.userKeyRepository.create({ ownerUserId });
     row.userEmail = userEmail;
-    row.keyAlias = userEmail;
-    row.remoteUserId = ensured.remoteUserId;
-    row.remoteKeyId = ensured.remoteKeyId;
-    row.apiKey = ensured.keyValue;
+    row.keyAlias = desiredKeyAlias;
+    row.remoteUserId = null;
+    row.remoteKeyId = issuedKey?.token_id ?? null;
+    row.apiKey = keyValue;
     row.maxBudgetUsd = LlmService.USER_MAX_BUDGET_USD;
     row.budgetDuration = LlmService.USER_BUDGET_DURATION;
     const saved = await this.userKeyRepository.save(row);
@@ -259,9 +316,8 @@ export class LlmService {
 
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const [keyInfo, userInfo, spendLogs] = await Promise.all([
+    const [keyInfo, spendLogs] = await Promise.all([
       this.fetchKeyInfo(userKey.apiKey),
-      this.fetchUserInfo(userKey.remoteUserId ?? ownerUserId),
       this.fetchCurrentMonthSpendLogs(userKey.apiKey, monthStart, now),
     ]);
 
@@ -283,7 +339,6 @@ export class LlmService {
 
     const resolvedSpendUsd = this.resolveCurrentPeriodSpendUsd({
       keySpend: keyInfo?.spend,
-      userSpend: userInfo?.spend,
       logSpend: totals.currentMonthSpendUsd,
       ownerUserId,
     });
@@ -291,10 +346,9 @@ export class LlmService {
     return {
       ...totals,
       currentMonthSpendUsd: resolvedSpendUsd,
-      currentMonthBudgetUsd:
-        keyInfo?.max_budget ?? keyInfo?.soft_budget ?? userInfo?.max_budget ?? userKey.maxBudgetUsd ?? null,
-      budgetDuration: keyInfo?.budget_duration ?? userInfo?.budget_duration ?? userKey.budgetDuration ?? null,
-      budgetResetAt: keyInfo?.budget_reset_at ?? userInfo?.budget_reset_at ?? null,
+      currentMonthBudgetUsd: keyInfo?.max_budget ?? keyInfo?.soft_budget ?? userKey.maxBudgetUsd ?? null,
+      budgetDuration: keyInfo?.budget_duration ?? userKey.budgetDuration ?? null,
+      budgetResetAt: keyInfo?.budget_reset_at ?? null,
     };
   }
 
@@ -539,22 +593,38 @@ export class LlmService {
     if (!baseUrl || !masterKey) {
       return;
     }
-    await fetch(`${baseUrl}/team/new`, {
+    const response = await fetch(`${baseUrl}/team/new`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         Authorization: `Bearer ${masterKey}`,
       },
       body: JSON.stringify({
+        team_id: teamName,
         team_alias: teamName,
         max_budget: LlmService.TEAM_MAX_BUDGET_USD,
         budget_duration: LlmService.TEAM_BUDGET_DURATION,
         models: [],
       }),
     });
+    if (!response.ok) {
+      const message = await response.text();
+      if (response.status === 400 && message.includes("already exists")) {
+        return;
+      }
+      throw new BadGatewayException(`Failed to create LiteLLM team ${teamName} (${response.status})`);
+    }
   }
 
-  private async issueRemoteKeyIfConfigured(teamName: string, alias: string): Promise<LiteLlmKeyResponse | null> {
+  private async issueRemoteKeyIfConfigured(
+    teamName: string,
+    alias: string,
+    options?: {
+      maxBudgetUsd?: number;
+      budgetDuration?: string;
+      modelNames?: string[];
+    },
+  ): Promise<LiteLlmKeyResponse | null> {
     const baseUrl = this.getBaseUrl();
     const masterKey = this.getMasterKey();
     if (!baseUrl || !masterKey) {
@@ -566,7 +636,13 @@ export class LlmService {
         "content-type": "application/json",
         Authorization: `Bearer ${masterKey}`,
       },
-      body: JSON.stringify({ key_alias: alias, team_id: teamName }),
+      body: JSON.stringify({
+        key_alias: alias,
+        team_id: teamName,
+        max_budget: options?.maxBudgetUsd,
+        budget_duration: options?.budgetDuration,
+        models: options?.modelNames,
+      }),
     });
     if (!response.ok) {
       throw new BadGatewayException(`Failed to issue LiteLLM key (${response.status})`);
@@ -721,52 +797,17 @@ export class LlmService {
   }
 
   private async updateRemoteUserModels(userKey: LiteLlmUserKeyEntity, allowedModels: string[]): Promise<void> {
-    const payload = { models: allowedModels };
     try {
       await this.remoteFetch("/key/update", {
         method: "POST",
         body: JSON.stringify({
-          ...payload,
+          models: allowedModels,
           key: userKey.apiKey,
         }),
       });
     } catch (error) {
       this.logger.warn(`Failed to update LiteLLM key models for ${userKey.ownerUserId}: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    if (!userKey.remoteUserId) {
-      return;
-    }
-
-    try {
-      await this.remoteFetch("/user/update", {
-        method: "POST",
-        body: JSON.stringify({
-          user_id: userKey.remoteUserId,
-          ...payload,
-        }),
-      });
-    } catch (error) {
-      this.logger.warn(
-        `Failed to update LiteLLM user models for ${userKey.ownerUserId}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  private async fetchUserInfo(userId: string): Promise<LiteLlmUserInfo | null> {
-    if (!userId) {
-      return null;
-    }
-
-    const response = await this.remoteFetch(`/user/info?user_id=${encodeURIComponent(userId)}`, {
-      method: "GET",
-    });
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = (await response.json()) as LiteLlmUserInfo & { user_info?: LiteLlmUserInfo | null };
-    return data.user_info ?? data;
   }
 
   private async fetchKeyInfo(apiKey: string): Promise<LiteLlmKeyInfo | null> {
@@ -821,14 +862,12 @@ export class LlmService {
 
   private resolveCurrentPeriodSpendUsd(params: {
     keySpend: unknown;
-    userSpend: unknown;
     logSpend: number;
     ownerUserId: string;
   }): number {
     const keySpend = this.toNullableNumber(params.keySpend);
-    const userSpend = this.toNullableNumber(params.userSpend);
     const logSpend = Math.max(params.logSpend, 0);
-    const authoritativeSpend = keySpend ?? userSpend;
+    const authoritativeSpend = keySpend;
 
     if (
       authoritativeSpend !== null &&
@@ -836,7 +875,7 @@ export class LlmService {
       Math.abs(authoritativeSpend - logSpend) >= 0.01
     ) {
       this.logger.warn(
-        `LiteLLM spend mismatch ownerUserId=${params.ownerUserId} key/user=${authoritativeSpend.toFixed(6)} logs=${logSpend.toFixed(6)}`,
+        `LiteLLM spend mismatch ownerUserId=${params.ownerUserId} key=${authoritativeSpend.toFixed(6)} logs=${logSpend.toFixed(6)}`,
       );
     }
 
@@ -875,62 +914,8 @@ export class LlmService {
     return null;
   }
 
-  private async createRemoteUserWithKey(
-    ownerUserId: string,
-    userEmail: string,
-    displayName?: string,
-  ): Promise<{ remoteUserId: string | null; remoteKeyId: string | null; keyValue: string | null } | null> {
-    const response = await this.remoteFetch("/user/new", {
-      method: "POST",
-      body: JSON.stringify({
-        user_id: ownerUserId,
-        user_email: userEmail,
-        user_alias: displayName?.trim() || userEmail,
-        user_role: "internal_user",
-        key_alias: userEmail,
-        max_budget: LlmService.USER_MAX_BUDGET_USD,
-        budget_duration: LlmService.USER_BUDGET_DURATION,
-        models: [],
-        auto_create_key: true,
-      }),
-    });
-
-    if (response.ok) {
-      const data = (await response.json()) as LiteLlmKeyResponse;
-      return {
-        remoteUserId: data.user_id ?? ownerUserId,
-        remoteKeyId: data.token_id ?? null,
-        keyValue: data.key ?? data.token ?? null,
-      };
-    }
-
-    return null;
-  }
-
-  private async issueRemoteUserKey(
-    ownerUserId: string,
-    userEmail: string,
-  ): Promise<{ remoteUserId: string | null; remoteKeyId: string | null; keyValue: string | null } | null> {
-    const response = await this.remoteFetch("/key/generate", {
-      method: "POST",
-      body: JSON.stringify({
-        user_id: ownerUserId,
-        key_alias: userEmail,
-        max_budget: LlmService.USER_MAX_BUDGET_USD,
-        budget_duration: LlmService.USER_BUDGET_DURATION,
-        models: [],
-      }),
-    });
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = (await response.json()) as LiteLlmKeyResponse;
-    return {
-      remoteUserId: data.user_id ?? ownerUserId,
-      remoteKeyId: data.token_id ?? null,
-      keyValue: data.key ?? data.token ?? null,
-    };
+  private buildUserKeyAlias(ownerUserId: string): string {
+    return `user-key-${ownerUserId}`;
   }
 
   private async remoteFetch(path: string, init: RequestInit): Promise<Response> {
