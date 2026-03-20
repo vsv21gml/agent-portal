@@ -357,9 +357,11 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
     const liteLlmBaseUrl = this.configService.get<string>("LITELLM_BASE_URL")?.trim().replace(/\/+$/, "") ?? "";
     const codeServerUserDataDir = "/workspace/.local/share/code-server";
     const codeServerExtensionsDir = "/workspace/.local/share/code-server/extensions";
+    const gitCredentialStorePath = "/workspace/.config/git/credentials";
     const devcontainer = this.buildDevcontainerJson(session.runtime);
     const gitSetupScript = [
       "git config --global --add safe.directory /workspace/repo || true",
+      "git config --global http.version HTTP/1.1",
       "if git -C /workspace/repo rev-parse --is-inside-work-tree >/dev/null 2>&1; then",
       "  git -C /workspace/repo config user.name \"$GIT_USER_NAME\"",
       "  git -C /workspace/repo config user.email \"$GIT_USER_EMAIL\"",
@@ -372,9 +374,10 @@ export class WorkspacesService implements OnModuleInit, OnModuleDestroy {
       "    fi",
       "  fi",
       "  if [ -n \"$GIT_CREDENTIAL_URL\" ]; then",
-      "    printf '%s\\n' \"$GIT_CREDENTIAL_URL\" > /workspace/repo/.git-credentials",
-      "    chmod 600 /workspace/repo/.git-credentials",
-      "    git config --global credential.helper 'store --file=/workspace/repo/.git-credentials'",
+      `    mkdir -p "$(dirname "${gitCredentialStorePath}")"`,
+      `    printf '%s\\n' "$GIT_CREDENTIAL_URL" > ${gitCredentialStorePath}`,
+      `    chmod 600 ${gitCredentialStorePath}`,
+      `    git config --global credential.helper 'store --file=${gitCredentialStorePath}'`,
       "  fi",
       "fi",
     ].join("\n");
