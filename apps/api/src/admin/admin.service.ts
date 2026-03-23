@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { BadRequestException, Injectable, InternalServerErrorException, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectRepository } from "@nestjs/typeorm";
 import {
@@ -696,48 +696,57 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
     const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
     const subnetIds = this.getEksSubnetIds();
     if (!this.eksClient || !clusterName || !nodeRoleArn || subnetIds.length === 0) {
-      throw new Error("AWS EKS nodegroup configuration is incomplete");
+      throw new BadRequestException("AWS EKS nodegroup configuration is incomplete");
     }
 
     const defaults = this.getNodeGroupDefaults(poolType);
     const constraints = poolType === "workspace" ? this.getWorkspaceNodeConstraints() : this.getServingNodeConstraints();
     const nodeGroupName = input.nodeGroupName.trim();
     if (!nodeGroupName) {
-      throw new Error("Nodegroup name is required");
+      throw new BadRequestException("Nodegroup name is required");
     }
 
     const minSize = input.minSize ?? defaults.minSize;
     const maxSize = input.maxSize ?? defaults.maxSize;
     const desiredSize = input.desiredSize ?? defaults.desiredSize;
     if (minSize > maxSize || desiredSize < minSize || desiredSize > maxSize) {
-      throw new Error("Scaling configuration is invalid");
+      throw new BadRequestException("Scaling configuration is invalid");
     }
 
-    await this.eksClient.send(
-      new CreateNodegroupCommand({
-        clusterName,
-        nodegroupName: nodeGroupName,
-        nodeRole: nodeRoleArn,
-        subnets: subnetIds,
-        scalingConfig: {
-          minSize,
-          maxSize,
-          desiredSize,
-        },
-        instanceTypes: input.instanceTypes?.length ? input.instanceTypes : defaults.instanceTypes,
-        diskSize: input.diskSize ?? defaults.diskSize,
-        capacityType: ((input.capacityType ?? defaults.capacityType ?? undefined) as CapacityTypes | undefined),
-        amiType: ((input.amiType ?? defaults.amiType ?? undefined) as AMITypes | undefined),
-        labels: constraints.selector,
-        taints: constraints.tolerations
-          .filter((item) => item.key && item.effect)
-          .map((item) => ({
-            key: item.key!,
-            value: item.value ?? "",
-            effect: this.toEksTaintEffect(item.effect!),
-          })),
-      }),
-    );
+    try {
+      await this.eksClient.send(
+        new CreateNodegroupCommand({
+          clusterName,
+          nodegroupName: nodeGroupName,
+          nodeRole: nodeRoleArn,
+          subnets: subnetIds,
+          scalingConfig: {
+            minSize,
+            maxSize,
+            desiredSize,
+          },
+          instanceTypes: input.instanceTypes?.length ? input.instanceTypes : defaults.instanceTypes,
+          diskSize: input.diskSize ?? defaults.diskSize,
+          capacityType: ((input.capacityType ?? defaults.capacityType ?? undefined) as CapacityTypes | undefined),
+          amiType: ((input.amiType ?? defaults.amiType ?? undefined) as AMITypes | undefined),
+          labels: constraints.selector,
+          taints: constraints.tolerations
+            .filter((item) => item.key && item.effect)
+            .map((item) => ({
+              key: item.key!,
+              value: item.value ?? "",
+              effect: this.toEksTaintEffect(item.effect!),
+            })),
+        }),
+      );
+    } catch (error) {
+      const message = this.describeError(error);
+      this.logger.error(
+        `Failed to create ${poolType} nodegroup name=${nodeGroupName} instanceTypes=${JSON.stringify(input.instanceTypes?.length ? input.instanceTypes : defaults.instanceTypes)} desired=${desiredSize}: ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new InternalServerErrorException(`Failed to create ${poolType} nodegroup: ${message}`);
+    }
 
     return this.getManagedNodeGroupOverview(poolType);
   }

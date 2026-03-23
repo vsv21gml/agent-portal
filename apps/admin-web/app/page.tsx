@@ -1198,8 +1198,10 @@ export default function AdminPage() {
         setServingNodeGroupName("");
       }
       notifications.show({ title: "Requested", message: `${poolType === "workspace" ? "Workspace" : "Serving"} nodegroup creation requested.`, color: "teal" });
-    } catch {
-      notifications.show({ title: "Failed", message: `Failed to create ${poolType} nodegroup.`, color: "red" });
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : `Failed to create ${poolType} nodegroup.`;
+      notifications.show({ title: "Failed", message, color: "red" });
     } finally {
       if (isWorkspace) {
         setCreatingWorkspaceNodeGroup(false);

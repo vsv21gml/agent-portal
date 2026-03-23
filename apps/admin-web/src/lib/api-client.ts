@@ -24,6 +24,22 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
+    const rawBody = await response.text();
+    let message = `${response.status} ${response.statusText}`;
+    if (rawBody) {
+      try {
+        const parsed = JSON.parse(rawBody) as { message?: string | string[] };
+        if (Array.isArray(parsed.message)) {
+          message = parsed.message.join(", ");
+        } else if (typeof parsed.message === "string" && parsed.message.trim()) {
+          message = parsed.message;
+        } else {
+          message = rawBody;
+        }
+      } catch {
+        message = rawBody;
+      }
+    }
     if (response.status === 401) {
       clearToken();
     }
@@ -37,7 +53,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
         }),
       );
     }
-    throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+    throw new ApiError(response.status, message);
   }
 
   return (await response.json()) as T;
