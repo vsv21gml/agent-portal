@@ -1,6 +1,7 @@
 {{- $saName := include "api.serviceAccountName" . -}}
 {{- $workspaceNs := .Values.env.K8S_WORKSPACE_NAMESPACE | default "agent-workspaces" -}}
 {{- $agentNs := .Values.env.K8S_SERVING_NAMESPACE | default "agent-serving" -}}
+{{- $mcpNs := .Values.env.K8S_MCP_NAMESPACE | default "mcp-serving" -}}
 {{- if .Values.rbac.create }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -102,5 +103,45 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "api.fullname" . }}-agent-manager
+{{- end }}
+{{- if and (eq (.Values.env.K8S_SERVING_ENABLED | default "true") "true") (ne $mcpNs $agentNs) }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $mcpNs }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "api.fullname" . }}-mcp-manager
+  namespace: {{ $mcpNs }}
+rules:
+  - apiGroups: [""]
+    resources: ["services", "pods", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "api.fullname" . }}-mcp-manager
+  namespace: {{ $mcpNs }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $saName }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "api.fullname" . }}-mcp-manager
 {{- end }}
 {{- end }}
