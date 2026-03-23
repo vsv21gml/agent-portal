@@ -730,6 +730,7 @@ export class AgentsService {
                   image: agent.imageUrl,
                   imagePullPolicy: "Always",
                   ports: [{ containerPort: 8080 }],
+                  resources: this.getServingContainerResources(),
                   env: [
                     { name: "PORT", value: "8080" },
                     { name: "LITELLM_API_KEY", value: agent.litellmApiKey ?? "" },
@@ -1245,5 +1246,14 @@ export class AgentsService {
     }
     const fallbackValue = this.configService.get<string>(fallbackKey)?.trim();
     return fallbackValue || undefined;
+  }
+
+  private getServingContainerResources(): k8s.V1ResourceRequirements {
+    return {
+      requests: {
+        cpu: "100m",
+        memory: "400Mi",
+      },
+    };
   }
 }

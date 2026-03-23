@@ -780,6 +780,7 @@ export class McpsService {
                   image: mcp.imageUrl,
                   imagePullPolicy: "Always",
                   ports: [{ containerPort: 8080 }],
+                  resources: this.getServingContainerResources(),
                   env,
                 },
               ],
@@ -2020,5 +2021,14 @@ export class McpsService {
   private extractEcrRegion(repository: string): string {
     const match = repository.match(/ecr\.([a-z0-9-]+)\.amazonaws\.com/i);
     return match?.[1] ?? this.configService.get<string>("AWS_REGION", "us-east-1");
+  }
+
+  private getServingContainerResources(): k8s.V1ResourceRequirements {
+    return {
+      requests: {
+        cpu: "100m",
+        memory: "400Mi",
+      },
+    };
   }
 }
