@@ -147,6 +147,9 @@ type WorkspaceResourceOverview = {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    displayTotalCpu: number;
+    displayTotalMemoryGi: number;
+    capacitySource: "configured" | "kubernetes";
     nodes: ResourceNodeRow[];
   };
   running: {
@@ -181,6 +184,9 @@ type AgentResourceOverview = {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    displayTotalCpu: number;
+    displayTotalMemoryGi: number;
+    capacitySource: "configured" | "kubernetes";
     nodes: ResourceNodeRow[];
   };
   running: {
@@ -215,6 +221,9 @@ type McpResourceOverview = {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    displayTotalCpu: number;
+    displayTotalMemoryGi: number;
+    capacitySource: "configured" | "kubernetes";
     nodes: ResourceNodeRow[];
   };
   running: {
@@ -1528,6 +1537,26 @@ export default function AdminPage() {
         nodeCount: nodes.length,
         totalCpu,
         totalMemoryGi,
+        displayTotalCpu:
+          (agentResourceOverview?.nodePool.capacitySource === "configured"
+            ? agentResourceOverview.nodePool.displayTotalCpu
+            : 0) +
+          (mcpResourceOverview?.nodePool.capacitySource === "configured"
+            ? mcpResourceOverview.nodePool.displayTotalCpu
+            : 0) ||
+          totalCpu,
+        displayTotalMemoryGi:
+          (agentResourceOverview?.nodePool.capacitySource === "configured"
+            ? agentResourceOverview.nodePool.displayTotalMemoryGi
+            : 0) +
+          (mcpResourceOverview?.nodePool.capacitySource === "configured"
+            ? mcpResourceOverview.nodePool.displayTotalMemoryGi
+            : 0) ||
+          totalMemoryGi,
+        capacitySource:
+          agentResourceOverview?.nodePool.capacitySource === "configured" || mcpResourceOverview?.nodePool.capacitySource === "configured"
+            ? "configured"
+            : "kubernetes",
         nodes,
       },
       running: {
@@ -1536,8 +1565,42 @@ export default function AdminPage() {
         mcpCount,
         usedCpu,
         usedMemoryGi,
-        cpuUsagePercent: totalCpu > 0 ? (usedCpu / totalCpu) * 100 : 0,
-        memoryUsagePercent: totalMemoryGi > 0 ? (usedMemoryGi / totalMemoryGi) * 100 : 0,
+        cpuUsagePercent:
+          (((agentResourceOverview?.nodePool.capacitySource === "configured"
+            ? agentResourceOverview.nodePool.displayTotalCpu
+            : 0) +
+            (mcpResourceOverview?.nodePool.capacitySource === "configured"
+              ? mcpResourceOverview.nodePool.displayTotalCpu
+              : 0)) ||
+            totalCpu) > 0
+            ? (usedCpu /
+                (((agentResourceOverview?.nodePool.capacitySource === "configured"
+                  ? agentResourceOverview.nodePool.displayTotalCpu
+                  : 0) +
+                  (mcpResourceOverview?.nodePool.capacitySource === "configured"
+                    ? mcpResourceOverview.nodePool.displayTotalCpu
+                    : 0)) ||
+                  totalCpu)) *
+              100
+            : 0,
+        memoryUsagePercent:
+          (((agentResourceOverview?.nodePool.capacitySource === "configured"
+            ? agentResourceOverview.nodePool.displayTotalMemoryGi
+            : 0) +
+            (mcpResourceOverview?.nodePool.capacitySource === "configured"
+              ? mcpResourceOverview.nodePool.displayTotalMemoryGi
+              : 0)) ||
+            totalMemoryGi) > 0
+            ? (usedMemoryGi /
+                (((agentResourceOverview?.nodePool.capacitySource === "configured"
+                  ? agentResourceOverview.nodePool.displayTotalMemoryGi
+                  : 0) +
+                  (mcpResourceOverview?.nodePool.capacitySource === "configured"
+                    ? mcpResourceOverview.nodePool.displayTotalMemoryGi
+                    : 0)) ||
+                  totalMemoryGi)) *
+              100
+            : 0,
       },
       rows,
     };
@@ -2203,9 +2266,9 @@ export default function AdminPage() {
                                 Node CPU Capacity
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {Number.isInteger(workspaceResourceOverview?.nodePool.totalCpu ?? 0)
-                                  ? (workspaceResourceOverview?.nodePool.totalCpu ?? 0).toFixed(0)
-                                  : (workspaceResourceOverview?.nodePool.totalCpu ?? 0).toFixed(1)}
+                                {Number.isInteger(workspaceResourceOverview?.nodePool.displayTotalCpu ?? 0)
+                                  ? (workspaceResourceOverview?.nodePool.displayTotalCpu ?? 0).toFixed(0)
+                                  : (workspaceResourceOverview?.nodePool.displayTotalCpu ?? 0).toFixed(1)}
                               </Text>
                             </div>
                             <RingProgress
@@ -2220,7 +2283,9 @@ export default function AdminPage() {
                             />
                           </Group>
                           <Text size="sm" c="dimmed" mt="sm">
-                            Kubernetes reported capacity
+                            {workspaceResourceOverview?.nodePool.capacitySource === "configured"
+                              ? "Managed nodegroup configured capacity"
+                              : "Kubernetes reported capacity"}
                           </Text>
                         </Paper>
 
@@ -2231,7 +2296,7 @@ export default function AdminPage() {
                                 Node MEM Capacity
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {(workspaceResourceOverview?.nodePool.totalMemoryGi ?? 0).toFixed(1)} Gi
+                                {(workspaceResourceOverview?.nodePool.displayTotalMemoryGi ?? 0).toFixed(1)} Gi
                               </Text>
                             </div>
                             <RingProgress
@@ -2246,7 +2311,9 @@ export default function AdminPage() {
                             />
                           </Group>
                           <Text size="sm" c="dimmed" mt="sm">
-                            Kubernetes reported capacity
+                            {workspaceResourceOverview?.nodePool.capacitySource === "configured"
+                              ? "Managed nodegroup configured capacity"
+                              : "Kubernetes reported capacity"}
                           </Text>
                         </Paper>
 
@@ -2408,9 +2475,9 @@ export default function AdminPage() {
                                 Node CPU Capacity
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {Number.isInteger(servingResourceOverview.nodePool.totalCpu)
-                                  ? servingResourceOverview.nodePool.totalCpu.toFixed(0)
-                                  : servingResourceOverview.nodePool.totalCpu.toFixed(1)}
+                                {Number.isInteger(servingResourceOverview.nodePool.displayTotalCpu)
+                                  ? servingResourceOverview.nodePool.displayTotalCpu.toFixed(0)
+                                  : servingResourceOverview.nodePool.displayTotalCpu.toFixed(1)}
                               </Text>
                             </div>
                             <RingProgress
@@ -2425,7 +2492,9 @@ export default function AdminPage() {
                             />
                           </Group>
                           <Text size="sm" c="dimmed" mt="sm">
-                            Kubernetes reported capacity
+                            {servingResourceOverview.nodePool.capacitySource === "configured"
+                              ? "Managed nodegroup configured capacity"
+                              : "Kubernetes reported capacity"}
                           </Text>
                         </Paper>
 
@@ -2436,7 +2505,7 @@ export default function AdminPage() {
                                 Node MEM Capacity
                               </Text>
                               <Text mt="sm" fw={700} size="xl">
-                                {servingResourceOverview.nodePool.totalMemoryGi.toFixed(1)} Gi
+                                {servingResourceOverview.nodePool.displayTotalMemoryGi.toFixed(1)} Gi
                               </Text>
                             </div>
                             <RingProgress
@@ -2451,7 +2520,9 @@ export default function AdminPage() {
                             />
                           </Group>
                           <Text size="sm" c="dimmed" mt="sm">
-                            Kubernetes reported capacity
+                            {servingResourceOverview.nodePool.capacitySource === "configured"
+                              ? "Managed nodegroup configured capacity"
+                              : "Kubernetes reported capacity"}
                           </Text>
                         </Paper>
 

@@ -10,6 +10,7 @@ import {
   EKSClient,
   ListNodegroupsCommand,
 } from "@aws-sdk/client-eks";
+import { DescribeInstanceTypesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import * as k8s from "@kubernetes/client-node";
 import { Repository } from "typeorm";
 import { AgentDeploymentEntity } from "../agents/entities/agent-deployment.entity";
@@ -44,6 +45,9 @@ type WorkspaceResourceOverview = {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    displayTotalCpu: number;
+    displayTotalMemoryGi: number;
+    capacitySource: "configured" | "kubernetes";
     nodes: ResourceNodeRow[];
   };
   running: {
@@ -154,6 +158,9 @@ type AgentResourceOverview = {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    displayTotalCpu: number;
+    displayTotalMemoryGi: number;
+    capacitySource: "configured" | "kubernetes";
     nodes: ResourceNodeRow[];
   };
   running: {
@@ -188,6 +195,9 @@ type McpResourceOverview = {
     nodeCount: number;
     totalCpu: number;
     totalMemoryGi: number;
+    displayTotalCpu: number;
+    displayTotalMemoryGi: number;
+    capacitySource: "configured" | "kubernetes";
     nodes: ResourceNodeRow[];
   };
   running: {
@@ -271,6 +281,8 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AdminService.name);
   private readonly kubeClientCore: k8s.CoreV1Api | null;
   private readonly eksClient: EKSClient | null;
+  private readonly ec2Client: EC2Client | null;
+  private readonly instanceCapacityCache = new Map<string, { cpu: number; memoryGi: number } | null>();
   private scheduleTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -318,6 +330,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
     const subnetIds = this.getEksSubnetIds();
     const nodeRoleArn = this.configService.get<string>("AWS_EKS_NODE_ROLE_ARN")?.trim() ?? "";
     this.eksClient = clusterName && subnetIds.length > 0 && nodeRoleArn ? new EKSClient({ region: awsRegion }) : null;
+    this.ec2Client = clusterName && subnetIds.length > 0 && nodeRoleArn ? new EC2Client({ region: awsRegion }) : null;
   }
 
   onModuleInit(): void {
@@ -353,7 +366,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getNodePoolSummary(this.getWorkspaceNodeConstraints()),
+      this.getNodePoolSummary("workspace", this.getWorkspaceNodeConstraints()),
     ]);
 
     const projectMap = new Map(projects.map((project) => [project.id, project]));
@@ -393,8 +406,8 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
         workspaceCount: rows.length,
         usedCpu,
         usedMemoryGi,
-        cpuUsagePercent: nodePool.totalCpu > 0 ? Math.min(100, (usedCpu / nodePool.totalCpu) * 100) : 0,
-        memoryUsagePercent: nodePool.totalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.totalMemoryGi) * 100) : 0,
+        cpuUsagePercent: nodePool.displayTotalCpu > 0 ? Math.min(100, (usedCpu / nodePool.displayTotalCpu) * 100) : 0,
+        memoryUsagePercent: nodePool.displayTotalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.displayTotalMemoryGi) * 100) : 0,
       },
       rows,
     };
@@ -423,7 +436,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getNodePoolSummary(this.getServingNodeConstraints()),
+      this.getNodePoolSummary("serving", this.getServingNodeConstraints()),
     ]);
 
     const projectMap = new Map(projects.map((project) => [project.id, project]));
@@ -464,8 +477,8 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
         agentCount: rows.length,
         usedCpu,
         usedMemoryGi,
-        cpuUsagePercent: nodePool.totalCpu > 0 ? Math.min(100, (usedCpu / nodePool.totalCpu) * 100) : 0,
-        memoryUsagePercent: nodePool.totalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.totalMemoryGi) * 100) : 0,
+        cpuUsagePercent: nodePool.displayTotalCpu > 0 ? Math.min(100, (usedCpu / nodePool.displayTotalCpu) * 100) : 0,
+        memoryUsagePercent: nodePool.displayTotalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.displayTotalMemoryGi) * 100) : 0,
       },
       rows,
     };
@@ -494,7 +507,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
       projectIds.length ? this.projectRepository.findBy(projectIds.map((id) => ({ id }))) : Promise.resolve([]),
       repoIds.length ? this.repoRepository.findBy(repoIds.map((id) => ({ id }))) : Promise.resolve([]),
       userIds.length ? this.userRepository.findBy(userIds.map((id) => ({ id }))) : Promise.resolve([]),
-      this.getNodePoolSummary(this.getServingNodeConstraints()),
+      this.getNodePoolSummary("serving", this.getServingNodeConstraints()),
     ]);
 
     const projectMap = new Map(projects.map((project) => [project.id, project]));
@@ -535,8 +548,8 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
         mcpCount: rows.length,
         usedCpu,
         usedMemoryGi,
-        cpuUsagePercent: nodePool.totalCpu > 0 ? Math.min(100, (usedCpu / nodePool.totalCpu) * 100) : 0,
-        memoryUsagePercent: nodePool.totalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.totalMemoryGi) * 100) : 0,
+        cpuUsagePercent: nodePool.displayTotalCpu > 0 ? Math.min(100, (usedCpu / nodePool.displayTotalCpu) * 100) : 0,
+        memoryUsagePercent: nodePool.displayTotalMemoryGi > 0 ? Math.min(100, (usedMemoryGi / nodePool.displayTotalMemoryGi) * 100) : 0,
       },
       rows,
     };
@@ -955,7 +968,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async getWorkspaceNodePoolSummary(): Promise<WorkspaceResourceOverview["nodePool"]> {
-    return this.getNodePoolSummary(this.getWorkspaceNodeConstraints());
+    return this.getNodePoolSummary("workspace", this.getWorkspaceNodeConstraints());
   }
 
   async listUsers(): Promise<UserAdminRow[]> {
@@ -1025,19 +1038,38 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
     return counts;
   }
 
-  private async getNodePoolSummary(constraints: NodePoolConstraints): Promise<WorkspaceResourceOverview["nodePool"]> {
+  private async getNodePoolSummary(
+    poolType: ManagedNodeGroupPoolType,
+    constraints: NodePoolConstraints,
+  ): Promise<WorkspaceResourceOverview["nodePool"]> {
+    const fallback = {
+      nodeCount: 0,
+      totalCpu: 0,
+      totalMemoryGi: 0,
+      displayTotalCpu: 0,
+      displayTotalMemoryGi: 0,
+      capacitySource: "kubernetes" as const,
+      nodes: [],
+    };
+
     if (!this.kubeClientCore) {
-      return { nodeCount: 0, totalCpu: 0, totalMemoryGi: 0, nodes: [] };
+      return fallback;
     }
 
     try {
       const result = await this.kubeClientCore.listNode();
       const matchingNodes = result.items.filter((node) => this.matchesNodePoolConstraints(node, constraints));
+      const totalCpu = matchingNodes.reduce((sum, node) => sum + this.parseCpu(node.status?.capacity?.cpu), 0);
+      const totalMemoryGi = matchingNodes.reduce((sum, node) => sum + this.parseMemoryGi(node.status?.capacity?.memory), 0);
+      const configuredCapacity = await this.getConfiguredNodePoolCapacity(poolType, constraints);
 
       return {
         nodeCount: matchingNodes.length,
-        totalCpu: matchingNodes.reduce((sum, node) => sum + this.parseCpu(node.status?.capacity?.cpu), 0),
-        totalMemoryGi: matchingNodes.reduce((sum, node) => sum + this.parseMemoryGi(node.status?.capacity?.memory), 0),
+        totalCpu,
+        totalMemoryGi,
+        displayTotalCpu: configuredCapacity?.cpu ?? totalCpu,
+        displayTotalMemoryGi: configuredCapacity?.memoryGi ?? totalMemoryGi,
+        capacitySource: configuredCapacity ? "configured" : "kubernetes",
         nodes: matchingNodes.map((node) => ({
           nodeName: node.metadata?.name ?? "-",
           cpu: this.parseCpu(node.status?.capacity?.cpu),
@@ -1046,7 +1078,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
       };
     } catch (error) {
       this.logger.warn(`Failed to list nodes: ${this.describeError(error)}`);
-      return { nodeCount: 0, totalCpu: 0, totalMemoryGi: 0, nodes: [] };
+      return fallback;
     }
   }
 
@@ -1285,6 +1317,99 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.warn(`Failed to list nodegroup labels from Kubernetes nodes: ${this.describeError(error)}`);
       return new Map();
+    }
+  }
+
+  private async getConfiguredNodePoolCapacity(
+    poolType: ManagedNodeGroupPoolType,
+    constraints: NodePoolConstraints,
+  ): Promise<{ cpu: number; memoryGi: number } | null> {
+    const clusterName = this.configService.get<string>("AWS_EKS_CLUSTER_NAME")?.trim() ?? "";
+    if (!this.eksClient || !this.ec2Client || !clusterName) {
+      return null;
+    }
+
+    try {
+      const listed = await this.eksClient.send(new ListNodegroupsCommand({ clusterName }));
+      const nodeGroupNames = listed.nodegroups ?? [];
+      if (!nodeGroupNames.length) {
+        return null;
+      }
+
+      const described = await Promise.all(
+        nodeGroupNames.map(async (nodegroupName) => {
+          try {
+            const result = await this.eksClient!.send(new DescribeNodegroupCommand({ clusterName, nodegroupName }));
+            return result.nodegroup ?? null;
+          } catch (error) {
+            this.logger.warn(`Failed to describe nodegroup ${nodegroupName} for ${poolType} capacity: ${this.describeError(error)}`);
+            return null;
+          }
+        }),
+      );
+
+      let totalCpu = 0;
+      let totalMemoryGi = 0;
+      for (const nodegroup of described) {
+        if (!nodegroup) {
+          continue;
+        }
+        if (!this.matchesManagedNodeGroup(nodegroup.labels ?? {}, nodegroup.taints ?? [], constraints)) {
+          continue;
+        }
+
+        const instanceType = nodegroup.instanceTypes?.[0]?.trim();
+        const desiredSize = nodegroup.scalingConfig?.desiredSize ?? 0;
+        if (!instanceType || desiredSize <= 0) {
+          continue;
+        }
+
+        const capacity = await this.getInstanceTypeCapacity(instanceType);
+        if (!capacity) {
+          continue;
+        }
+
+        totalCpu += capacity.cpu * desiredSize;
+        totalMemoryGi += capacity.memoryGi * desiredSize;
+      }
+
+      return totalCpu > 0 || totalMemoryGi > 0 ? { cpu: totalCpu, memoryGi: totalMemoryGi } : null;
+    } catch (error) {
+      this.logger.warn(`Failed to estimate ${poolType} node capacity from EKS configuration: ${this.describeError(error)}`);
+      return null;
+    }
+  }
+
+  private async getInstanceTypeCapacity(instanceType: string): Promise<{ cpu: number; memoryGi: number } | null> {
+    const normalized = instanceType.trim();
+    if (!normalized) {
+      return null;
+    }
+
+    if (this.instanceCapacityCache.has(normalized)) {
+      return this.instanceCapacityCache.get(normalized) ?? null;
+    }
+
+    if (!this.ec2Client) {
+      return null;
+    }
+
+    try {
+      const response = await this.ec2Client.send(
+        new DescribeInstanceTypesCommand({
+          InstanceTypes: [normalized as never],
+        }),
+      );
+      const details = response.InstanceTypes?.[0];
+      const cpu = details?.VCpuInfo?.DefaultVCpus ?? 0;
+      const memoryMiB = details?.MemoryInfo?.SizeInMiB ?? 0;
+      const capacity = cpu > 0 || memoryMiB > 0 ? { cpu, memoryGi: memoryMiB / 1024 } : null;
+      this.instanceCapacityCache.set(normalized, capacity);
+      return capacity;
+    } catch (error) {
+      this.logger.warn(`Failed to describe EC2 instance type ${normalized}: ${this.describeError(error)}`);
+      this.instanceCapacityCache.set(normalized, null);
+      return null;
     }
   }
 
